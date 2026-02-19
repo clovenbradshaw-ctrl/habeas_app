@@ -13,7 +13,7 @@ export default function LoginView({ onLogin }: LoginViewProps) {
 
   const baseUrl =
     import.meta.env.VITE_MATRIX_SERVER_URL ||
-    "https://matrix.aminoimmigration.com";
+    "https://app.aminoimmigration.com";
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
