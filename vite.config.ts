@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/_matrix": {
-        target: "https://matrix.aminoimmigration.com",
+        target: "https://app.aminoimmigration.com",
         changeOrigin: true,
         secure: true,
       },
