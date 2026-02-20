@@ -443,6 +443,45 @@ var matrix = {
     return this._api('POST', '/createRoom', options);
   },
 
+  adminApi: function(method, path, body) {
+    var opts = { method: method, headers: this._headers() };
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(this.baseUrl + '/_synapse/admin' + path, opts)
+      .then(function(r) {
+        if (!r.ok) {
+          return r.text().then(function(text) {
+            try { throw JSON.parse(text); }
+            catch(e) {
+              if (e instanceof SyntaxError) {
+                throw { errcode: 'M_UNKNOWN', error: 'Admin API returned ' + r.status, status: r.status };
+              }
+              if (!e.status) e.status = r.status;
+              throw e;
+            }
+          });
+        }
+        return r.json();
+      })
+      .catch(function(e) {
+        if (e && e.errcode) throw e;
+        throw { errcode: 'M_NETWORK', error: e.message || 'Network error', status: 0 };
+      });
+  },
+
+  inviteUser: function(roomId, userId) {
+    return this._api('POST', '/rooms/' + encodeURIComponent(roomId) + '/invite', { user_id: userId });
+  },
+
+  setPowerLevel: function(roomId, userId, level) {
+    var self = this;
+    return this._api('GET', '/rooms/' + encodeURIComponent(roomId) + '/state/m.room.power_levels/')
+      .then(function(content) {
+        if (!content.users) content.users = {};
+        content.users[userId] = level;
+        return self._api('PUT', '/rooms/' + encodeURIComponent(roomId) + '/state/m.room.power_levels/', content);
+      });
+  },
+
   isReady: function() {
     return !!this.accessToken;
   },
@@ -498,8 +537,11 @@ var S = {
   national: { iceDirector: '', iceDirectorTitle: '', dhsSecretary: '', attorneyGeneral: '' },
   clients: {},
   petitions: {},
+  users: {},
   log: [],
   role: null,
+  adminEditUserId: null,
+  adminDraft: {},
   currentUser: '',
   currentView: 'board',
   selectedClientId: null,
@@ -656,6 +698,23 @@ function hydrateFromMatrix() {
         };
       }
 
+      // Users
+      var userEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_USER);
+      var users = {};
+      Object.keys(userEvents).forEach(function(k) {
+        var e = userEvents[k];
+        if (k && e.content && !e.content.deleted) {
+          users[k] = {
+            mxid: k,
+            displayName: e.content.displayName || k.replace(/@(.+):.*/, '$1'),
+            role: e.content.role || 'attorney',
+            active: e.content.active !== false,
+            createdBy: e.sender,
+            updatedAt: new Date(e.origin_server_ts).toISOString(),
+          };
+        }
+      });
+
       // Client rooms + petitions
       var clients = {};
       var petitions = {};
@@ -724,7 +783,7 @@ function hydrateFromMatrix() {
       setState({
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
-        role: role, currentUser: matrix.userId, syncError: syncError,
+        users: users, role: role, currentUser: matrix.userId, syncError: syncError,
       });
     });
 }
@@ -1046,6 +1105,7 @@ function renderHeader() {
   var h = '<header class="hdr"><div class="hdr-left">';
   h += '<span class="hdr-brand">Habeas</span><nav class="hdr-nav">';
   var tabs = [['board','Board'],['clients','Clients'],['directory','Directory']];
+  if (S.role === 'admin') tabs.push(['admin','Admin']);
   if (pet) tabs.push(['editor','Editor']);
   tabs.forEach(function(t) {
     h += '<button class="nav-btn' + (S.currentView === t[0] ? ' on' : '') + '" data-action="nav" data-view="' + t[0] + '">' + t[1] + '</button>';
@@ -1219,7 +1279,17 @@ function renderBoardTable(vis) {
 }
 
 function renderClients() {
-  var clientList = Object.values(S.clients);
+  var allClients = Object.values(S.clients);
+  var clientList;
+  if (S.role === 'admin') {
+    clientList = allClients;
+  } else {
+    var myClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+    });
+    clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
+  }
   var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
   var clientPets = client ? Object.values(S.petitions).filter(function(p) { return p.clientId === client.id; }) : [];
   var h = '<div class="clients-view"><div class="cv-sidebar"><div class="cv-head">';
@@ -1267,6 +1337,7 @@ function renderClients() {
 
 function renderDirectory() {
   var tab = S.dirTab;
+  var isAdmin = S.role === 'admin';
   var h = '<div class="dir-view"><div class="dir-tabs">';
   [['facilities', 'Facilities (' + Object.keys(S.facilities).length + ')'],
    ['courts', 'Courts (' + Object.keys(S.courts).length + ')'],
@@ -1278,12 +1349,13 @@ function renderDirectory() {
 
   if (tab === 'facilities') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
-    h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button></div>';
+    if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
+    h += '</div>';
     h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.facilities).forEach(function(f) {
       h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
-      if (S.editId === f.id) {
+      if (S.editId === f.id && isAdmin) {
         FACILITY_FIELDS.forEach(function(ff) {
           h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
           h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
@@ -1292,25 +1364,31 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-facility" data-id="' + f.id + '">Delete</button></div>';
       } else {
-        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility"><strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
+        if (isAdmin) {
+          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
+        } else {
+          h += '<div class="dir-card-head" style="cursor:default">';
+        }
+        h += '<strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
         h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
         h += htmlProvenanceBadge(f);
       }
       h += '</div>';
     });
-    if (Object.keys(S.facilities).length === 0) h += '<div class="dir-empty">No facilities yet. Add one to get started.</div>';
+    if (Object.keys(S.facilities).length === 0) h += '<div class="dir-empty">No facilities yet.' + (isAdmin ? ' Add one to get started.' : '') + '</div>';
     h += '</div></div>';
   }
 
   if (tab === 'courts') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
-    h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button></div>';
+    if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
+    h += '</div>';
     h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.courts).forEach(function(c) {
       h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
-      if (S.editId === c.id) {
+      if (S.editId === c.id && isAdmin) {
         COURT_FIELDS.forEach(function(ff) {
           h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
           h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
@@ -1319,7 +1397,12 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-court" data-id="' + c.id + '">Delete</button></div>';
       } else {
-        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court"><strong>' + esc(c.district || 'Unnamed') + '</strong>';
+        if (isAdmin) {
+          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
+        } else {
+          h += '<div class="dir-card-head" style="cursor:default">';
+        }
+        h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
         h += htmlProvenanceBadge(c);
       }
@@ -1331,12 +1414,13 @@ function renderDirectory() {
 
   if (tab === 'attorneys') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
-    h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button></div>';
+    if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
+    h += '</div>';
     h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
     h += '<div class="dir-list">';
     Object.values(S.attProfiles).forEach(function(a) {
       h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
-      if (S.editId === a.id) {
+      if (S.editId === a.id && isAdmin) {
         ATT_PROFILE_FIELDS.forEach(function(ff) {
           h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
           h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
@@ -1345,7 +1429,12 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-attorney" data-id="' + a.id + '">Delete</button></div>';
       } else {
-        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney"><strong>' + esc(a.name || 'Unnamed') + '</strong>';
+        if (isAdmin) {
+          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
+        } else {
+          h += '<div class="dir-card-head" style="cursor:default">';
+        }
+        h += '<strong>' + esc(a.name || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
         h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
         h += htmlProvenanceBadge(a);
@@ -1358,17 +1447,103 @@ function renderDirectory() {
 
   if (tab === 'national') {
     h += '<div class="dir-section"><div class="dir-head"><h3>National Defaults</h3></div>';
-    h += '<p class="dir-desc">These auto-fill on every petition. Update when officials change.</p>';
+    h += '<p class="dir-desc">These auto-fill on every petition.' + (isAdmin ? ' Update when officials change.' : '') + '</p>';
     h += '<div class="dir-card editing">';
     NATIONAL_FIELDS.forEach(function(f) {
       h += '<div class="frow"><label class="flbl">' + esc(f.label) + '</label>';
-      h += '<input class="finp" value="' + esc((S.national[f.key]) || '') + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="national-field"></div>';
+      if (isAdmin) {
+        h += '<input class="finp" value="' + esc((S.national[f.key]) || '') + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="national-field">';
+      } else {
+        h += '<input class="finp" value="' + esc((S.national[f.key]) || '') + '" disabled style="background:#f5f2ec;color:var(--muted)">';
+      }
+      h += '</div>';
     });
     h += htmlProvenanceBadge(S.national);
     h += '</div></div>';
   }
 
   h += '</div></div>';
+  return h;
+}
+
+function renderAdmin() {
+  if (S.role !== 'admin') {
+    return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
+  }
+
+  var h = '<div class="dir-view"><div class="dir-tabs">';
+  h += '<button class="dir-tab on">User Management</button>';
+  h += '</div><div class="dir-body"><div class="dir-section">';
+
+  // Header with create button
+  h += '<div class="dir-head"><h3>Users</h3>';
+  h += '<button class="hbtn accent" data-action="admin-show-create">+ Create User</button></div>';
+  h += '<p class="dir-desc">Manage user accounts. Creating a user registers them on the Matrix server, sets their role, and invites them to the required rooms.</p>';
+
+  // Inline create form
+  if (S.adminEditUserId === 'new') {
+    h += '<div class="dir-card editing" style="margin-bottom:16px">';
+    h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">New User</div>';
+    h += '<div class="frow"><label class="flbl">Username</label>';
+    h += '<input class="finp" value="' + esc(S.adminDraft.username || '') + '" placeholder="e.g. jsmith" data-field-key="username" data-change="admin-draft-field"></div>';
+    h += '<div class="frow"><label class="flbl">Display Name</label>';
+    h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" placeholder="Jane Smith" data-field-key="displayName" data-change="admin-draft-field"></div>';
+    h += '<div class="frow"><label class="flbl">Password</label>';
+    h += '<input class="finp" type="password" value="' + esc(S.adminDraft.password || '') + '" placeholder="Temporary password" data-field-key="password" data-change="admin-draft-field"></div>';
+    h += '<div class="frow"><label class="flbl">Role</label>';
+    h += '<select class="finp" data-change="admin-draft-role">';
+    h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
+    h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
+    h += '</select></div>';
+    h += '<div id="admin-create-error" class="login-error" style="display:none;margin-top:8px"></div>';
+    h += '<div class="dir-card-actions">';
+    h += '<button class="hbtn accent" data-action="admin-create-user" id="admin-create-btn">Create Account</button>';
+    h += '<button class="hbtn" data-action="admin-cancel-create">Cancel</button></div>';
+    h += '</div>';
+  }
+
+  // User list
+  h += '<div class="dir-list">';
+  var userList = Object.values(S.users);
+  if (userList.length === 0) {
+    h += '<div class="dir-empty">No managed users yet. Users created through this panel will appear here.</div>';
+  }
+  userList.forEach(function(u) {
+    var isEditing = S.adminEditUserId === u.mxid;
+    h += '<div class="dir-card' + (isEditing ? ' editing' : '') + '">';
+    if (isEditing) {
+      h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Edit User</div>';
+      h += '<div class="frow"><label class="flbl">Display Name</label>';
+      h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
+      h += '<div class="frow"><label class="flbl">Role</label>';
+      h += '<select class="finp" data-change="admin-draft-role">';
+      h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
+      h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
+      h += '</select></div>';
+      h += '<div class="frow"><label class="flbl">Reset Password</label>';
+      h += '<input class="finp" type="password" value="' + esc(S.adminDraft.password || '') + '" placeholder="Leave blank to keep current" data-field-key="password" data-change="admin-draft-field"></div>';
+      h += '<div id="admin-edit-error" class="login-error" style="display:none;margin-top:8px"></div>';
+      h += '<div class="dir-card-actions">';
+      h += '<button class="hbtn accent" data-action="admin-save-user">Save Changes</button>';
+      h += '<button class="hbtn" data-action="admin-cancel-edit">Cancel</button>';
+      if (u.mxid !== S.currentUser) {
+        h += '<button class="hbtn danger" data-action="admin-deactivate-user" data-mxid="' + esc(u.mxid) + '">Deactivate</button>';
+      }
+      h += '</div>';
+    } else {
+      var roleBadgeColor = u.role === 'admin' ? '#a08540' : '#8a8a9a';
+      h += '<div class="dir-card-head" data-action="admin-edit-user" data-mxid="' + esc(u.mxid) + '">';
+      h += '<strong>' + esc(u.displayName) + '</strong>';
+      h += '<span class="dir-card-sub" style="color:' + roleBadgeColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + esc(u.role) + '</span></div>';
+      h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
+      if (!u.active) {
+        h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
+      }
+      h += htmlProvenanceBadge(u);
+    }
+    h += '</div>';
+  });
+  h += '</div></div></div></div>';
   return h;
 }
 
@@ -1646,6 +1821,7 @@ function render() {
   if (S.currentView === 'board') h += renderBoard();
   else if (S.currentView === 'clients') h += renderClients();
   else if (S.currentView === 'directory') h += renderDirectory();
+  else if (S.currentView === 'admin') h += renderAdmin();
   else if (S.currentView === 'editor') h += renderEditor();
   h += '</div>';
   root.innerHTML = h;
@@ -1810,6 +1986,7 @@ document.addEventListener('click', function(e) {
   if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
   if (action === 'cancel-edit') { setState({ editId: null, draft: {} }); return; }
   if (action === 'edit-record') {
+    if (S.role !== 'admin') return;
     var type = btn.dataset.type;
     var id = btn.dataset.id;
     var record = type === 'facility' ? S.facilities[id] : type === 'court' ? S.courts[id] : S.attProfiles[id];
@@ -1817,6 +1994,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'add-facility') {
+    if (S.role !== 'admin') return;
     var id = uid();
     var f = { id: id, name: '', city: '', state: '', warden: '', fieldOfficeName: '', fieldOfficeDirector: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.facilities[id] = f;
@@ -1825,6 +2003,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'save-facility') {
+    if (S.role !== 'admin') return;
     var f = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
     S.facilities[f.id] = f;
     S.log.push({ op: 'UPDATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
@@ -1835,6 +2014,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'del-facility') {
+    if (S.role !== 'admin') return;
     var id = btn.dataset.id;
     delete S.facilities[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'facility' } });
@@ -1845,6 +2025,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'add-court') {
+    if (S.role !== 'admin') return;
     var id = uid();
     var c = { id: id, district: '', division: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.courts[id] = c;
@@ -1853,6 +2034,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'save-court') {
+    if (S.role !== 'admin') return;
     var c = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
     S.courts[c.id] = c;
     S.log.push({ op: 'UPDATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
@@ -1863,6 +2045,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'del-court') {
+    if (S.role !== 'admin') return;
     var id = btn.dataset.id;
     delete S.courts[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
@@ -1873,6 +2056,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'add-attorney') {
+    if (S.role !== 'admin') return;
     var id = uid();
     var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.attProfiles[id] = a;
@@ -1881,6 +2065,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'save-attorney') {
+    if (S.role !== 'admin') return;
     var a = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
     S.attProfiles[a.id] = a;
     S.log.push({ op: 'UPDATE', target: a.id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
@@ -1891,6 +2076,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'del-attorney') {
+    if (S.role !== 'admin') return;
     var id = btn.dataset.id;
     delete S.attProfiles[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'attorney_profile' } });
@@ -1898,6 +2084,44 @@ document.addEventListener('click', function(e) {
       matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { deleted: true }, id).catch(function(e) { console.error(e); });
     }
     setState({ editId: null, draft: {} });
+    return;
+  }
+
+  // Admin view actions
+  if (action === 'admin-show-create') {
+    if (S.role !== 'admin') return;
+    setState({ adminEditUserId: 'new', adminDraft: { username: '', displayName: '', password: '', role: 'attorney' } });
+    return;
+  }
+  if (action === 'admin-cancel-create' || action === 'admin-cancel-edit') {
+    setState({ adminEditUserId: null, adminDraft: {} });
+    return;
+  }
+  if (action === 'admin-edit-user') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    var user = S.users[mxid];
+    if (user) {
+      setState({ adminEditUserId: mxid, adminDraft: { displayName: user.displayName, role: user.role, password: '' } });
+    }
+    return;
+  }
+  if (action === 'admin-create-user') {
+    if (S.role !== 'admin') return;
+    handleAdminCreateUser();
+    return;
+  }
+  if (action === 'admin-save-user') {
+    if (S.role !== 'admin') return;
+    handleAdminSaveUser();
+    return;
+  }
+  if (action === 'admin-deactivate-user') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    if (mxid && confirm('Deactivate user ' + mxid + '? This cannot be undone.')) {
+      handleAdminDeactivateUser(mxid);
+    }
     return;
   }
 
@@ -1919,7 +2143,13 @@ document.addEventListener('input', function(e) {
     return;
   }
 
+  if (action === 'admin-draft-field') {
+    S.adminDraft[key] = val;
+    return;
+  }
+
   if (action === 'national-field') {
+    if (S.role !== 'admin') return;
     S.national[key] = val;
     S.national.updatedBy = S.currentUser;
     S.national.updatedAt = now();
@@ -1983,6 +2213,11 @@ document.addEventListener('change', function(e) {
   var action = el.dataset.change;
   var val = el.value;
 
+  if (action === 'admin-draft-role') {
+    S.adminDraft.role = val;
+    return;
+  }
+
   if (action === 'board-table-group') {
     setState({ boardTableGroup: val });
     return;
@@ -2026,6 +2261,173 @@ document.addEventListener('change', function(e) {
     return;
   }
 });
+
+// ── Admin Business Logic ─────────────────────────────────────────
+function showAdminError(elementId, msg) {
+  var el = document.getElementById(elementId);
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+}
+
+function handleAdminCreateUser() {
+  var d = S.adminDraft;
+  if (!d.username || !d.password) {
+    showAdminError('admin-create-error', 'Username and password are required.');
+    return;
+  }
+
+  var mxid = '@' + d.username.trim() + ':' + CONFIG.MATRIX_SERVER_NAME;
+  var displayName = d.displayName || d.username;
+  var role = d.role || 'attorney';
+  var powerLevel = role === 'admin' ? 50 : 0;
+
+  var createBtn = document.getElementById('admin-create-btn');
+  if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
+
+  // Step 1: Create account via Synapse admin API
+  matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+    password: d.password,
+    displayname: displayName,
+    admin: false,
+    deactivated: false,
+  })
+  .then(function() {
+    // Step 2: Store role in !org room as EVT_USER state event
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+      displayName: displayName,
+      role: role,
+      active: true,
+    }, mxid);
+  })
+  .then(function() {
+    // Step 3: Invite user to !org room
+    return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
+      if (e.errcode === 'M_FORBIDDEN') return;
+      console.warn('Invite to org room failed:', e);
+    });
+  })
+  .then(function() {
+    // Step 4: Invite user to !templates room
+    if (matrix.templatesRoomId) {
+      return matrix.inviteUser(matrix.templatesRoomId, mxid).catch(function(e) {
+        if (e.errcode === 'M_FORBIDDEN') return;
+        console.warn('Invite to templates room failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Step 5: Set power levels in !org room
+    return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
+      console.warn('Set org power level failed:', e);
+    });
+  })
+  .then(function() {
+    // Step 6: Set power levels in !templates room
+    if (matrix.templatesRoomId) {
+      return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
+        console.warn('Set templates power level failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Update local state
+    S.users[mxid] = {
+      mxid: mxid,
+      displayName: displayName,
+      role: role,
+      active: true,
+      createdBy: S.currentUser,
+      updatedAt: now(),
+    };
+    S.log.push({ op: 'CREATE', target: mxid, payload: displayName, frame: { t: now(), entity: 'user' } });
+    setState({ adminEditUserId: null, adminDraft: {} });
+  })
+  .catch(function(err) {
+    var msg = (err && err.error) || (err && err.message) || 'Failed to create user.';
+    if (err && err.status === 403) {
+      msg = 'Access denied. Your account may not have Synapse server admin privileges. Create users via command line instead.';
+    }
+    showAdminError('admin-create-error', msg);
+    if (createBtn) { createBtn.disabled = false; createBtn.textContent = 'Create Account'; }
+  });
+}
+
+function handleAdminSaveUser() {
+  var mxid = S.adminEditUserId;
+  if (!mxid || mxid === 'new') return;
+  var d = S.adminDraft;
+  var displayName = d.displayName || mxid.replace(/@(.+):.*/, '$1');
+  var role = d.role || 'attorney';
+  var powerLevel = role === 'admin' ? 50 : 0;
+
+  // Update EVT_USER state event
+  var chain = matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    displayName: displayName,
+    role: role,
+    active: S.users[mxid] ? S.users[mxid].active : true,
+  }, mxid);
+
+  // Update power levels in both rooms
+  chain = chain.then(function() {
+    return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
+      console.warn('Set org PL failed:', e);
+    });
+  })
+  .then(function() {
+    if (matrix.templatesRoomId) {
+      return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
+        console.warn('Set templates PL failed:', e);
+      });
+    }
+  });
+
+  // Optionally reset password
+  if (d.password && d.password.trim()) {
+    chain = chain.then(function() {
+      return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+        password: d.password,
+      });
+    });
+  }
+
+  chain.then(function() {
+    S.users[mxid] = Object.assign({}, S.users[mxid], {
+      displayName: displayName,
+      role: role,
+      updatedAt: now(),
+    });
+    S.log.push({ op: 'UPDATE', target: mxid, payload: role, frame: { t: now(), entity: 'user' } });
+    setState({ adminEditUserId: null, adminDraft: {} });
+  })
+  .catch(function(err) {
+    var msg = (err && err.error) || 'Failed to update user.';
+    showAdminError('admin-edit-error', msg);
+  });
+}
+
+function handleAdminDeactivateUser(mxid) {
+  matrix.adminApi('POST', '/v1/deactivate/' + encodeURIComponent(mxid), { erase: false })
+    .then(function() {
+      return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+        displayName: S.users[mxid] ? S.users[mxid].displayName : mxid,
+        role: S.users[mxid] ? S.users[mxid].role : 'attorney',
+        active: false,
+      }, mxid);
+    })
+    .then(function() {
+      if (S.users[mxid]) {
+        S.users[mxid].active = false;
+        S.users[mxid].updatedAt = now();
+      }
+      S.log.push({ op: 'DELETE', target: mxid, payload: null, frame: { t: now(), entity: 'user' } });
+      setState({ adminEditUserId: null, adminDraft: {} });
+    })
+    .catch(function(err) {
+      alert('Deactivation failed: ' + ((err && err.error) || 'unknown error'));
+    });
+}
 
 // ── Flush pending syncs on visibility change / page unload ──────
 // When the user switches tabs or is about to leave, immediately fire
