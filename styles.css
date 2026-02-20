@@ -895,6 +895,9 @@ body,
   left: -99999px;
   visibility: hidden;
   pointer-events: none;
+  font-family: "Times New Roman", Times, serif;
+  font-size: 12pt;
+  line-height: 1.35;
 }
 
 /* ── Page shell ───────────────────────────────────── */
