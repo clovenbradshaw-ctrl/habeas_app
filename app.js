@@ -367,6 +367,7 @@ var FACILITY_FIELDS = [
 var COURT_FIELDS = [
   { key: 'district', label: 'District', ph: 'Middle District of Tennessee' },
   { key: 'division', label: 'Division', ph: 'Nashville Division' },
+  { key: 'website', label: 'Court Website', ph: 'https://ecf.vaed.uscourts.gov/' },
 ];
 var NATIONAL_FIELDS = [
   { key: 'iceDirector', label: 'ICE Director', ph: 'Tom Homan' },
@@ -423,7 +424,7 @@ var DEFAULT_PAGE_SETTINGS = {
 function buildVarMap(c, p, a1, a2, nat) {
   c = c || {}; p = p || {}; a1 = a1 || {}; a2 = a2 || {}; nat = nat || {};
   return {
-    COURT_DISTRICT: p.district || '', COURT_DIVISION: p.division || '',
+    COURT_DISTRICT: p.district || '', COURT_DIVISION: p.division || '', COURT_WEBSITE: p.courtWebsite || '',
     CASE_NUMBER: p.caseNumber || '',
     PETITIONER_FULL_NAME: c.name || '', PETITIONER_COUNTRY: c.country || '',
     PETITIONER_YEARS_IN_US: c.yearsInUS || '', PETITIONER_ENTRY_DATE: c.entryDate || '',
@@ -1318,7 +1319,7 @@ function hydrateFromMatrix() {
             stage: pc.stage || 'drafted',
             stageHistory: pc.stageHistory || [{ stage: 'drafted', at: new Date(pe.origin_server_ts).toISOString() }],
             blocks: blocks,
-            district: pc.district || '', division: pc.division || '',
+            district: pc.district || '', division: pc.division || '', courtWebsite: pc.courtWebsite || '',
             caseNumber: pc.caseNumber || '',
             facilityName: pc.facilityName || '', facilityCity: pc.facilityCity || '',
             facilityState: pc.facilityState || '', warden: pc.warden || '',
@@ -1823,9 +1824,9 @@ function exportFacilitiesCSV() {
 function exportCourtsCSV() {
   var items = Object.values(S.courts);
   items.sort(function(a, b) { return (a.district || '').localeCompare(b.district || ''); });
-  var headers = ['District', 'Division'];
+  var headers = ['District', 'Division', 'Website'];
   var rows = items.map(function(c) {
-    return [c.district || '', c.division || ''];
+    return [c.district || '', c.division || '', c.website || ''];
   });
   downloadCSV(buildCSV(headers, rows), 'courts-' + new Date().toISOString().slice(0, 10) + '.csv');
 }
@@ -2083,7 +2084,7 @@ function syncPetitionToMatrix(pet, label) {
   if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
   return matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
     clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
-    district: pet.district, division: pet.division, caseNumber: pet.caseNumber,
+    district: pet.district, division: pet.division, courtWebsite: pet.courtWebsite || '', caseNumber: pet.caseNumber,
     facilityName: pet.facilityName, facilityCity: pet.facilityCity,
     facilityState: pet.facilityState, warden: pet.warden,
     fieldOfficeDirector: pet.fieldOfficeDirector, fieldOfficeName: pet.fieldOfficeName,
@@ -2702,7 +2703,7 @@ function renderDirectory() {
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
     if (isAdmin) h += '<button class="hbtn sm" data-action="export-courts-csv">&#8681; CSV</button>';
     h += '</div>';
-    h += '<p class="dir-desc">District + division combos. Selecting a court on a matter fills both fields.</p>';
+    h += '<p class="dir-desc">District + division combos with court filing website. Selecting a court on a matter fills all fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.courts).forEach(function(c) {
       if (isAdmin && S.editId !== c.id) {
@@ -2725,6 +2726,7 @@ function renderDirectory() {
         h += '<div class="dir-card-head">';
         h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
+        if (c.website) h += '<div class="dir-card-link"><a href="' + esc(c.website) + '" target="_blank" rel="noopener noreferrer">&#128279; ' + esc(c.website) + '</a></div>';
         h += htmlProvenanceBadge(c);
       }
       h += '</div>';
@@ -2994,6 +2996,7 @@ function renderEditor() {
 
   if (S.editorTab === 'court') {
     h += htmlPicker('Select Court', Object.values(S.courts), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'goto-directory');
+    if (pet.courtWebsite) h += '<div class="dir-card-link" style="margin-bottom:6px"><a href="' + esc(pet.courtWebsite) + '" target="_blank" rel="noopener noreferrer">&#128279; Court Filing Portal</a></div>';
     h += htmlFieldGroup('Court (manual override)', COURT_FIELDS, pet, 'editor-pet-field');
     h += '<div style="height:8px"></div>';
     h += htmlPicker('Select Facility', Object.values(S.facilities), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'goto-directory');
@@ -3629,7 +3632,7 @@ document.addEventListener('click', function(e) {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
       stageHistory: [{ stage: 'drafted', at: now() }],
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
-      district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
+      district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
@@ -3786,7 +3789,7 @@ document.addEventListener('click', function(e) {
   if (action === 'add-court') {
     if (S.role !== 'admin') return;
     var id = uid();
-    var c = { id: id, district: '', division: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    var c = { id: id, district: '', division: '', website: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.courts[id] = c;
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
     setState({ editId: id, draft: Object.assign({}, c) });
@@ -3798,7 +3801,7 @@ document.addEventListener('click', function(e) {
     S.courts[c.id] = c;
     S.log.push({ op: 'UPDATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division }, c.id)
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division, website: c.website || '' }, c.id)
         .then(function() { toast('ALT \u21CC court', 'success'); })
         .catch(function(e) { console.error(e); toast('ALT \u21CC court failed', 'error'); });
     }
@@ -4098,7 +4101,7 @@ document.addEventListener('change', function(e) {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
       stageHistory: [{ stage: 'drafted', at: now() }],
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
-      district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
+      district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
@@ -4131,7 +4134,7 @@ document.addEventListener('change', function(e) {
   if (action === 'apply-court') {
     var c = S.courts[val];
     if (c) {
-      Object.assign(pet, { district: c.district, division: c.division, _courtId: val });
+      Object.assign(pet, { district: c.district, division: c.division, courtWebsite: c.website || '', _courtId: val });
       S.log.push({ op: 'APPLY', target: 'court', payload: val, frame: { t: now(), petition: pet.id } });
       syncPetitionToMatrix(pet, 'Court');
       render();
