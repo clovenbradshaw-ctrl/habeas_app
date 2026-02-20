@@ -649,6 +649,48 @@ body,
   font-size: 9px;
 }
 
+/* ── Kanban Drag-and-Drop ────────────────────────── */
+.kb-card[draggable="true"] {
+  cursor: grab;
+}
+.kb-card[draggable="true"]:active {
+  cursor: grabbing;
+}
+.kb-dragging {
+  opacity: 0.4 !important;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+.kb-drop-target {
+  min-height: 120px;
+}
+.kb-drop-over {
+  background: rgba(160, 133, 64, 0.06);
+  border-radius: 4px;
+  outline: 2px dashed var(--accent);
+  outline-offset: -4px;
+}
+
+/* ── Submitted column show-all toggle ────────────── */
+.kb-show-all-btn {
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 3px;
+  padding: 6px 12px;
+  cursor: pointer;
+  width: 100%;
+  text-align: center;
+  letter-spacing: 0.3px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.kb-show-all-btn:hover {
+  background: rgba(160, 133, 64, 0.06);
+  border-color: var(--accent);
+}
+
 /* ── Board Table View ──────────────────────────────── */
 .board-table-wrap {
   max-width: 1200px;
@@ -1025,6 +1067,17 @@ body,
   line-height: 1.35;
   color: #000;
 }
+.page-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  font-size: 9pt;
+  color: #888;
+  font-family: "Times New Roman", Times, serif;
+}
 .page-foot {
   position: absolute;
   bottom: 0;
@@ -1032,9 +1085,20 @@ body,
   right: 0;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   font-size: 9pt;
   color: #888;
+}
+.page-head > span,
+.page-foot > span {
+  flex: 1;
+}
+.page-head > span:nth-child(2),
+.page-foot > span:nth-child(2) {
+  text-align: center;
+}
+.page-head > span:last-child,
+.page-foot > span:last-child {
+  text-align: right;
 }
 
 /* ── Block styles ─────────────────────────────────── */

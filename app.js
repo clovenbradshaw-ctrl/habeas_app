@@ -381,6 +381,13 @@ var RESPONDENT_FIELDS = [
   { key: 'fieldOfficeName', label: 'Field Office', ph: '' },
 ];
 
+var DEFAULT_PAGE_SETTINGS = {
+  headerLeft: '', headerCenter: '', headerRight: '',
+  footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '{{PAGE}}',
+  showHeaderOnFirstPage: false,
+  showFooterOnFirstPage: true
+};
+
 function buildVarMap(c, p, a1, a2, nat) {
   c = c || {}; p = p || {}; a1 = a1 || {}; a2 = a2 || {}; nat = nat || {};
   return {
@@ -557,6 +564,7 @@ var matrix = {
   _syncToken: null,
   _polling: false,
   _pollAbort: null,
+  _flushing: false,
 
   _headers: function() {
     return {
@@ -568,13 +576,19 @@ var matrix = {
   _api: function(method, path, body) {
     var opts = { method: method, headers: this._headers() };
     if (body) opts.body = JSON.stringify(body);
-    // Abort fetch after 15 seconds to avoid hanging on unreachable servers
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
-    opts.signal = controller.signal;
+    var controller, timeoutId;
+    if (this._flushing) {
+      // During page unload flush: use keepalive so browser doesn't cancel the request
+      opts.keepalive = true;
+    } else {
+      // Normal operation: abort fetch after 15 seconds to avoid hanging
+      controller = new AbortController();
+      timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+      opts.signal = controller.signal;
+    }
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (!r.ok) {
           var httpStatus = r.status;
           return r.text().then(function(text) {
@@ -594,7 +608,7 @@ var matrix = {
         return r.json();
       })
       .catch(function(e) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (e && e.errcode) throw e;
         if (e && e.name === 'AbortError') {
           throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
@@ -900,16 +914,19 @@ var matrix = {
       }
 
       events.forEach(function(evt) {
-        if (evt.sender === self.userId) return;
         if (!self.rooms[roomId].stateEvents[evt.type]) {
           self.rooms[roomId].stateEvents[evt.type] = {};
         }
+        var existing = self.rooms[roomId].stateEvents[evt.type][evt.state_key];
         self.rooms[roomId].stateEvents[evt.type][evt.state_key] = {
           content: evt.content,
           sender: evt.sender,
           origin_server_ts: evt.origin_server_ts,
         };
-        changed = true;
+        // Trigger hydrateFromMatrix for non-self events or newly appearing state keys
+        if (evt.sender !== self.userId || !existing) {
+          changed = true;
+        }
       });
     });
 
@@ -946,6 +963,7 @@ var S = {
   boardMode: 'kanban',
   boardTableGroup: 'stage',
   boardAddingMatter: false,
+  boardShowAllSubmitted: false,
   _rendering: false,
 };
 
@@ -1034,6 +1052,30 @@ function ensureRoom(alias, name) {
     });
 }
 
+// ── Admin Auto-Invite Helpers ────────────────────────────────────
+function getAdminMxids() {
+  var admins = [];
+  Object.keys(S.users).forEach(function(mxid) {
+    if (S.users[mxid].role === 'admin' && S.users[mxid].active !== false && mxid !== matrix.userId) {
+      admins.push(mxid);
+    }
+  });
+  return admins;
+}
+
+function inviteAdminsToRoom(roomId) {
+  var admins = getAdminMxids();
+  admins.forEach(function(mxid) {
+    matrix.inviteUser(roomId, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(roomId, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite/set PL for admin', mxid, 'in room', roomId, e);
+      });
+  });
+}
+
 // ── Hydration from Matrix ────────────────────────────────────────
 function hydrateFromMatrix() {
   // Discover or auto-create org and templates rooms
@@ -1056,6 +1098,26 @@ function hydrateFromMatrix() {
         if (k && e.content && e.content.name && !e.content.deleted) {
           facilities[k] = Object.assign({ id: k, createdBy: e.sender, updatedAt: new Date(e.origin_server_ts).toISOString() }, e.content);
         }
+      });
+
+      // Seed all ICE facilities so they are available in the directory for all users.
+      // Only adds seeds that haven't already been saved (or deleted) in Matrix.
+      ICE_FACILITY_SEEDS.forEach(function(seed) {
+        var seedId = 'seed-' + seed.n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        // Skip if this facility already exists in Matrix (active or deleted)
+        if (facEvents[seedId]) return;
+        facilities[seedId] = {
+          id: seedId,
+          name: seed.n,
+          city: seed.c,
+          state: stateAbbrToName(seed.s),
+          warden: '',
+          fieldOfficeName: seed.fo,
+          fieldOfficeDirector: '',
+          createdBy: 'system',
+          updatedAt: new Date().toISOString(),
+          seeded: true
+        };
       });
 
       // Courts
@@ -1153,6 +1215,7 @@ function hydrateFromMatrix() {
             templateId: pc.templateId, att1Id: pc.att1Id, att2Id: pc.att2Id,
             _facilityId: pc._facilityId, _courtId: pc._courtId,
             _att1Id: pc._att1Id, _att2Id: pc._att2Id,
+            pageSettings: pc.pageSettings || Object.assign({}, DEFAULT_PAGE_SETTINGS),
             createdAt: new Date(pe.origin_server_ts).toISOString(),
             roomId: roomId,
           };
@@ -1408,7 +1471,17 @@ function doExportDocx(blocks, vars, name) {
   }
 }
 
-function buildDocHTML(blocks, vars) {
+function buildDocHTML(blocks, vars, pageSettings) {
+  var ps = pageSettings || DEFAULT_PAGE_SETTINGS;
+  var caseNo = (vars.CASE_NUMBER && vars.CASE_NUMBER.trim()) ? 'C/A No. ' + vars.CASE_NUMBER : '';
+  function resolveExportVar(text) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, '')  // Page numbers not available in single-flow HTML export
+      .replace(/\{\{PAGE_NUM\}\}/g, '')
+      .replace(/\{\{TOTAL_PAGES\}\}/g, '')
+      .replace(/\{\{CASE_NUMBER\}\}/g, caseNo);
+  }
   var titles = blocks.filter(function(b) { return TITLE_IDS[b.id]; })
     .map(function(b) { return '<div class="title">' + capSub(b.content, vars) + '</div>'; }).join('');
   var capLeft = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; })
@@ -1428,15 +1501,20 @@ function buildDocHTML(blocks, vars) {
       return '<div class="' + cls + '">' + text + '</div>';
     }).join('');
   var parens = Array(24).fill(')').join('<br>');
+  var hasHeader = ps.headerLeft || ps.headerCenter || ps.headerRight;
+  var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
+  var hfCss = '.doc-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666}.doc-hf span{flex:1}.doc-hf span:nth-child(2){text-align:center}.doc-hf span:last-child{text-align:right}.doc-hdr{margin-bottom:12pt}.doc-ftr{margin-top:24pt}';
+  var headerHtml = hasHeader ? '<div class="doc-hf doc-hdr"><span>' + resolveExportVar(ps.headerLeft) + '</span><span>' + resolveExportVar(ps.headerCenter) + '</span><span>' + resolveExportVar(ps.headerRight) + '</span></div>' : '';
+  var footerHtml = hasFooter ? '<div class="doc-hf doc-ftr"><span>' + resolveExportVar(ps.footerLeft) + '</span><span>' + resolveExportVar(ps.footerCenter) + '</span><span>' + resolveExportVar(ps.footerRight) + '</span></div>' : '';
   return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head>' +
     '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
     '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
     '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
-    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body><div class="WordSection1">' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</div></body></html>';
+    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
 }
 
-function doExportDoc(blocks, vars, name) {
-  var html = buildDocHTML(blocks, vars);
+function doExportDoc(blocks, vars, name, pageSettings) {
+  var html = buildDocHTML(blocks, vars, pageSettings);
   var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -1447,10 +1525,10 @@ function doExportDoc(blocks, vars, name) {
   setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 }
 
-function doExportPDF(blocks, vars) {
+function doExportPDF(blocks, vars, pageSettings) {
   var w = window.open('', '_blank', 'width=850,height=1100');
   if (!w) { alert('Allow popups for PDF export'); return; }
-  w.document.write(buildDocHTML(blocks, vars));
+  w.document.write(buildDocHTML(blocks, vars, pageSettings));
   w.document.close();
   setTimeout(function() { w.focus(); w.print(); }, 500);
 }
@@ -1593,7 +1671,17 @@ function exportAttorneyProfilesCSV() {
 }
 
 // ── Template-based export (uses template.html) ─────────────────
-function buildExportFromTemplate(vars, forWord) {
+function buildExportFromTemplate(vars, forWord, pageSettings) {
+  var ps = pageSettings || DEFAULT_PAGE_SETTINGS;
+  var caseNo = (vars.CASE_NUMBER && vars.CASE_NUMBER.trim()) ? 'C/A No. ' + vars.CASE_NUMBER : '';
+  function resolveExpVar(text, pgNum, pgTotal) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + pgNum + ' of ' + pgTotal)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(pgNum))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(pgTotal))
+      .replace(/\{\{CASE_NUMBER\}\}/g, caseNo);
+  }
   return fetch('template.html')
     .then(function(r) {
       if (!r.ok) throw new Error('Template fetch failed: ' + r.status);
@@ -1610,6 +1698,39 @@ function buildExportFromTemplate(vars, forWord) {
       });
       // Override .ph styling for export (no red color)
       html = html.replace('.ph {', '.ph-disabled {');
+
+      // Inject header/footer into template pages
+      var hasHeader = ps.headerLeft || ps.headerCenter || ps.headerRight;
+      var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
+      if (hasHeader || hasFooter) {
+        var pageMatches = html.match(/<section class="page">/g) || [];
+        var totalPages = pageMatches.length;
+        var hfCss = '.page-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666;font-family:"Times New Roman",serif}.page-hf span{flex:1}.page-hf span:nth-child(2){text-align:center}.page-hf span:last-child{text-align:right}.page-hdr{margin-bottom:12pt}.page-ftr{margin-top:24pt}';
+        html = html.replace('</style>', hfCss + '\n</style>');
+
+        var pgIdx = 0;
+        html = html.replace(/<section class="page">/g, function() {
+          pgIdx++;
+          var isFirst = pgIdx === 1;
+          var hdrHtml = '';
+          if (hasHeader && (!isFirst || ps.showHeaderOnFirstPage)) {
+            hdrHtml = '<div class="page-hf page-hdr"><span>' + resolveExpVar(ps.headerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerRight, pgIdx, totalPages) + '</span></div>';
+          }
+          return '<section class="page">' + hdrHtml;
+        });
+
+        pgIdx = 0;
+        html = html.replace(/<\/section>/g, function() {
+          pgIdx++;
+          var isFirst = pgIdx === 1;
+          var ftrHtml = '';
+          if (hasFooter && (!isFirst || ps.showFooterOnFirstPage)) {
+            ftrHtml = '<div class="page-hf page-ftr"><span>' + resolveExpVar(ps.footerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerRight, pgIdx, totalPages) + '</span></div>';
+          }
+          return ftrHtml + '</section>';
+        });
+      }
+
       if (forWord) {
         // Add Word XML namespaces for .doc compatibility
         html = html.replace('<!doctype html>', '');
@@ -1640,11 +1761,14 @@ function buildExportFromTemplate(vars, forWord) {
 // ── Matrix sync helpers ─────────────────────────────────────────
 var _syncTimers = {};
 function debouncedSync(key, fn) {
-  if (_syncTimers[key]) clearTimeout(_syncTimers[key]);
-  _syncTimers[key] = setTimeout(fn, 1000);
+  if (_syncTimers[key]) clearTimeout(_syncTimers[key].timer);
+  _syncTimers[key] = {
+    timer: setTimeout(function() { delete _syncTimers[key]; fn(); }, 1000),
+    fn: fn
+  };
 }
 
-function syncClientToMatrix(client) {
+function syncClientToMatrix(client, label) {
   if (!matrix.isReady() || !client.roomId) return Promise.resolve();
   return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
     id: client.id, name: client.name, country: client.country,
@@ -1654,7 +1778,10 @@ function syncClientToMatrix(client) {
     apprehensionDate: client.apprehensionDate,
     criminalHistory: client.criminalHistory,
     communityTies: client.communityTies,
-  }, '').catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
+  }, '').then(function(data) {
+    if (label) toast('CON \u22C8 ' + label, 'success');
+    return data;
+  }).catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
 }
 
 // Create a Matrix room for a client and sync initial data
@@ -1713,7 +1840,7 @@ function createClientRoom(clientId) {
       if (p.clientId === clientId && !p.roomId) {
         p.roomId = roomId;
         // Sync any pending petitions now that we have a roomId
-        syncPetitionToMatrix(p);
+        syncPetitionToMatrix(p, 'petition');
         if (p.blocks && p.blocks.length > 0) {
           matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
             .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
@@ -1721,6 +1848,9 @@ function createClientRoom(clientId) {
       }
     });
     console.log('Created Matrix room for client', clientId, '→', roomId);
+    if (matrix.isReady()) {
+      inviteAdminsToRoom(roomId);
+    }
     delete _pendingRoomCreations[clientId];
     return roomId;
   }).catch(function(e) {
@@ -1744,6 +1874,7 @@ function syncPetitionToMatrix(pet, label) {
     _facilityId: pet._facilityId, _courtId: pet._courtId,
     _att1Id: pet._att1Id, _att2Id: pet._att2Id,
     templateId: pet.templateId,
+    pageSettings: pet.pageSettings,
   }, pet.id).then(function(data) {
     if (label) toast('CON \u22C8 ' + label, 'success');
     return data;
@@ -1991,6 +2122,13 @@ function renderBoard() {
 
   // Add Matter button / inline client picker
   var clientList = Object.values(S.clients);
+  if (S.role !== 'admin') {
+    var myBoardClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.createdBy === S.currentUser) myBoardClientIds[p.clientId] = true;
+    });
+    clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
+  }
   if (S.boardAddingMatter && clientList.length > 0) {
     h += '<div class="board-add-matter">';
     h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
@@ -2023,22 +2161,59 @@ function renderBoard() {
 
 function renderBoardKanban(vis) {
   var h = '<div class="kanban">';
+  var NOW = Date.now();
+  var WEEK_MS = 7 * 24 * 60 * 60 * 1000;
   STAGES.forEach(function(stage) {
     var items = vis.filter(function(p) { return p.stage === stage; })
-      .sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+      .sort(function(a, b) {
+        // For submitted: sort by time entered submitted (newest first)
+        if (stage === 'submitted') {
+          var aTime = submittedAt(a);
+          var bTime = submittedAt(b);
+          return bTime - aTime;
+        }
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
     var m = SM[stage];
-    h += '<div class="kb-col"><div class="kb-col-head" style="border-bottom-color:' + m.color + '">';
+
+    // For submitted column, compute hidden count
+    var hiddenCount = 0;
+    if (stage === 'submitted' && !S.boardShowAllSubmitted) {
+      hiddenCount = items.filter(function(p) {
+        var age = NOW - submittedAt(p);
+        return age >= WEEK_MS;
+      }).length;
+    }
+
+    h += '<div class="kb-col" data-stage="' + stage + '"><div class="kb-col-head" style="border-bottom-color:' + m.color + '">';
     h += '<span class="kb-col-title">' + m.label + '</span>';
     h += '<span class="kb-col-count" style="background:' + m.color + '">' + items.length + '</span>';
-    h += '</div><div class="kb-col-body">';
+    h += '</div><div class="kb-col-body" data-drop-stage="' + stage + '">';
     if (items.length === 0) {
       h += '<div class="kb-empty">None</div>';
     }
     items.forEach(function(p) {
+      // For submitted cards: compute opacity based on age
+      var fadeStyle = '';
+      var isHidden = false;
+      if (stage === 'submitted') {
+        var age = NOW - submittedAt(p);
+        if (age >= WEEK_MS && !S.boardShowAllSubmitted) {
+          isHidden = true;
+          return; // skip rendering
+        }
+        // Fade from 1.0 (just submitted) to 0.25 (approaching 1 week)
+        var ratio = Math.min(age / WEEK_MS, 1);
+        var opacity = 1 - (ratio * 0.75); // 1.0 → 0.25
+        if (opacity < 1) {
+          fadeStyle = ' opacity:' + opacity.toFixed(2) + ';';
+        }
+      }
+
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
       var attNames = petAttorneyNames(p);
-      h += '<div class="kb-card" style="border-left-color:' + m.color + '" data-action="open-petition" data-id="' + p.id + '">';
+      h += '<div class="kb-card" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
       h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
@@ -2059,10 +2234,31 @@ function renderBoardKanban(vis) {
       if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + STAGES[si + 1] + ' &rarr;</button>';
       h += '</div></div>';
     });
+
+    // Show all toggle for submitted column
+    if (stage === 'submitted' && hiddenCount > 0) {
+      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-submitted">Show ' + hiddenCount + ' older</button>';
+    }
+    if (stage === 'submitted' && S.boardShowAllSubmitted) {
+      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-submitted">Hide older</button>';
+    }
+
     h += '</div></div>';
   });
   h += '</div>';
   return h;
+}
+
+// Helper: get the timestamp when a petition entered the submitted stage
+function submittedAt(p) {
+  if (p.stageHistory && p.stageHistory.length > 0) {
+    for (var i = p.stageHistory.length - 1; i >= 0; i--) {
+      if (p.stageHistory[i].stage === 'submitted') {
+        return new Date(p.stageHistory[i].at).getTime();
+      }
+    }
+  }
+  return new Date(p.createdAt).getTime();
 }
 
 function renderBoardTable(vis) {
@@ -2436,7 +2632,7 @@ function renderEditor() {
   var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
 
   var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
-  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['filing','Filing'],['page','Page'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div><div class="ed-fields">';
@@ -2467,6 +2663,37 @@ function renderEditor() {
     h += htmlFieldGroup('Filing', FILING_FIELDS, pet, 'editor-pet-field');
   }
 
+  if (S.editorTab === 'page') {
+    var ps = pet.pageSettings || DEFAULT_PAGE_SETTINGS;
+    h += '<div class="fg"><div class="fg-title">Header</div>';
+    h += '<div class="frow"><label class="flbl">Left</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.headerLeft) + '" data-field-key="headerLeft" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Center</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.headerCenter) + '" data-field-key="headerCenter" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Right</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.headerRight) + '" data-field-key="headerRight" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">First Page</label>';
+    h += '<select class="finp" data-field-key="showHeaderOnFirstPage" data-change="page-settings">';
+    h += '<option value="false"' + (!ps.showHeaderOnFirstPage ? ' selected' : '') + '>Hide on first page</option>';
+    h += '<option value="true"' + (ps.showHeaderOnFirstPage ? ' selected' : '') + '>Show on first page</option>';
+    h += '</select></div></div>';
+
+    h += '<div class="fg"><div class="fg-title">Footer</div>';
+    h += '<div class="frow"><label class="flbl">Left</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.footerLeft) + '" data-field-key="footerLeft" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Center</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.footerCenter) + '" data-field-key="footerCenter" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Right</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.footerRight) + '" data-field-key="footerRight" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">First Page</label>';
+    h += '<select class="finp" data-field-key="showFooterOnFirstPage" data-change="page-settings">';
+    h += '<option value="true"' + (ps.showFooterOnFirstPage ? ' selected' : '') + '>Show on first page</option>';
+    h += '<option value="false"' + (!ps.showFooterOnFirstPage ? ' selected' : '') + '>Hide on first page</option>';
+    h += '</select></div></div>';
+
+    h += '<p style="font-size:10px;color:#aaa;margin-top:8px">Variables: <code>{{CASE_NUMBER}}</code> for case no., <code>{{PAGE}}</code> for "Page X of Y", <code>{{PAGE_NUM}}</code> for number only.</p>';
+  }
+
   if (S.editorTab === 'log') {
     h += '<div class="lscroll">';
     if (S.log.length === 0) h += '<div class="lempty">No operations yet.</div>';
@@ -2488,13 +2715,13 @@ function renderEditor() {
 
   // Document area
   h += '<div class="doc-scroll" id="doc-scroll">';
-  h += renderPaginatedDoc(pet.blocks, vars, caseNo);
+  h += renderPaginatedDoc(pet.blocks, vars, caseNo, pet.pageSettings);
   h += '<div style="height:60px;flex-shrink:0"></div>';
   h += '</div></div>';
   return h;
 }
 
-function renderPaginatedDoc(blocks, vars, caseNo) {
+function renderPaginatedDoc(blocks, vars, caseNo, pageSettings) {
   var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
   var capBlocks = blocks.filter(function(b) { return TITLE_IDS[b.id]; });
   var capLBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
@@ -2532,12 +2759,16 @@ function renderPaginatedDoc(blocks, vars, caseNo) {
   h += '</div></div>';
 
   // Initial single page - will be repaginated by initPagination()
+  var ips = pageSettings || DEFAULT_PAGE_SETTINGS;
   h += '<div id="pages-container">';
   h += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
   h += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
   h += renderCaption(true);
   body.forEach(function(b) { h += renderBlock(b, true); });
-  h += '</div><div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span>Page 1 of 1</span></div>';
+  h += '</div>';
+  if (ips.footerLeft || ips.footerCenter || ips.footerRight) {
+    h += '<div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span></span><span>Page 1 of 1</span></div>';
+  }
   h += '</div></div>';
   h += '</div>';
 
@@ -2565,22 +2796,39 @@ function initPagination() {
   var capEl = mb.querySelector('[data-mr="cap"]');
   var capH = capEl ? capEl.offsetHeight : 0;
   var blockEls = Array.from(mb.querySelectorAll('[data-mr="body"]>[data-block-id]'));
-  var hs = blockEls.map(function(e) { return { id: e.dataset.blockId, h: e.offsetHeight }; });
+  var hs = blockEls.map(function(e) {
+    var cs = window.getComputedStyle(e);
+    var mt = parseFloat(cs.marginTop) || 0;
+    var mbot = parseFloat(cs.marginBottom) || 0;
+    return {
+      id: e.dataset.blockId,
+      h: e.offsetHeight + mt + mbot,
+      isHeading: e.className.indexOf('blk-heading') >= 0
+    };
+  });
 
   var pages = [];
   var cur = [];
   var rem = USABLE_H - capH;
   var pi = 0;
-  hs.forEach(function(item) {
+  for (var i = 0; i < hs.length; i++) {
+    var item = hs[i];
     if (item.h > rem && cur.length > 0) {
       pages.push({ ids: cur, first: pi === 0 });
-      cur = [];
-      rem = USABLE_H;
-      pi++;
+      cur = []; rem = USABLE_H; pi++;
+    }
+    // Heading orphan prevention: if heading fits but heading + next block doesn't,
+    // push heading to next page so it stays with its content
+    if (item.isHeading && cur.length > 0 && i + 1 < hs.length) {
+      var nextH = hs[i + 1].h;
+      if (item.h <= rem && item.h + nextH > rem) {
+        pages.push({ ids: cur, first: pi === 0 });
+        cur = []; rem = USABLE_H; pi++;
+      }
     }
     cur.push(item.id);
     rem -= item.h;
-  });
+  }
   if (cur.length > 0 || pages.length === 0) {
     pages.push({ ids: cur, first: pi === 0 });
   }
@@ -2611,16 +2859,53 @@ function initPagination() {
     return c;
   }
 
+  var ps = pet.pageSettings || DEFAULT_PAGE_SETTINGS;
+
+  function resolvePageVar(text, pageNum, totalPages, cn) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + pageNum + ' of ' + totalPages)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(pageNum))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(totalPages))
+      .replace(/\{\{CASE_NUMBER\}\}/g, cn);
+  }
+
   var html = '';
   pages.forEach(function(pg, idx) {
+    var pageNum = idx + 1;
+    var isFirst = idx === 0;
+
+    var hasHeaderContent = ps.headerLeft || ps.headerCenter || ps.headerRight;
+    var hasFooterContent = ps.footerLeft || ps.footerCenter || ps.footerRight;
+    var showHeader = hasHeaderContent && (!isFirst || ps.showHeaderOnFirstPage);
+    var showFooter = hasFooterContent && (!isFirst || ps.showFooterOnFirstPage);
+
     html += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
+
+    if (showHeader) {
+      html += '<div class="page-head" style="height:' + MG + 'px;padding:0 ' + MG + 'px 12px">';
+      html += '<span>' + esc(resolvePageVar(ps.headerLeft, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.headerCenter, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.headerRight, pageNum, total, caseNo)) + '</span>';
+      html += '</div>';
+    }
+
     html += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
     if (pg.first) html += renderCaption(true);
     pg.ids.forEach(function(id) {
       var b = bm[id];
       if (b) html += renderBlock(b, true);
     });
-    html += '</div><div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span>Page ' + (idx + 1) + ' of ' + total + '</span></div>';
+    html += '</div>';
+
+    if (showFooter) {
+      html += '<div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0">';
+      html += '<span>' + esc(resolvePageVar(ps.footerLeft, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.footerCenter, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.footerRight, pageNum, total, caseNo)) + '</span>';
+      html += '</div>';
+    }
+
     html += '</div></div>';
   });
 
@@ -2642,6 +2927,7 @@ function attachBlockListeners() {
       var bid = el.dataset.blockId;
       var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
       if (!pet) return;
+      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
       var block = pet.blocks.find(function(b) { return b.id === bid; });
       if (!block) return;
       var nc = extractBlockContent(el);
@@ -2707,8 +2993,79 @@ function render() {
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
   }
+  // Post-render: initialize kanban drag-and-drop
+  if (S.currentView === 'board' && S.boardMode === 'kanban') {
+    requestAnimationFrame(function() { initKanbanDragDrop(); });
+  }
   // Post-render: initialize flatpickr date pickers and facility autocomplete
   requestAnimationFrame(function() { initDatePickers(); initFacilityAC(); });
+}
+
+// ── Kanban Drag-and-Drop ────────────────────────────────────────
+function initKanbanDragDrop() {
+  var dropZones = document.querySelectorAll('[data-drop-stage]');
+  var cards = document.querySelectorAll('[data-drag-id]');
+
+  cards.forEach(function(card) {
+    card.addEventListener('dragstart', function(e) {
+      // Don't drag when starting from action buttons
+      if (e.target.closest && e.target.closest('.kb-card-actions')) {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.setData('text/plain', card.dataset.dragId);
+      e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('kb-dragging');
+      // Highlight valid drop columns
+      requestAnimationFrame(function() {
+        dropZones.forEach(function(z) { z.classList.add('kb-drop-target'); });
+      });
+    });
+    card.addEventListener('dragend', function() {
+      card.classList.remove('kb-dragging');
+      dropZones.forEach(function(z) {
+        z.classList.remove('kb-drop-target');
+        z.classList.remove('kb-drop-over');
+      });
+    });
+  });
+
+  dropZones.forEach(function(zone) {
+    zone.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('kb-drop-over');
+    });
+    zone.addEventListener('dragleave', function(e) {
+      // Only remove highlight when leaving the zone itself (not children)
+      if (!zone.contains(e.relatedTarget)) {
+        zone.classList.remove('kb-drop-over');
+      }
+    });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      zone.classList.remove('kb-drop-over');
+      dropZones.forEach(function(z) { z.classList.remove('kb-drop-target'); });
+
+      var petId = e.dataTransfer.getData('text/plain');
+      var newStage = zone.dataset.dropStage;
+      var pet = S.petitions[petId];
+      if (!pet) return;
+      if (pet.stage === newStage) return; // dropped in same column
+      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+
+      var t = now();
+      S.log.push({ op: 'STAGE', target: petId, payload: newStage, frame: { t: t, prior: pet.stage } });
+      S.petitions[pet.id] = Object.assign({}, pet, { stage: newStage, stageHistory: pet.stageHistory.concat([{ stage: newStage, at: t }]) });
+      if (matrix.isReady() && pet.roomId) {
+        var stageLabel = SM[newStage] ? SM[newStage].label : newStage;
+        matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: newStage, stageHistory: S.petitions[pet.id].stageHistory }), pet.id)
+          .then(function() { toast('ALT \u21CC stage \u2192 ' + stageLabel, 'success'); })
+          .catch(function(err) { console.error(err); toast('ALT \u21CC stage change failed', 'error'); });
+      }
+      render();
+    });
+  });
 }
 
 // ── Post-render Initializers ────────────────────────────────────
@@ -2838,6 +3195,7 @@ document.addEventListener('click', function(e) {
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'toggle-show-all-submitted') { setState({ boardShowAllSubmitted: !S.boardShowAllSubmitted }); return; }
   if (action === 'board-add-matter') {
     var clientList = Object.values(S.clients);
     if (clientList.length === 0) {
@@ -2861,6 +3219,7 @@ document.addEventListener('click', function(e) {
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     var idx = STAGES.indexOf(pet.stage);
     var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
     if (ni < 0 || ni >= STAGES.length) return;
@@ -2886,7 +3245,9 @@ document.addEventListener('click', function(e) {
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
     setState({ selectedClientId: id });
     // Create a Matrix room for the client in the background
-    createClientRoom(id);
+    createClientRoom(id).then(function(roomId) {
+      if (roomId) toast('INS \u2295 client', 'success');
+    });
     return;
   }
   if (action === 'create-petition') {
@@ -2900,16 +3261,28 @@ document.addEventListener('click', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
-    // Sync petition to Matrix (will be picked up by createClientRoom if roomId is empty)
+    // Sync petition to Matrix
     var pet = S.petitions[pid];
     if (pet.roomId && matrix.isReady()) {
-      syncPetitionToMatrix(pet);
+      // Room already exists — sync immediately
+      syncPetitionToMatrix(pet, 'petition');
       matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
         .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+    } else if (_pendingRoomCreations[cid]) {
+      // Room creation in flight — wait for it, then sync
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
@@ -2927,7 +3300,7 @@ document.addEventListener('click', function(e) {
       if (typeof docx !== 'undefined' && docx.Packer) {
         doExportDocx(pet.blocks, vars, cl.name);
       } else {
-        buildExportFromTemplate(vars, true)
+        buildExportFromTemplate(vars, true, pet.pageSettings)
           .then(function(html) {
             var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
             var url = URL.createObjectURL(blob);
@@ -2940,12 +3313,12 @@ document.addEventListener('click', function(e) {
           })
           .catch(function(err) {
             console.error('Template export failed, falling back to block export:', err);
-            doExportDoc(pet.blocks, vars, cl.name);
+            doExportDoc(pet.blocks, vars, cl.name, pet.pageSettings);
           });
       }
     } else {
       // PDF: template-based print flow
-      buildExportFromTemplate(vars, false)
+      buildExportFromTemplate(vars, false, pet.pageSettings)
         .then(function(html) {
           var w = window.open('', '_blank', 'width=850,height=1100');
           if (!w) { alert('Allow popups for PDF export'); return; }
@@ -2955,7 +3328,7 @@ document.addEventListener('click', function(e) {
         })
         .catch(function(err) {
           console.error('Template export failed, falling back to block export:', err);
-          doExportPDF(pet.blocks, vars);
+          doExportPDF(pet.blocks, vars, pet.pageSettings);
         });
     }
     return;
@@ -3157,13 +3530,22 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
       if (client.roomId) {
-        syncClientToMatrix(client);
+        syncClientToMatrix(client, 'client');
+      } else if (_pendingRoomCreations[client.id]) {
+        _pendingRoomCreations[client.id].then(function(roomId) {
+          if (roomId) syncClientToMatrix(client, 'client');
+        });
       } else if (matrix.isReady()) {
-        // Room hasn't been created yet — create it now (includes initial sync)
         createClientRoom(client.id);
       }
     });
@@ -3172,13 +3554,18 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
       if (client.roomId) {
-        syncClientToMatrix(client);
+        syncClientToMatrix(client, 'client');
+      } else if (_pendingRoomCreations[client.id]) {
+        _pendingRoomCreations[client.id].then(function(roomId) {
+          if (roomId) syncClientToMatrix(client, 'client');
+        });
       } else if (matrix.isReady()) {
         createClientRoom(client.id);
       }
@@ -3188,9 +3575,24 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
+    return;
+  }
+  if (action === 'page-settings') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (!pet.pageSettings) pet.pageSettings = Object.assign({}, DEFAULT_PAGE_SETTINGS);
+    if (key === 'showHeaderOnFirstPage' || key === 'showFooterOnFirstPage') {
+      pet.pageSettings[key] = (val === 'true');
+    } else {
+      pet.pageSettings[key] = val;
+    }
+    S.log.push({ op: 'FILL', target: 'petition.pageSettings.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+    setState({});
     return;
   }
 }
@@ -3258,15 +3660,25 @@ document.addEventListener('change', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
     var newPet = S.petitions[pid];
     if (newPet.roomId && matrix.isReady()) {
-      syncPetitionToMatrix(newPet);
+      syncPetitionToMatrix(newPet, 'petition');
       matrix.sendStateEvent(newPet.roomId, EVT_PETITION_BLOCKS, { blocks: newPet.blocks }, newPet.id)
-        .catch(function(e) { console.error('Block sync failed:', e); });
+        .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+    } else if (_pendingRoomCreations[cid]) {
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
@@ -3483,19 +3895,14 @@ function handleAdminDeactivateUser(mxid) {
 function flushPendingSyncs() {
   var keys = Object.keys(_syncTimers);
   if (keys.length === 0) return;
+  matrix._flushing = true;
   keys.forEach(function(key) {
-    // clearTimeout returns undefined; we need to re-invoke the sync
-    clearTimeout(_syncTimers[key]);
-    delete _syncTimers[key];
+    var entry = _syncTimers[key];
+    clearTimeout(entry.timer);
+    entry.fn();
   });
-  // Re-sync all clients and petitions that have room IDs
-  if (!matrix.isReady()) return;
-  Object.values(S.clients).forEach(function(client) {
-    if (client.roomId) syncClientToMatrix(client);
-  });
-  Object.values(S.petitions).forEach(function(pet) {
-    if (pet.roomId) syncPetitionToMatrix(pet);
-  });
+  _syncTimers = {};
+  matrix._flushing = false;
 }
 
 document.addEventListener('visibilitychange', function() {
@@ -3520,7 +3927,7 @@ document.addEventListener('DOMContentLoaded', function() {
         S.loading = false;
         return hydrateFromMatrix();
       })
-      .then(function() { render(); matrix.startLongPoll(); })
+      .then(function() { render(); matrix.startLongPoll(); toast('Session restored', 'info'); })
       .catch(function(err) {
         console.error('Session restore failed:', err);
         var status = (err && err.status) || 0;
