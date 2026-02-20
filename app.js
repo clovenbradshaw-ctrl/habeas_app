@@ -101,12 +101,23 @@ function dismissToast(el) {
   }, 300);
 }
 
-var STAGES = ['drafted', 'reviewed', 'submitted'];
+var STAGES = ['intake', 'drafting', 'review', 'filing', 'filed'];
 var SM = {
-  drafted:   { color: '#c9a040', bg: '#faf5e4', label: 'Drafted' },
-  reviewed:  { color: '#5a9e6f', bg: '#eaf5ee', label: 'Reviewed' },
-  submitted: { color: '#4a7ab5', bg: '#e8f0fa', label: 'Submitted' },
+  intake:   { color: '#b08d57', bg: '#faf5e4', label: 'Intake' },
+  drafting: { color: '#c9a040', bg: '#fdf8eb', label: 'Drafting' },
+  review:   { color: '#5a9e6f', bg: '#eaf5ee', label: 'Review' },
+  filing:   { color: '#7a70c0', bg: '#eeeafa', label: 'Filing' },
+  filed:    { color: '#4a7ab5', bg: '#e8f0fa', label: 'Filed' },
 };
+
+// Migrate old 3-stage names to new 5-stage names
+function migrateStage(stage) {
+  if (stage === 'drafted') return 'drafting';
+  if (stage === 'reviewed') return 'review';
+  if (stage === 'submitted') return 'filed';
+  if (STAGES.indexOf(stage) >= 0) return stage;
+  return 'intake';
+}
 
 // ── Enumeration Option Arrays ───────────────────────────────────
 var US_STATES = {
@@ -1129,7 +1140,7 @@ var S = {
   boardMode: 'kanban',
   boardTableGroup: 'stage',
   boardAddingMatter: false,
-  boardShowAllSubmitted: false,
+  boardShowAllFiled: false,
   boardShowArchived: false,
   dirShowArchived: false,
   clientsShowArchived: false,
@@ -1439,8 +1450,10 @@ function hydrateFromMatrix() {
           var blocks = (blocksEvt && blocksEvt.content && blocksEvt.content.blocks) || [];
           petitions[petId] = {
             id: petId, clientId: pc.clientId || cid, createdBy: pe.sender || '',
-            stage: pc.stage || 'drafted',
-            stageHistory: pc.stageHistory || [{ stage: 'drafted', at: new Date(pe.origin_server_ts).toISOString() }],
+            stage: migrateStage(pc.stage || 'intake'),
+            stageHistory: pc.stageHistory || [{ stage: migrateStage(pc.stage || 'intake'), at: new Date(pe.origin_server_ts).toISOString() }],
+            _bodyEdited: !!pc._bodyEdited,
+            _exported: !!pc._exported,
             blocks: blocks,
             district: pc.district || '', division: pc.division || '', courtWebsite: pc.courtWebsite || '',
             caseNumber: pc.caseNumber || '',
@@ -1862,20 +1875,22 @@ function exportPetitionsCSV() {
   var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
   vis.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
 
-  var headers = ['Client Name', 'Case Number', 'Stage', 'District', 'Division',
+  var headers = ['Client Name', 'Case Number', 'Stage', 'Readiness %', 'District', 'Division',
     'Facility', 'Facility City', 'Facility State', 'Warden',
     'Field Office', 'Field Office Director', 'Attorney 1', 'Attorney 2',
-    'Filing Date', 'Created By', 'Created At'];
+    'Filing Date', 'Created By', 'Created At', 'Time in Stage'];
 
   var rows = vis.map(function(p) {
     var cl = S.clients[p.clientId];
     var a1 = p._att1Id ? S.attProfiles[p._att1Id] : null;
     var a2 = p._att2Id ? S.attProfiles[p._att2Id] : null;
     var creator = S.users[p.createdBy] ? S.users[p.createdBy].displayName : p.createdBy;
+    var rdns = computeReadiness(p, cl || {});
     return [
       cl ? cl.name || '' : '',
       p.caseNumber || '',
-      p.stage || '',
+      (SM[p.stage] ? SM[p.stage].label : p.stage) || '',
+      Math.round(rdns.score * 100) + '%',
       p.district || '',
       p.division || '',
       p.facilityName || '',
@@ -1888,7 +1903,8 @@ function exportPetitionsCSV() {
       a2 ? a2.name || '' : '',
       p.filingDate || '',
       creator || '',
-      p.createdAt || ''
+      p.createdAt || '',
+      timeInStage(p)
     ];
   });
 
@@ -2212,7 +2228,7 @@ function debouncedSync(key, fn) {
 }
 
 // Actions that should only save on blur (field exit), not every keystroke
-var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1 };
+var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1 };
 
 // Update only the in-memory state for a field (no log entry, no Matrix sync).
 // Called on every keystroke to keep the UI responsive; the actual save
@@ -2254,6 +2270,13 @@ function updateFieldLocally(action, key, val) {
     if (!pet) return;
     if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     pet[key] = val;
+    refreshVariableSpans();
+    return;
+  }
+  if (action === 'filing-case-number') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    pet.caseNumber = val;
     refreshVariableSpans();
     return;
   }
@@ -2368,6 +2391,7 @@ function syncPetitionToMatrix(pet, label) {
     pageSettings: pet.pageSettings,
     natIceDirector: pet.natIceDirector, natIceDirectorTitle: pet.natIceDirectorTitle,
     natDhsSecretary: pet.natDhsSecretary, natAttorneyGeneral: pet.natAttorneyGeneral,
+    _bodyEdited: !!pet._bodyEdited, _exported: !!pet._exported,
   };
   if (pet.archived) content.archived = true;
   return matrix.sendStateEvent(pet.roomId, EVT_PETITION, content, pet.id).then(function(data) {
@@ -2659,7 +2683,7 @@ function renderHeader() {
   h += '</nav></div><div class="hdr-right">';
   h += '<span class="role-badge" style="color:' + (S.role === 'admin' ? '#a08540' : '#8a8a9a') + '">' + (S.isSynapseAdmin ? 'Super Admin' : S.role === 'admin' ? 'Admin' : 'Attorney') + '</span>';
   if (pet) {
-    var sm = SM[pet.stage] || SM.drafted;
+    var sm = SM[pet.stage] || SM.intake;
     h += '<span class="stage-badge" style="background:' + sm.color + '">' + pet.stage + '</span>';
     h += '<button class="hbtn export" data-action="export-word">DOCX</button>';
     h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
@@ -2688,7 +2712,7 @@ function renderBoard() {
     h += '<div class="board-group-sel">';
     h += '<label class="board-group-label">Group by</label>';
     h += '<select class="finp board-group-input" data-change="board-table-group">';
-    ['stage', 'attorney', 'facility', 'court'].forEach(function(g) {
+    ['stage', 'attorney', 'facility', 'court', 'readiness'].forEach(function(g) {
       h += '<option value="' + g + '"' + (S.boardTableGroup === g ? ' selected' : '') + '>' + g.charAt(0).toUpperCase() + g.slice(1) + '</option>';
     });
     h += '</select>';
@@ -2747,21 +2771,21 @@ function renderBoardKanban(vis) {
   STAGES.forEach(function(stage) {
     var items = vis.filter(function(p) { return p.stage === stage; })
       .sort(function(a, b) {
-        // For submitted: sort by time entered submitted (newest first)
-        if (stage === 'submitted') {
-          var aTime = submittedAt(a);
-          var bTime = submittedAt(b);
+        // For filed: sort by time entered filed (newest first)
+        if (stage === 'filed') {
+          var aTime = filedAt(a);
+          var bTime = filedAt(b);
           return bTime - aTime;
         }
         return new Date(b.createdAt) - new Date(a.createdAt);
       });
     var m = SM[stage];
 
-    // For submitted column, compute hidden count
+    // For filed column, compute hidden count
     var hiddenCount = 0;
-    if (stage === 'submitted' && !S.boardShowAllSubmitted) {
+    if (stage === 'filed' && !S.boardShowAllFiled) {
       hiddenCount = items.filter(function(p) {
-        var age = NOW - submittedAt(p);
+        var age = NOW - filedAt(p);
         return age >= WEEK_MS;
       }).length;
     }
@@ -2774,16 +2798,16 @@ function renderBoardKanban(vis) {
       h += '<div class="kb-empty">None</div>';
     }
     items.forEach(function(p) {
-      // For submitted cards: compute opacity based on age
+      // For filed cards: compute opacity based on age
       var fadeStyle = '';
       var isHidden = false;
-      if (stage === 'submitted') {
-        var age = NOW - submittedAt(p);
-        if (age >= WEEK_MS && !S.boardShowAllSubmitted) {
+      if (stage === 'filed') {
+        var age = NOW - filedAt(p);
+        if (age >= WEEK_MS && !S.boardShowAllFiled) {
           isHidden = true;
           return; // skip rendering
         }
-        // Fade from 1.0 (just submitted) to 0.25 (approaching 1 week)
+        // Fade from 1.0 (just filed) to 0.25 (approaching 1 week)
         var ratio = Math.min(age / WEEK_MS, 1);
         var opacity = 1 - (ratio * 0.75); // 1.0 → 0.25
         if (opacity < 1) {
@@ -2795,6 +2819,8 @@ function renderBoardKanban(vis) {
       var si = STAGES.indexOf(p.stage);
       var attNames = petAttorneyNames(p);
       var canArchivePet = S.role === 'admin' || p.createdBy === S.currentUser;
+      var rdns = computeReadiness(p, cl || {});
+      var pctW = Math.round(rdns.score * 100);
       h += '<div class="kb-card' + (p.archived ? ' archived' : '') + '" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
       h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
@@ -2804,11 +2830,13 @@ function renderBoardKanban(vis) {
       }
       if (p.archived) h += '<span class="archived-badge">Archived</span>';
       h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + ' <span class="kb-card-ago">(' + timeAgo(p.createdAt) + ')</span></div>';
+      // Progress bar
+      h += '<div class="kb-progress" title="' + pctW + '% complete (' + rdns.done + '/' + rdns.total + ')"><div class="kb-progress-bar" style="width:' + pctW + '%"></div></div>';
       if (p.stageHistory && p.stageHistory.length > 1) {
         h += '<div class="kb-dots">';
         p.stageHistory.forEach(function(sh) {
           var sc = SM[sh.stage] ? SM[sh.stage].color : '#ccc';
-          h += '<span class="kb-dot" style="background:' + sc + '" title="' + sh.stage + ' ' + ts(sh.at) + '"></span>';
+          h += '<span class="kb-dot" style="background:' + sc + '" title="' + (SM[sh.stage] ? SM[sh.stage].label : sh.stage) + ' ' + ts(sh.at) + '"></span>';
         });
         h += '</div>';
       }
@@ -2816,19 +2844,20 @@ function renderBoardKanban(vis) {
       if (p.archived) {
         if (canArchivePet) h += '<button class="kb-btn accent" data-action="recover-petition" data-id="' + p.id + '">Recover</button>';
       } else {
-        if (si > 0) h += '<button class="kb-btn" data-action="stage-change" data-id="' + p.id + '" data-dir="revert">&larr; ' + STAGES[si - 1] + '</button>';
-        if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + STAGES[si + 1] + ' &rarr;</button>';
+        if (si > 0) h += '<button class="kb-btn" data-action="stage-change" data-id="' + p.id + '" data-dir="revert">&larr; ' + SM[STAGES[si - 1]].label + '</button>';
+        if (p.stage === 'filing') h += '<button class="kb-btn accent" data-action="open-filing" data-id="' + p.id + '">File Now</button>';
+        else if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + SM[STAGES[si + 1]].label + ' &rarr;</button>';
         if (canArchivePet) h += '<button class="kb-btn" data-action="archive-petition" data-id="' + p.id + '">Archive</button>';
       }
       h += '</div></div>';
     });
 
-    // Show all toggle for submitted column
-    if (stage === 'submitted' && hiddenCount > 0) {
-      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-submitted">Show ' + hiddenCount + ' older</button>';
+    // Show all toggle for filed column
+    if (stage === 'filed' && hiddenCount > 0) {
+      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-filed">Show ' + hiddenCount + ' older</button>';
     }
-    if (stage === 'submitted' && S.boardShowAllSubmitted) {
-      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-submitted">Hide older</button>';
+    if (stage === 'filed' && S.boardShowAllFiled) {
+      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-filed">Hide older</button>';
     }
 
     h += '</div></div>';
@@ -2837,16 +2866,103 @@ function renderBoardKanban(vis) {
   return h;
 }
 
-// Helper: get the timestamp when a petition entered the submitted stage
-function submittedAt(p) {
+// Helper: get the timestamp when a petition entered the filed stage
+function filedAt(p) {
   if (p.stageHistory && p.stageHistory.length > 0) {
     for (var i = p.stageHistory.length - 1; i >= 0; i--) {
-      if (p.stageHistory[i].stage === 'submitted') {
+      if (p.stageHistory[i].stage === 'filed' || p.stageHistory[i].stage === 'submitted') {
         return new Date(p.stageHistory[i].at).getTime();
       }
     }
   }
   return new Date(p.createdAt).getTime();
+}
+
+// ── Completeness / Readiness Checklist ───────────────────────────
+function computeReadiness(pet, client) {
+  client = client || {};
+  pet = pet || {};
+  var items = [
+    { key: 'client_name', label: 'Client name', ok: !!(client.name && client.name.trim()) },
+    { key: 'client_country', label: 'Country of origin', ok: !!(client.country && client.country.trim()) },
+    { key: 'entry_date', label: 'Entry date', ok: !!(client.entryDate && client.entryDate.trim()) },
+    { key: 'entry_method', label: 'Entry method', ok: !!(client.entryMethod && client.entryMethod.trim()) },
+    { key: 'apprehension_loc', label: 'Apprehension location', ok: !!(client.apprehensionLocation && client.apprehensionLocation.trim()) },
+    { key: 'apprehension_date', label: 'Apprehension date', ok: !!(client.apprehensionDate && client.apprehensionDate.trim()) },
+    { key: 'court', label: 'Court assigned', ok: !!pet._courtId },
+    { key: 'facility', label: 'Facility assigned', ok: !!pet._facilityId },
+    { key: 'attorney1', label: 'Lead attorney', ok: !!pet._att1Id },
+    { key: 'filing_date', label: 'Filing date', ok: !!(pet.filingDate && pet.filingDate.trim()) },
+    { key: 'warden', label: 'Warden name', ok: !!(pet.warden && pet.warden.trim()) },
+    { key: 'body_edited', label: 'Document body edited', ok: !!pet._bodyEdited },
+    { key: 'case_number', label: 'Case number', ok: !!(pet.caseNumber && pet.caseNumber.trim()) },
+    { key: 'exported', label: 'Document exported', ok: !!pet._exported },
+  ];
+  var done = items.filter(function(it) { return it.ok; }).length;
+  var missing = items.filter(function(it) { return !it.ok; }).map(function(it) { return it.label; });
+  return {
+    score: items.length > 0 ? done / items.length : 0,
+    total: items.length,
+    done: done,
+    items: items,
+    missingLabels: missing,
+    ready: done === items.length,
+  };
+}
+
+// Stage gate: check if transition from current stage to next is allowed
+var STAGE_GATES = {
+  // intake → drafting: need client name + country
+  'intake>drafting': ['client_name', 'client_country'],
+  // drafting → review: need court, facility, attorney
+  'drafting>review': ['court', 'facility', 'attorney1'],
+  // review → filing: need filing date, warden, document edited
+  'review>filing': ['filing_date', 'warden', 'body_edited'],
+  // filing → filed: need case number, document exported
+  'filing>filed': ['case_number', 'exported'],
+};
+
+function checkStageGate(pet, client, fromStage, toStage) {
+  var gateKey = fromStage + '>' + toStage;
+  var required = STAGE_GATES[gateKey];
+  if (!required) return { allowed: true, missing: [] }; // no gate (revert or skip)
+  var readiness = computeReadiness(pet, client);
+  var missing = [];
+  required.forEach(function(key) {
+    var item = readiness.items.filter(function(it) { return it.key === key; })[0];
+    if (item && !item.ok) missing.push(item.label);
+  });
+  return { allowed: missing.length === 0, missing: missing };
+}
+
+// Helper: render mini timeline dots for a petition
+function renderTimelineDots(p) {
+  var h = '';
+  var reached = {};
+  if (p.stageHistory) {
+    p.stageHistory.forEach(function(sh) {
+      var s = migrateStage(sh.stage);
+      if (!reached[s]) reached[s] = sh.at;
+    });
+  }
+  STAGES.forEach(function(s, i) {
+    if (i > 0) h += '<span class="tl-seg"></span>';
+    var isReached = !!reached[s];
+    var isCurrent = p.stage === s;
+    var sm = SM[s];
+    var title = sm.label;
+    if (isReached) title += ': ' + new Date(reached[s]).toLocaleDateString();
+    if (isCurrent) title += ' (current)';
+    h += '<span class="tl-dot' + (isReached ? '' : ' empty') + (isCurrent ? ' active' : '') + '" style="' + (isReached ? 'background:' + sm.color : '') + '" title="' + esc(title) + '"></span>';
+  });
+  return h;
+}
+
+// Helper: time in current stage
+function timeInStage(p) {
+  if (!p.stageHistory || p.stageHistory.length === 0) return timeAgo(p.createdAt);
+  var last = p.stageHistory[p.stageHistory.length - 1];
+  return timeAgo(last.at);
 }
 
 function renderBoardTable(vis) {
@@ -2856,13 +2972,19 @@ function renderBoardTable(vis) {
   vis.forEach(function(p) {
     var key;
     if (groupKey === 'stage') {
-      key = p.stage || 'drafted';
+      key = p.stage || 'intake';
     } else if (groupKey === 'attorney') {
       key = petAttorneyNames(p) || 'Unassigned';
     } else if (groupKey === 'facility') {
       key = p.facilityName || 'No Facility';
     } else if (groupKey === 'court') {
       key = p.district || 'No Court';
+    } else if (groupKey === 'readiness') {
+      var cl = S.clients[p.clientId] || {};
+      var rdns = computeReadiness(p, cl);
+      if (rdns.score >= 1) key = 'Ready';
+      else if (rdns.score >= 0.5) key = 'In Progress';
+      else key = 'Needs Attention';
     } else {
       key = 'All';
     }
@@ -2873,14 +2995,17 @@ function renderBoardTable(vis) {
   var groupKeys;
   if (groupKey === 'stage') {
     groupKeys = STAGES.filter(function(s) { return groups[s]; });
+  } else if (groupKey === 'readiness') {
+    groupKeys = ['Ready', 'In Progress', 'Needs Attention'].filter(function(k) { return groups[k]; });
   } else {
     groupKeys = Object.keys(groups).sort();
   }
 
+  var colSpan = 10;
   var h = '<div class="board-table-wrap"><table class="board-table">';
   h += '<thead><tr>';
-  h += '<th>Client</th><th>Case No.</th><th>Stage</th><th>District</th>';
-  h += '<th>Facility</th><th>Attorney(s)</th><th>Created</th><th>Age</th>';
+  h += '<th>Client</th><th>Case No.</th><th>Stage</th><th>Readiness</th><th>District</th>';
+  h += '<th>Facility</th><th>Attorney(s)</th><th>Timeline</th><th>Created</th><th>In Stage</th>';
   h += '</tr></thead>';
   h += '<tbody>';
 
@@ -2892,7 +3017,7 @@ function renderBoardTable(vis) {
     var colorDot = sm ? '<span class="kb-dot" style="background:' + sm.color + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' : '';
 
     h += '<tr class="board-table-group-hdr" data-action="toggle-group" data-group="' + esc(groupKey + ':' + gk) + '">';
-    h += '<td colspan="8">';
+    h += '<td colspan="' + colSpan + '">';
     h += '<span class="group-arrow">' + (collapsed ? '&#9654;' : '&#9660;') + '</span> ';
     h += colorDot + '<strong>' + esc(gk) + '</strong> <span class="group-count">(' + items.length + ')</span>';
     h += '</td></tr>';
@@ -2901,16 +3026,31 @@ function renderBoardTable(vis) {
       items.forEach(function(p) {
         var cl = S.clients[p.clientId];
         var attNames = petAttorneyNames(p);
-        var stm = SM[p.stage] || SM.drafted;
+        var stm = SM[p.stage] || SM.intake;
+        var rdns = computeReadiness(p, cl || {});
+        var pctW = Math.round(rdns.score * 100);
+        var missTip = rdns.missingLabels.length > 0 ? rdns.missingLabels.join(', ') : 'Complete';
         h += '<tr class="board-table-row' + (p.archived ? ' archived' : '') + '" data-action="open-petition" data-id="' + p.id + '">';
         h += '<td class="bt-client">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</td>';
         h += '<td>' + esc(p.caseNumber || '\u2014') + '</td>';
-        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(p.stage) + '</span>' + (p.archived ? ' <span class="archived-badge">Archived</span>' : '') + '</td>';
+        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(stm.label) + '</span>' + (p.archived ? ' <span class="archived-badge">Archived</span>' : '') + '</td>';
+        // Readiness column
+        h += '<td class="bt-readiness" title="' + esc(missTip) + '">';
+        if (pctW >= 100) {
+          h += '<span class="filing-check-ok">\u2713</span>';
+        } else {
+          h += '<span class="readiness-bar"><span class="readiness-fill" style="width:' + pctW + '%"></span></span>';
+          h += '<span class="readiness-pct">' + pctW + '%</span>';
+        }
+        h += '</td>';
         h += '<td>' + esc(p.district || '\u2014') + '</td>';
         h += '<td>' + esc(p.facilityName || '\u2014') + '</td>';
         h += '<td>' + esc(attNames || '\u2014') + '</td>';
+        // Timeline column
+        h += '<td class="bt-timeline">' + renderTimelineDots(p) + '</td>';
         h += '<td class="bt-date">' + new Date(p.createdAt).toLocaleDateString() + '</td>';
-        h += '<td class="bt-age">' + timeAgo(p.createdAt) + '</td>';
+        // In Stage column
+        h += '<td class="bt-age">' + timeInStage(p) + '</td>';
         h += '</tr>';
       });
     }
@@ -3366,6 +3506,90 @@ function renderAdmin() {
   return h;
 }
 
+// ── Filing Panel (Guided Handoff) ────────────────────────────────
+function renderFilingPanel(pet, client) {
+  var h = '';
+  if (!pet) return h;
+  var rdns = computeReadiness(pet, client || {});
+  var pct = Math.round(rdns.score * 100);
+  var selectedCourt = pet._courtId ? S.courts[pet._courtId] : null;
+  var courtLabel = selectedCourt ? (selectedCourt.district || '') + (selectedCourt.division ? ' \u2014 ' + selectedCourt.division : '') : '';
+  var isFilingStage = pet.stage === 'filing';
+
+  if (!isFilingStage) {
+    var stageLabel = SM[pet.stage] ? SM[pet.stage].label : pet.stage;
+    h += '<div class="filing-not-ready">';
+    h += '<p>This matter is currently in <strong>' + esc(stageLabel) + '</strong> stage.</p>';
+    h += '<p>Advance to <strong>Filing</strong> to begin the court submission process.</p>';
+    h += '</div>';
+    // Still show checklist summary
+    h += '<div class="fg"><div class="fg-title">Readiness Overview</div>';
+  } else {
+    h += '<div class="fg"><div class="fg-title">Filing Checklist</div>';
+  }
+
+  // Checklist items
+  rdns.items.forEach(function(it) {
+    var icon = it.ok ? '<span class="filing-check-ok">\u2713</span>' : '<span class="filing-check-miss">\u2717</span>';
+    h += '<div class="filing-check-item">' + icon + ' <span>' + esc(it.label) + '</span></div>';
+  });
+
+  // Progress bar
+  h += '<div class="filing-progress-wrap">';
+  h += '<div class="filing-progress-label">' + rdns.done + ' of ' + rdns.total + ' complete</div>';
+  h += '<div class="filing-progress"><div class="filing-progress-bar" style="width:' + pct + '%"></div></div>';
+  h += '<div class="filing-progress-pct">' + pct + '%</div>';
+  h += '</div></div>';
+
+  if (isFilingStage) {
+    // Export section
+    h += '<div class="filing-section"><div class="fg-title">Export Documents</div>';
+    h += '<div class="filing-export-btns">';
+    h += '<button class="hbtn accent" data-action="export-word">DOCX \u2193</button>';
+    h += '<button class="hbtn" data-action="export-pdf">PDF \u2193</button>';
+    h += '</div>';
+    if (pet._exported) {
+      h += '<div class="filing-check-item"><span class="filing-check-ok">\u2713</span> <span>Document exported</span></div>';
+    } else {
+      h += '<div class="filing-check-item"><span class="filing-check-miss">\u2717</span> <span>Export required before filing</span></div>';
+    }
+    h += '</div>';
+
+    // Court portal section
+    if (selectedCourt) {
+      h += '<div class="filing-section"><div class="fg-title">Court Portal</div>';
+      h += '<div class="filing-court-name">' + esc(courtLabel) + '</div>';
+      if (selectedCourt.ecfUrl || selectedCourt.website) {
+        h += '<a href="' + esc(selectedCourt.ecfUrl || selectedCourt.website) + '" target="_blank" rel="noopener" class="hbtn accent filing-portal-btn">Open CM/ECF Portal &#8599;</a>';
+      }
+      if (selectedCourt.pacerUrl) {
+        h += '<a href="' + esc(selectedCourt.pacerUrl) + '" target="_blank" rel="noopener" class="hbtn filing-portal-btn">Open PACER &#8599;</a>';
+      }
+      h += '</div>';
+    } else {
+      h += '<div class="filing-section"><div class="fg-title">Court Portal</div>';
+      h += '<p class="filing-no-court">No court assigned. Go to Court + Facility tab to select one.</p>';
+      h += '</div>';
+    }
+
+    // Confirm filing section
+    h += '<div class="filing-section filing-confirm"><div class="fg-title">Confirm Filing</div>';
+    h += '<div class="frow"><label class="flbl">Case Number</label>';
+    h += '<input type="text" class="finp" value="' + esc(pet.caseNumber || '') + '" data-field-key="caseNumber" data-change="filing-case-number" placeholder="Enter case number after filing"></div>';
+    var canMarkFiled = !!(pet.caseNumber && pet.caseNumber.trim() && pet._exported);
+    h += '<button class="hbtn accent filing-mark-btn" data-action="mark-as-filed" data-id="' + pet.id + '"' + (canMarkFiled ? '' : ' disabled') + '>Mark as Filed \u2713</button>';
+    if (!canMarkFiled) {
+      var reasons = [];
+      if (!pet.caseNumber || !pet.caseNumber.trim()) reasons.push('case number');
+      if (!pet._exported) reasons.push('document export');
+      h += '<p class="filing-note">Requires: ' + reasons.join(', ') + '</p>';
+    }
+    h += '</div>';
+  }
+
+  return h;
+}
+
 function renderEditor() {
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) {
@@ -3378,7 +3602,7 @@ function renderEditor() {
   var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
 
   var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
-  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['filing','Filing'],['page','Page'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['details','Details'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div><div class="ed-fields">';
@@ -3425,8 +3649,8 @@ function renderEditor() {
     }
   }
 
-  if (S.editorTab === 'filing') {
-    h += htmlFieldGroup('Filing', FILING_FIELDS, pet, 'editor-pet-field');
+  if (S.editorTab === 'details') {
+    h += htmlFieldGroup('Filing Details', FILING_FIELDS, pet, 'editor-pet-field');
   }
 
   if (S.editorTab === 'page') {
@@ -3458,6 +3682,10 @@ function renderEditor() {
     h += '</select></div></div>';
 
     h += '<p style="font-size:10px;color:#aaa;margin-top:8px">Variables: <code>{{CASE_NUMBER}}</code> for case no., <code>{{PAGE}}</code> for "Page X of Y", <code>{{PAGE_NUM}}</code> for number only.</p>';
+  }
+
+  if (S.editorTab === 'filing') {
+    h += renderFilingPanel(pet, client);
   }
 
   if (S.editorTab === 'log') {
@@ -3715,7 +3943,7 @@ function attachBlockListeners() {
         var newBlocks = pet.blocks.map(function(b) {
           return b.id === bid ? { id: b.id, type: b.type, content: nc } : b;
         });
-        S.petitions[pet.id] = Object.assign({}, pet, { blocks: newBlocks });
+        S.petitions[pet.id] = Object.assign({}, pet, { blocks: newBlocks, _bodyEdited: true });
         S.log.push({ op: 'REVISE', target: bid, payload: nc, frame: { t: now(), prior: block.content, petition: pet.id } });
         // Sync to matrix
         if (matrix.isReady() && pet.roomId) {
@@ -3834,14 +4062,27 @@ function initKanbanDragDrop() {
       if (pet.stage === newStage) return; // dropped in same column
       if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
 
+      // Stage gate: check requirements for advancing
+      var oldIdx = STAGES.indexOf(pet.stage);
+      var newIdx = STAGES.indexOf(newStage);
+      if (newIdx > oldIdx) {
+        // Check all intermediate gates when skipping stages
+        for (var gi = oldIdx; gi < newIdx; gi++) {
+          var client = S.clients[pet.clientId] || {};
+          var gate = checkStageGate(pet, client, STAGES[gi], STAGES[gi + 1]);
+          if (!gate.allowed) {
+            toast('Missing: ' + gate.missing.join(', '), 'error');
+            return;
+          }
+        }
+      }
+
       var t = now();
       S.log.push({ op: 'STAGE', target: petId, payload: newStage, frame: { t: t, prior: pet.stage } });
       S.petitions[pet.id] = Object.assign({}, pet, { stage: newStage, stageHistory: pet.stageHistory.concat([{ stage: newStage, at: t }]) });
       if (matrix.isReady() && pet.roomId) {
         var stageLabel = SM[newStage] ? SM[newStage].label : newStage;
-        matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: newStage, stageHistory: S.petitions[pet.id].stageHistory }), pet.id)
-          .then(function() { toast('ALT \u21CC stage \u2192 ' + stageLabel, 'success'); })
-          .catch(function(err) { console.error(err); toast('ALT \u21CC stage change failed', 'error'); });
+        syncPetitionToMatrix(S.petitions[pet.id], 'stage \u2192 ' + stageLabel);
       }
       render();
     });
@@ -3992,7 +4233,7 @@ document.addEventListener('click', function(e) {
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
-  if (action === 'toggle-show-all-submitted') { setState({ boardShowAllSubmitted: !S.boardShowAllSubmitted }); return; }
+  if (action === 'toggle-show-all-filed') { setState({ boardShowAllFiled: !S.boardShowAllFiled }); return; }
   if (action === 'board-add-matter') {
     var clientList = Object.values(S.clients);
     if (clientList.length === 0) {
@@ -4013,6 +4254,10 @@ document.addEventListener('click', function(e) {
     S.log.push({ op: 'ARCHIVE', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
     syncPetitionToMatrix(pet, 'archive');
     setState({});
+    return;
+  }
+  if (action === 'open-filing') {
+    setState({ selectedPetitionId: btn.dataset.id, editorTab: 'filing', currentView: 'editor' });
     return;
   }
   if (action === 'recover-petition') {
@@ -4045,14 +4290,21 @@ document.addEventListener('click', function(e) {
     var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
     if (ni < 0 || ni >= STAGES.length) return;
     var next = STAGES[ni];
+    // Stage gate: check requirements for advancing (not for reverting)
+    if (ni > idx) {
+      var client = S.clients[pet.clientId] || {};
+      var gate = checkStageGate(pet, client, pet.stage, next);
+      if (!gate.allowed) {
+        toast('Missing: ' + gate.missing.join(', '), 'error');
+        return;
+      }
+    }
     var t = now();
     S.log.push({ op: 'STAGE', target: btn.dataset.id, payload: next, frame: { t: t, prior: pet.stage } });
     S.petitions[pet.id] = Object.assign({}, pet, { stage: next, stageHistory: pet.stageHistory.concat([{ stage: next, at: t }]) });
     if (matrix.isReady() && pet.roomId) {
       var stageLabel = SM[next] ? SM[next].label : next;
-      matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: next, stageHistory: S.petitions[pet.id].stageHistory }), pet.id)
-        .then(function() { toast('ALT \u21CC stage \u2192 ' + stageLabel, 'success'); })
-        .catch(function(e) { console.error(e); toast('ALT \u21CC stage change failed', 'error'); });
+      syncPetitionToMatrix(S.petitions[pet.id], 'stage \u2192 ' + stageLabel);
     }
     render();
     return;
@@ -4130,13 +4382,14 @@ document.addEventListener('click', function(e) {
     var pid = uid();
     var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
     S.petitions[pid] = {
-      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
-      stageHistory: [{ stage: 'drafted', at: now() }],
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
+      stageHistory: [{ stage: 'intake', at: now() }],
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
+      _bodyEdited: false, _exported: false,
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
@@ -4167,6 +4420,14 @@ document.addEventListener('click', function(e) {
   if (action === 'export-word' || action === 'export-pdf') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    // Track that document has been exported for filing readiness
+    if (!pet._exported) {
+      pet._exported = true;
+      S.petitions[pet.id] = Object.assign({}, pet);
+      if (pet.roomId && matrix.isReady()) {
+        syncPetitionToMatrix(S.petitions[pet.id], 'petition');
+      }
+    }
     var cl = S.clients[pet.clientId] || {};
     var a1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
     var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
@@ -4480,6 +4741,25 @@ document.addEventListener('click', function(e) {
     return;
   }
 
+  // Mark as Filed action
+  if (action === 'mark-as-filed') {
+    var pet = S.petitions[btn.dataset.id];
+    if (!pet) return;
+    if (!pet.caseNumber || !pet.caseNumber.trim() || !pet._exported) {
+      toast('Enter case number and export document first', 'error');
+      return;
+    }
+    var t = now();
+    S.log.push({ op: 'STAGE', target: pet.id, payload: 'filed', frame: { t: t, prior: pet.stage } });
+    S.petitions[pet.id] = Object.assign({}, pet, { stage: 'filed', stageHistory: pet.stageHistory.concat([{ stage: 'filed', at: t }]) });
+    if (matrix.isReady() && pet.roomId) {
+      syncPetitionToMatrix(S.petitions[pet.id], 'stage \u2192 Filed');
+    }
+    toast('Matter marked as filed', 'success');
+    render();
+    return;
+  }
+
   // Editor tabs
   if (action === 'ed-tab') { cleanupInlineAdd(); setState({ editorTab: btn.dataset.tab, inlineAdd: null, draft: {} }); return; }
   if (action === 'goto-directory') { setState({ currentView: 'directory', inlineAdd: null, draft: {} }); return; }
@@ -4680,6 +4960,17 @@ function dispatchFieldChange(action, key, val) {
     refreshVariableSpans();
     return;
   }
+  if (action === 'filing-case-number') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    pet.caseNumber = val;
+    S.log.push({ op: 'FILL', target: 'petition.caseNumber', payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
+    refreshVariableSpans();
+    // Re-render filing panel to update Mark as Filed button state
+    render();
+    return;
+  }
   if (action === 'page-settings') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
@@ -4765,13 +5056,14 @@ document.addEventListener('change', function(e) {
     var pid = uid();
     var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
     S.petitions[pid] = {
-      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
-      stageHistory: [{ stage: 'drafted', at: now() }],
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
+      stageHistory: [{ stage: 'intake', at: now() }],
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
+      _bodyEdited: false, _exported: false,
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
