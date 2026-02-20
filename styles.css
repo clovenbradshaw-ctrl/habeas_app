@@ -203,6 +203,88 @@ body,
   color: #c0b8a8;
 }
 
+/* ── Validation Feedback ──────────────────────────── */
+.fval-err {
+  display: block;
+  font-size: 10px;
+  color: #b91c1c;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+.fval-warn {
+  color: #d97706;
+  margin-left: 4px;
+  font-size: 11px;
+}
+
+/* ── Enum-or-Custom Combo ────────────────────────── */
+.enum-custom-sel {
+  margin-bottom: 0;
+}
+.enum-custom-inp {
+  margin-top: 6px;
+}
+
+/* ── Facility Autocomplete ───────────────────────── */
+.fac-ac-wrap {
+  position: relative;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.fac-ac-list {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 10;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.fac-ac-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.fac-ac-item:last-child {
+  border-bottom: none;
+}
+.fac-ac-item:hover {
+  background: var(--hover);
+}
+.fac-ac-sub {
+  color: var(--muted);
+  font-size: 10px;
+  margin-top: 2px;
+}
+
+/* ── Date Group Preview ──────────────────────────── */
+.date-group-preview {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+.date-group-preview strong {
+  color: var(--ink);
+}
+
+/* ── Flatpickr Overrides ─────────────────────────── */
+.flatpickr-calendar {
+  font-family: 'DM Sans', sans-serif;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+}
+.flatpickr-day.selected,
+.flatpickr-day.selected:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
 /* ── Field Group ───────────────────────────────────── */
 .fg {
   margin-bottom: 20px;
