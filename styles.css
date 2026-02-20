@@ -502,7 +502,6 @@ body,
   font-weight: 600;
   font-size: 13px;
   margin-bottom: 4px;
-  cursor: pointer;
 }
 .kb-card-name:hover {
   color: var(--accent);
@@ -651,10 +650,7 @@ body,
 
 /* ── Kanban Drag-and-Drop ────────────────────────── */
 .kb-card[draggable="true"] {
-  cursor: grab;
-}
-.kb-card[draggable="true"]:active {
-  cursor: grabbing;
+  cursor: pointer;
 }
 .kb-dragging {
   opacity: 0.4 !important;
@@ -856,8 +852,10 @@ body,
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(160, 133, 64, 0.08);
 }
-.dir-card-head {
+.dir-card[data-action] {
   cursor: pointer;
+}
+.dir-card-head {
   display: flex;
   align-items: baseline;
   gap: 8px;

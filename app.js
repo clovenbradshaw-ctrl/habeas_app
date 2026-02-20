@@ -1026,6 +1026,7 @@ var S = {
 };
 
 var _collapsedGroups = {};
+var _wasDragged = false;
 var _prevView = null;
 function setState(updates) {
   Object.assign(S, updates);
@@ -2610,7 +2611,11 @@ function renderDirectory() {
     h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a matter auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.facilities).forEach(function(f) {
-      h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
+      if (isAdmin && S.editId !== f.id) {
+        h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
+      } else {
+        h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
+      }
       if (S.editId === f.id && isAdmin) {
         h += htmlFacilityAutocomplete();
         FACILITY_FIELDS.forEach(function(ff) {
@@ -2626,11 +2631,7 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-facility" data-id="' + f.id + '">Delete</button></div>';
       } else {
-        if (isAdmin) {
-          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
-        } else {
-          h += '<div class="dir-card-head" style="cursor:default">';
-        }
+        h += '<div class="dir-card-head">';
         h += '<strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
         if (isAdmin) {
@@ -2660,7 +2661,11 @@ function renderDirectory() {
     h += '<p class="dir-desc">District + division combos. Selecting a court on a matter fills both fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.courts).forEach(function(c) {
-      h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
+      if (isAdmin && S.editId !== c.id) {
+        h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
+      } else {
+        h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
+      }
       if (S.editId === c.id && isAdmin) {
         COURT_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
@@ -2673,11 +2678,7 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-court" data-id="' + c.id + '">Delete</button></div>';
       } else {
-        if (isAdmin) {
-          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
-        } else {
-          h += '<div class="dir-card-head" style="cursor:default">';
-        }
+        h += '<div class="dir-card-head">';
         h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
         h += htmlProvenanceBadge(c);
@@ -2696,7 +2697,11 @@ function renderDirectory() {
     h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any matter.</p>';
     h += '<div class="dir-list">';
     Object.values(S.attProfiles).forEach(function(a) {
-      h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
+      if (isAdmin && S.editId !== a.id) {
+        h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
+      } else {
+        h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
+      }
       if (S.editId === a.id && isAdmin) {
         ATT_PROFILE_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
@@ -2711,11 +2716,7 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-attorney" data-id="' + a.id + '">Delete</button></div>';
       } else {
-        if (isAdmin) {
-          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
-        } else {
-          h += '<div class="dir-card-head" style="cursor:default">';
-        }
+        h += '<div class="dir-card-head">';
         h += '<strong>' + esc(a.name || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
         h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
@@ -3311,6 +3312,7 @@ function initKanbanDragDrop() {
         e.preventDefault();
         return;
       }
+      _wasDragged = true;
       e.dataTransfer.setData('text/plain', card.dataset.dragId);
       e.dataTransfer.effectAllowed = 'move';
       card.classList.add('kb-dragging');
@@ -3528,6 +3530,7 @@ document.addEventListener('click', function(e) {
   }
   if (action === 'open-petition') {
     if (e.target.closest('.kb-card-actions')) return;
+    if (_wasDragged) { _wasDragged = false; return; }
     setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' });
     return;
   }
