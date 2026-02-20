@@ -101,6 +101,35 @@ function dismissToast(el) {
   }, 300);
 }
 
+function countPetitionFieldUsage(fieldName) {
+  var counts = {};
+  var pets = Object.values(S.petitions);
+  for (var i = 0; i < pets.length; i++) {
+    var val = pets[i][fieldName];
+    if (val) counts[val] = (counts[val] || 0) + 1;
+  }
+  return counts;
+}
+
+function countAttorneyUsage() {
+  var counts = {};
+  var pets = Object.values(S.petitions);
+  for (var i = 0; i < pets.length; i++) {
+    if (pets[i]._att1Id) counts[pets[i]._att1Id] = (counts[pets[i]._att1Id] || 0) + 1;
+    if (pets[i]._att2Id) counts[pets[i]._att2Id] = (counts[pets[i]._att2Id] || 0) + 1;
+  }
+  return counts;
+}
+
+function sortByFrequency(items, counts, displayFn) {
+  return items.slice().sort(function(a, b) {
+    var freqA = counts[a.id] || 0;
+    var freqB = counts[b.id] || 0;
+    if (freqB !== freqA) return freqB - freqA;
+    return displayFn(a).localeCompare(displayFn(b));
+  });
+}
+
 var STAGES = ['drafted', 'reviewed', 'submitted'];
 var SM = {
   drafted:   { color: '#c9a040', bg: '#faf5e4', label: 'Drafted' },
@@ -3388,7 +3417,9 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'court') {
-    h += htmlPicker('Select Court', Object.values(S.courts).filter(function(c) { return !c.archived; }), function(c) { return c.district + (c.division ? ' \u2014 ' + c.division : '') + (c.circuit ? ' (Cir. ' + c.circuit + ')' : ''); }, pet._courtId || '', 'apply-court', 'inline-add-court');
+    var courtDisplayFn = function(c) { return c.district + (c.division ? ' \u2014 ' + c.division : '') + (c.circuit ? ' (Cir. ' + c.circuit + ')' : ''); };
+    var courtItems = sortByFrequency(Object.values(S.courts).filter(function(c) { return !c.archived; }), countPetitionFieldUsage('_courtId'), courtDisplayFn);
+    h += htmlPicker('Select Court', courtItems, courtDisplayFn, pet._courtId || '', 'apply-court', 'inline-add-court');
     if (S.inlineAdd && S.inlineAdd.type === 'court') {
       h += htmlInlineAddForm('court');
     }
@@ -3401,7 +3432,9 @@ function renderEditor() {
     }
     h += htmlFieldGroup('Court (manual override)', COURT_FIELDS, pet, 'editor-pet-field');
     h += '<div style="height:8px"></div>';
-    h += htmlPicker('Select Facility', Object.values(S.facilities).filter(function(f) { return !f.archived; }), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'inline-add-facility');
+    var facDisplayFn = function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; };
+    var facItems = sortByFrequency(Object.values(S.facilities).filter(function(f) { return !f.archived; }), countPetitionFieldUsage('_facilityId'), facDisplayFn);
+    h += htmlPicker('Select Facility', facItems, facDisplayFn, pet._facilityId || '', 'apply-facility', 'inline-add-facility');
     if (S.inlineAdd && S.inlineAdd.type === 'facility') {
       h += htmlInlineAddForm('facility');
     }
@@ -3411,12 +3444,13 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'atty') {
-    var attList = Object.values(S.attProfiles).filter(function(a) { return !a.archived; });
-    h += htmlPicker('Attorney 1', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
+    var attDisplayFn = function(a) { return a.name + ' \u2014 ' + a.firm; };
+    var attList = sortByFrequency(Object.values(S.attProfiles).filter(function(a) { return !a.archived; }), countAttorneyUsage(), attDisplayFn);
+    h += htmlPicker('Attorney 1', attList, attDisplayFn, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
     if (S.inlineAdd && S.inlineAdd.type === 'att1') {
       h += htmlInlineAddForm('att1');
     }
-    h += htmlPicker('Attorney 2', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att2Id || '', 'apply-att2', 'inline-add-att2');
+    h += htmlPicker('Attorney 2', attList, attDisplayFn, pet._att2Id || '', 'apply-att2', 'inline-add-att2');
     if (S.inlineAdd && S.inlineAdd.type === 'att2') {
       h += htmlInlineAddForm('att2');
     }
