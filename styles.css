@@ -886,6 +886,37 @@ body,
   text-align: center;
 }
 
+/* ── Inline Add Form (Editor sidebar) ────────────── */
+.inline-add-form {
+  background: var(--panel);
+  border: 2px solid var(--accent);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 8px 0;
+  box-shadow: 0 0 0 2px rgba(160, 133, 64, 0.08);
+}
+.inline-add-head {
+  display: flex;
+  align-items: center;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+.inline-add-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.inline-add-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── Clients View ─────────────────────────────────── */
 .clients-view {
   flex: 1;

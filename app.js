@@ -1018,6 +1018,7 @@ var S = {
   dirTab: 'facilities',
   editId: null,
   draft: {},
+  inlineAdd: null,
   boardMode: 'kanban',
   boardTableGroup: 'stage',
   boardAddingMatter: false,
@@ -2234,6 +2235,48 @@ function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction)
   return h;
 }
 
+function htmlInlineAddForm(type) {
+  var fields, saveAction, title;
+  if (type === 'court') {
+    fields = COURT_FIELDS;
+    saveAction = 'inline-save-court';
+    title = 'New Court';
+  } else if (type === 'facility') {
+    fields = FACILITY_FIELDS;
+    saveAction = 'inline-save-facility';
+    title = 'New Facility';
+  } else if (type === 'att1') {
+    fields = ATT_PROFILE_FIELDS;
+    saveAction = 'inline-save-att1';
+    title = 'New Attorney Profile';
+  } else if (type === 'att2') {
+    fields = ATT_PROFILE_FIELDS;
+    saveAction = 'inline-save-att2';
+    title = 'New Attorney Profile';
+  } else {
+    return '';
+  }
+  var h = '<div class="inline-add-form">';
+  h += '<div class="inline-add-head"><span class="inline-add-title">' + esc(title) + '</span></div>';
+  if (type === 'facility') {
+    h += htmlFacilityAutocomplete();
+  }
+  fields.forEach(function(ff) {
+    var val = (S.draft[ff.key]) || '';
+    var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+    var vErr = '';
+    if (ff.validate && val && val.trim()) { var err = ff.validate(val); if (err) { vErr = '<span class="fval-err">' + esc(err) + '</span>'; chk = '<span class="fval-warn">&#9888;</span>'; } }
+    h += '<div class="frow"><label class="flbl">' + esc(ff.label) + chk + '</label>';
+    h += htmlFieldInput(ff, val, 'draft-field');
+    h += vErr + '</div>';
+  });
+  h += '<div class="inline-add-actions">';
+  h += '<button class="hbtn accent" data-action="' + saveAction + '">Save &amp; Apply</button>';
+  h += '<button class="hbtn" data-action="inline-cancel">Cancel</button>';
+  h += '</div></div>';
+  return h;
+}
+
 function petAttorneyNames(p) {
   var names = [];
   if (p._att1Id && S.attProfiles[p._att1Id]) names.push(S.attProfiles[p._att1Id].name);
@@ -2939,10 +2982,16 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'court') {
-    h += htmlPicker('Select Court', Object.values(S.courts), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'goto-directory');
+    h += htmlPicker('Select Court', Object.values(S.courts), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'inline-add-court');
+    if (S.inlineAdd && S.inlineAdd.type === 'court') {
+      h += htmlInlineAddForm('court');
+    }
     h += htmlFieldGroup('Court (manual override)', COURT_FIELDS, pet, 'editor-pet-field');
     h += '<div style="height:8px"></div>';
-    h += htmlPicker('Select Facility', Object.values(S.facilities), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'goto-directory');
+    h += htmlPicker('Select Facility', Object.values(S.facilities), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'inline-add-facility');
+    if (S.inlineAdd && S.inlineAdd.type === 'facility') {
+      h += htmlInlineAddForm('facility');
+    }
     h += htmlFieldGroup('Facility (manual override)', FACILITY_FIELDS, pet, 'editor-pet-field');
     h += htmlFieldGroup('Respondents (manual override)', RESPONDENT_FIELDS, pet, 'editor-pet-field');
     h += htmlFieldGroup('National Officials (override)', NATIONAL_OVERRIDE_FIELDS, pet, 'editor-pet-field');
@@ -2950,9 +2999,15 @@ function renderEditor() {
 
   if (S.editorTab === 'atty') {
     var attList = Object.values(S.attProfiles);
-    h += htmlPicker('Attorney 1', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att1Id || '', 'apply-att1', 'goto-directory');
-    h += htmlPicker('Attorney 2', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att2Id || '', 'apply-att2', 'goto-directory');
-    if (!pet._att1Id && !pet._att2Id) {
+    h += htmlPicker('Attorney 1', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
+    if (S.inlineAdd && S.inlineAdd.type === 'att1') {
+      h += htmlInlineAddForm('att1');
+    }
+    h += htmlPicker('Attorney 2', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att2Id || '', 'apply-att2', 'inline-add-att2');
+    if (S.inlineAdd && S.inlineAdd.type === 'att2') {
+      h += htmlInlineAddForm('att2');
+    }
+    if (!pet._att1Id && !pet._att2Id && !S.inlineAdd) {
       h += '<p style="font-size:11px;color:#aaa;margin-top:8px">Select attorney profiles from the Directory, or add new ones with +</p>';
     }
   }
@@ -3866,8 +3921,114 @@ document.addEventListener('click', function(e) {
   }
 
   // Editor tabs
-  if (action === 'ed-tab') { setState({ editorTab: btn.dataset.tab }); return; }
-  if (action === 'goto-directory') { setState({ currentView: 'directory' }); return; }
+  if (action === 'ed-tab') { setState({ editorTab: btn.dataset.tab, inlineAdd: null, draft: {} }); return; }
+  if (action === 'goto-directory') { setState({ currentView: 'directory', inlineAdd: null, draft: {} }); return; }
+
+  // ── Inline Add-to-Directory from Editor ───────────────────────
+  if (action === 'inline-add-court') {
+    var id = uid();
+    var c = { id: id, district: '', division: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    setState({ inlineAdd: { type: 'court', id: id }, draft: Object.assign({}, c) });
+    return;
+  }
+  if (action === 'inline-add-facility') {
+    var id = uid();
+    var f = { id: id, name: '', city: '', state: '', warden: '', fieldOfficeName: '', fieldOfficeDirector: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    setState({ inlineAdd: { type: 'facility', id: id }, draft: Object.assign({}, f) });
+    return;
+  }
+  if (action === 'inline-add-att1') {
+    var id = uid();
+    var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    setState({ inlineAdd: { type: 'att1', id: id }, draft: Object.assign({}, a) });
+    return;
+  }
+  if (action === 'inline-add-att2') {
+    var id = uid();
+    var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    setState({ inlineAdd: { type: 'att2', id: id }, draft: Object.assign({}, a) });
+    return;
+  }
+  if (action === 'inline-cancel') {
+    setState({ inlineAdd: null, draft: {} });
+    return;
+  }
+  if (action === 'inline-save-court') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!S.inlineAdd || !S.draft.id) return;
+    var c = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.courts[c.id] = c;
+    S.log.push({ op: 'CREATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division }, c.id)
+        .then(function() { toast('Court added', 'success'); })
+        .catch(function(e) { console.error(e); toast('Court save failed', 'error'); });
+    }
+    if (pet) {
+      Object.assign(pet, { district: c.district, division: c.division, _courtId: c.id });
+      S.log.push({ op: 'APPLY', target: 'court', payload: c.id, frame: { t: now(), petition: pet.id } });
+      syncPetitionToMatrix(pet, 'Court');
+    }
+    setState({ inlineAdd: null, draft: {} });
+    return;
+  }
+  if (action === 'inline-save-facility') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!S.inlineAdd || !S.draft.id) return;
+    var f = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.facilities[f.id] = f;
+    S.log.push({ op: 'CREATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, f.id)
+        .then(function() { toast('Facility added', 'success'); })
+        .catch(function(e) { console.error(e); toast('Facility save failed', 'error'); });
+    }
+    if (pet) {
+      Object.assign(pet, { facilityName: f.name, facilityCity: f.city, facilityState: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, _facilityId: f.id });
+      S.log.push({ op: 'APPLY', target: 'facility', payload: f.id, frame: { t: now(), petition: pet.id } });
+      syncPetitionToMatrix(pet, 'Facility');
+    }
+    setState({ inlineAdd: null, draft: {} });
+    return;
+  }
+  if (action === 'inline-save-att1') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!S.inlineAdd || !S.draft.id) return;
+    var a = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.attProfiles[a.id] = a;
+    S.log.push({ op: 'CREATE', target: a.id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice }, a.id)
+        .then(function() { toast('Attorney added', 'success'); })
+        .catch(function(e) { console.error(e); toast('Attorney save failed', 'error'); });
+    }
+    if (pet) {
+      pet._att1Id = a.id;
+      S.log.push({ op: 'APPLY', target: 'att1', payload: a.id, frame: { t: now(), petition: pet.id } });
+      syncPetitionToMatrix(pet, 'Attorney 1');
+    }
+    setState({ inlineAdd: null, draft: {} });
+    return;
+  }
+  if (action === 'inline-save-att2') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!S.inlineAdd || !S.draft.id) return;
+    var a = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.attProfiles[a.id] = a;
+    S.log.push({ op: 'CREATE', target: a.id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice }, a.id)
+        .then(function() { toast('Attorney added', 'success'); })
+        .catch(function(e) { console.error(e); toast('Attorney save failed', 'error'); });
+    }
+    if (pet) {
+      pet._att2Id = a.id;
+      S.log.push({ op: 'APPLY', target: 'att2', payload: a.id, frame: { t: now(), petition: pet.id } });
+      syncPetitionToMatrix(pet, 'Attorney 2');
+    }
+    setState({ inlineAdd: null, draft: {} });
+    return;
+  }
 });
 
 // ── Input/Change Event Handling ──────────────────────────────────
