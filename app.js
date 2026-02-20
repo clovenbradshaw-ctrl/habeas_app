@@ -590,6 +590,69 @@ function doExportPDF(blocks, vars) {
   setTimeout(function() { w.focus(); w.print(); }, 500);
 }
 
+// ── Template-based export (uses template.html) ─────────────────
+function buildExportFromTemplate(vars, forWord) {
+  return fetch('template.html')
+    .then(function(r) {
+      if (!r.ok) throw new Error('Template fetch failed: ' + r.status);
+      return r.text();
+    })
+    .then(function(html) {
+      // Replace <span class="ph">{{VAR}}</span> with value or [VAR]
+      html = html.replace(/<span class="ph">\{\{(\w+)\}\}<\/span>/g, function(_, k) {
+        return (vars[k] && vars[k].trim()) ? esc(vars[k]) : '[' + k + ']';
+      });
+      // Replace bare {{VAR}} (e.g. inside <h2> headings)
+      html = html.replace(/\{\{(\w+)\}\}/g, function(_, k) {
+        return (vars[k] && vars[k].trim()) ? vars[k] : '[' + k + ']';
+      });
+      // Override .ph styling for export (no red color)
+      html = html.replace('.ph {', '.ph-disabled {');
+      if (forWord) {
+        // Add Word XML namespaces for .doc compatibility
+        html = html.replace('<!doctype html>', '');
+        html = html.replace('<html lang="en">', '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">');
+      }
+      return html;
+    });
+}
+
+// ── Matrix sync helpers ─────────────────────────────────────────
+var _syncTimers = {};
+function debouncedSync(key, fn) {
+  if (_syncTimers[key]) clearTimeout(_syncTimers[key]);
+  _syncTimers[key] = setTimeout(fn, 1000);
+}
+
+function syncClientToMatrix(client) {
+  if (!matrix.isReady() || !client.roomId) return;
+  matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
+    id: client.id, name: client.name, country: client.country,
+    yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+    entryMethod: client.entryMethod,
+    apprehensionLocation: client.apprehensionLocation,
+    apprehensionDate: client.apprehensionDate,
+    criminalHistory: client.criminalHistory,
+    communityTies: client.communityTies,
+  }, '').catch(function(e) { console.error('Client sync failed:', e); });
+}
+
+function syncPetitionToMatrix(pet) {
+  if (!matrix.isReady() || !pet.roomId) return;
+  matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
+    clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
+    district: pet.district, division: pet.division, caseNumber: pet.caseNumber,
+    facilityName: pet.facilityName, facilityCity: pet.facilityCity,
+    facilityState: pet.facilityState, warden: pet.warden,
+    fieldOfficeDirector: pet.fieldOfficeDirector, fieldOfficeName: pet.fieldOfficeName,
+    filingDate: pet.filingDate, filingDay: pet.filingDay,
+    filingMonthYear: pet.filingMonthYear,
+    _facilityId: pet._facilityId, _courtId: pet._courtId,
+    _att1Id: pet._att1Id, _att2Id: pet._att2Id,
+    templateId: pet.templateId,
+  }, pet.id).catch(function(e) { console.error('Petition sync failed:', e); });
+}
+
 // ── Block / Variable HTML helpers ────────────────────────────────
 var CLS_MAP = {
   title: 'blk-title', heading: 'blk-heading', para: 'blk-para',
@@ -1275,8 +1338,31 @@ document.addEventListener('click', function(e) {
     var a1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
     var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
     var vars = buildVarMap(cl, pet, a1 || {}, a2 || {}, S.national);
-    if (action === 'export-word') doExportDoc(pet.blocks, vars, cl.name);
-    else doExportPDF(pet.blocks, vars);
+    var isWord = action === 'export-word';
+    buildExportFromTemplate(vars, isWord)
+      .then(function(html) {
+        if (isWord) {
+          var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          a.href = url;
+          a.download = 'habeas-' + (cl.name || 'petition').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+        } else {
+          var w = window.open('', '_blank', 'width=850,height=1100');
+          if (!w) { alert('Allow popups for PDF export'); return; }
+          w.document.write(html);
+          w.document.close();
+          setTimeout(function() { w.focus(); w.print(); }, 500);
+        }
+      })
+      .catch(function(err) {
+        console.error('Template export failed, falling back to block export:', err);
+        if (isWord) doExportDoc(pet.blocks, vars, cl.name);
+        else doExportPDF(pet.blocks, vars);
+      });
     return;
   }
 
@@ -1412,6 +1498,7 @@ document.addEventListener('input', function(e) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
     return;
   }
 
@@ -1422,6 +1509,7 @@ document.addEventListener('input', function(e) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
     return;
   }
 
@@ -1430,6 +1518,7 @@ document.addEventListener('input', function(e) {
     if (!pet) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
     return;
   }
 });
@@ -1448,6 +1537,7 @@ document.addEventListener('change', function(e) {
     if (c) {
       Object.assign(pet, { district: c.district, division: c.division, _courtId: val });
       S.log.push({ op: 'APPLY', target: 'court', payload: val, frame: { t: now(), petition: pet.id } });
+      syncPetitionToMatrix(pet);
       render();
     }
     return;
@@ -1457,6 +1547,7 @@ document.addEventListener('change', function(e) {
     if (f) {
       Object.assign(pet, { facilityName: f.name, facilityCity: f.city, facilityState: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, _facilityId: val });
       S.log.push({ op: 'APPLY', target: 'facility', payload: val, frame: { t: now(), petition: pet.id } });
+      syncPetitionToMatrix(pet);
       render();
     }
     return;
@@ -1464,12 +1555,14 @@ document.addEventListener('change', function(e) {
   if (action === 'apply-att1') {
     pet._att1Id = val;
     S.log.push({ op: 'APPLY', target: 'att1', payload: val, frame: { t: now(), petition: pet.id } });
+    syncPetitionToMatrix(pet);
     render();
     return;
   }
   if (action === 'apply-att2') {
     pet._att2Id = val;
     S.log.push({ op: 'APPLY', target: 'att2', payload: val, frame: { t: now(), petition: pet.id } });
+    syncPetitionToMatrix(pet);
     render();
     return;
   }
