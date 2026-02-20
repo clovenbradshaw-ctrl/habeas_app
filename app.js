@@ -22,6 +22,26 @@ function ts(iso) {
     });
   } catch (e) { return iso; }
 }
+function timeAgo(iso) {
+  try {
+    var diff = Date.now() - new Date(iso).getTime();
+    if (diff < 0) return 'just now';
+    var s = Math.floor(diff / 1000);
+    if (s < 60) return 'just now';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + (m === 1 ? ' min ago' : ' mins ago');
+    var hr = Math.floor(m / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    var d = Math.floor(hr / 24);
+    if (d < 7) return d + (d === 1 ? ' day ago' : ' days ago');
+    var w = Math.floor(d / 7);
+    if (w < 5) return w + (w === 1 ? ' week ago' : ' weeks ago');
+    var mo = Math.floor(d / 30);
+    if (mo < 12) return mo + (mo === 1 ? ' month ago' : ' months ago');
+    var y = Math.floor(d / 365);
+    return y + (y === 1 ? ' year ago' : ' years ago');
+  } catch (e) { return ''; }
+}
 function esc(s) {
   var d = document.createElement('div');
   d.textContent = s;
@@ -518,15 +538,24 @@ var matrix = {
   _api: function(method, path, body) {
     var opts = { method: method, headers: this._headers() };
     if (body) opts.body = JSON.stringify(body);
+    // Abort fetch after 15 seconds to avoid hanging on unreachable servers
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+    opts.signal = controller.signal;
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
+        clearTimeout(timeoutId);
         if (!r.ok) {
+          var httpStatus = r.status;
           return r.text().then(function(text) {
             try {
-              throw JSON.parse(text);
+              var parsed = JSON.parse(text);
+              // Always include HTTP status on error objects
+              if (!parsed.status) parsed.status = httpStatus;
+              throw parsed;
             } catch(e) {
               if (e instanceof SyntaxError) {
-                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + httpStatus + ' ' + r.statusText, status: httpStatus };
               }
               throw e;
             }
@@ -535,13 +564,19 @@ var matrix = {
         return r.json();
       })
       .catch(function(e) {
+        clearTimeout(timeoutId);
         if (e && e.errcode) throw e;
+        if (e && e.name === 'AbortError') {
+          throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+        }
         throw { errcode: 'M_NETWORK', error: e.message || 'Network error', status: 0 };
       });
   },
 
   login: function(baseUrl, username, password) {
     this.baseUrl = baseUrl;
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
     return fetch(baseUrl + '/_matrix/client/v3/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -551,8 +586,10 @@ var matrix = {
         password: password,
         initial_device_display_name: 'Amino Habeas App',
       }),
+      signal: controller.signal,
     })
     .then(function(r) {
+      clearTimeout(timeoutId);
       if (!r.ok) {
         return r.text().then(function(text) {
           try {
@@ -574,6 +611,13 @@ var matrix = {
       matrix.deviceId = data.device_id;
       matrix.saveSession();
       return data;
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      if (e && e.name === 'AbortError') {
+        throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+      }
+      throw e;
     });
   },
 
@@ -646,8 +690,55 @@ var matrix = {
     return this._api('POST', '/createRoom', options);
   },
 
+  adminApi: function(method, path, body) {
+    var opts = { method: method, headers: this._headers() };
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(this.baseUrl + '/_synapse/admin' + path, opts)
+      .then(function(r) {
+        if (!r.ok) {
+          return r.text().then(function(text) {
+            try { throw JSON.parse(text); }
+            catch(e) {
+              if (e instanceof SyntaxError) {
+                throw { errcode: 'M_UNKNOWN', error: 'Admin API returned ' + r.status, status: r.status };
+              }
+              if (!e.status) e.status = r.status;
+              throw e;
+            }
+          });
+        }
+        return r.json();
+      })
+      .catch(function(e) {
+        if (e && e.errcode) throw e;
+        throw { errcode: 'M_NETWORK', error: e.message || 'Network error', status: 0 };
+      });
+  },
+
+  inviteUser: function(roomId, userId) {
+    return this._api('POST', '/rooms/' + encodeURIComponent(roomId) + '/invite', { user_id: userId });
+  },
+
+  setPowerLevel: function(roomId, userId, level) {
+    var self = this;
+    return this._api('GET', '/rooms/' + encodeURIComponent(roomId) + '/state/m.room.power_levels/')
+      .then(function(content) {
+        if (!content.users) content.users = {};
+        content.users[userId] = level;
+        return self._api('PUT', '/rooms/' + encodeURIComponent(roomId) + '/state/m.room.power_levels/', content);
+      });
+  },
+
   isReady: function() {
     return !!this.accessToken;
+  },
+
+  // Verify the stored token is still valid by calling /whoami
+  whoami: function() {
+    return this._api('GET', '/account/whoami')
+      .then(function(data) {
+        return data; // { user_id: "@user:server" }
+      });
   },
 
   saveSession: function() {
@@ -693,8 +784,11 @@ var S = {
   national: { iceDirector: '', iceDirectorTitle: '', dhsSecretary: '', attorneyGeneral: '' },
   clients: {},
   petitions: {},
+  users: {},
   log: [],
   role: null,
+  adminEditUserId: null,
+  adminDraft: {},
   currentUser: '',
   currentView: 'board',
   selectedClientId: null,
@@ -703,9 +797,12 @@ var S = {
   dirTab: 'facilities',
   editId: null,
   draft: {},
+  boardMode: 'kanban',
+  boardTableGroup: 'stage',
   _rendering: false,
 };
 
+var _collapsedGroups = {};
 var _prevView = null;
 function setState(updates) {
   Object.assign(S, updates);
@@ -848,6 +945,23 @@ function hydrateFromMatrix() {
         };
       }
 
+      // Users
+      var userEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_USER);
+      var users = {};
+      Object.keys(userEvents).forEach(function(k) {
+        var e = userEvents[k];
+        if (k && e.content && !e.content.deleted) {
+          users[k] = {
+            mxid: k,
+            displayName: e.content.displayName || k.replace(/@(.+):.*/, '$1'),
+            role: e.content.role || 'attorney',
+            active: e.content.active !== false,
+            createdBy: e.sender,
+            updatedAt: new Date(e.origin_server_ts).toISOString(),
+          };
+        }
+      });
+
       // Client rooms + petitions
       var clients = {};
       var petitions = {};
@@ -916,7 +1030,7 @@ function hydrateFromMatrix() {
       setState({
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
-        role: role, currentUser: matrix.userId, syncError: syncError,
+        users: users, role: role, currentUser: matrix.userId, syncError: syncError,
       });
     });
 }
@@ -959,7 +1073,11 @@ function buildDocHTML(blocks, vars) {
       return '<div class="' + cls + '">' + text + '</div>';
     }).join('');
   var parens = Array(24).fill(')').join('<br>');
-  return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>@page{size:8.5in 11in;margin:1in}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body>' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</body></html>';
+  return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head>' +
+    '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
+    '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
+    '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
+    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body><div class="WordSection1">' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</div></body></html>';
 }
 
 function doExportDoc(blocks, vars, name) {
@@ -1004,6 +1122,24 @@ function buildExportFromTemplate(vars, forWord) {
         // Add Word XML namespaces for .doc compatibility
         html = html.replace('<!doctype html>', '');
         html = html.replace('<html lang="en">', '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">');
+        // Replace HTML5 meta charset with http-equiv form Word understands
+        html = html.replace('<meta charset="utf-8" />', '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">');
+        // Remove viewport meta tag which Word doesn't understand
+        html = html.replace('<meta name="viewport" content="width=device-width, initial-scale=1" />', '');
+        // Inject Word XML document settings after <head>
+        var wordXml = '<!--[if gte mso 9]><xml>' +
+          '<o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings>' +
+          '</xml><xml>' +
+          '<w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument>' +
+          '</xml><![endif]-->';
+        html = html.replace('<head>', '<head>\n' + wordXml);
+        // Add Word-specific page setup CSS
+        var msoCss = '\n  @page WordSection1 { size: 8.5in 11in; margin: 1in; mso-header-margin: 0.5in; mso-footer-margin: 0.5in; mso-paper-source: 0; }' +
+          '\n  div.WordSection1 { page: WordSection1; }';
+        html = html.replace('</style>', msoCss + '\n</style>');
+        // Wrap body content in a WordSection1 div
+        html = html.replace('<body>', '<body><div class="WordSection1">');
+        html = html.replace('</body>', '</div></body>');
       }
       return html;
     });
@@ -1017,8 +1153,8 @@ function debouncedSync(key, fn) {
 }
 
 function syncClientToMatrix(client) {
-  if (!matrix.isReady() || !client.roomId) return;
-  matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
+  if (!matrix.isReady() || !client.roomId) return Promise.resolve();
+  return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
     id: client.id, name: client.name, country: client.country,
     yearsInUS: client.yearsInUS, entryDate: client.entryDate,
     entryMethod: client.entryMethod,
@@ -1029,9 +1165,82 @@ function syncClientToMatrix(client) {
   }, '').catch(function(e) { console.error('Client sync failed:', e); });
 }
 
+// Create a Matrix room for a client and sync initial data
+var _pendingRoomCreations = {};
+function createClientRoom(clientId) {
+  if (!matrix.isReady()) return Promise.resolve();
+  var client = S.clients[clientId];
+  if (!client) return Promise.resolve();
+  // Already has a room
+  if (client.roomId) return Promise.resolve(client.roomId);
+  // Room creation already in flight for this client
+  if (_pendingRoomCreations[clientId]) return _pendingRoomCreations[clientId];
+  var roomName = 'client:' + (client.name || client.id);
+  _pendingRoomCreations[clientId] = matrix.createRoom({
+    name: roomName,
+    visibility: 'private',
+    preset: 'private_chat',
+    initial_state: [
+      {
+        type: EVT_CLIENT,
+        state_key: '',
+        content: {
+          id: client.id, name: client.name, country: client.country,
+          yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+          entryMethod: client.entryMethod,
+          apprehensionLocation: client.apprehensionLocation,
+          apprehensionDate: client.apprehensionDate,
+          criminalHistory: client.criminalHistory,
+          communityTies: client.communityTies,
+        },
+      },
+    ],
+  }).then(function(data) {
+    var roomId = data.room_id;
+    // Update local cache
+    if (!matrix.rooms[roomId]) matrix.rooms[roomId] = { stateEvents: {} };
+    if (!matrix.rooms[roomId].stateEvents[EVT_CLIENT]) matrix.rooms[roomId].stateEvents[EVT_CLIENT] = {};
+    matrix.rooms[roomId].stateEvents[EVT_CLIENT][''] = {
+      content: {
+        id: client.id, name: client.name, country: client.country,
+        yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+        entryMethod: client.entryMethod,
+        apprehensionLocation: client.apprehensionLocation,
+        apprehensionDate: client.apprehensionDate,
+        criminalHistory: client.criminalHistory,
+        communityTies: client.communityTies,
+      },
+      sender: matrix.userId,
+      origin_server_ts: Date.now(),
+    };
+    // Update client's roomId in state
+    client.roomId = roomId;
+    S.clients[clientId] = client;
+    // Also update roomId on any petitions for this client
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.clientId === clientId && !p.roomId) {
+        p.roomId = roomId;
+        // Sync any pending petitions now that we have a roomId
+        syncPetitionToMatrix(p);
+        if (p.blocks && p.blocks.length > 0) {
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
+            .catch(function(e) { console.error('Block sync failed:', e); });
+        }
+      }
+    });
+    console.log('Created Matrix room for client', clientId, '→', roomId);
+    delete _pendingRoomCreations[clientId];
+    return roomId;
+  }).catch(function(e) {
+    console.error('Failed to create client room:', e);
+    delete _pendingRoomCreations[clientId];
+  });
+  return _pendingRoomCreations[clientId];
+}
+
 function syncPetitionToMatrix(pet) {
-  if (!matrix.isReady() || !pet.roomId) return;
-  matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
+  if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
+  return matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
     clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
     district: pet.district, division: pet.division, caseNumber: pet.caseNumber,
     facilityName: pet.facilityName, facilityCity: pet.facilityCity,
@@ -1194,6 +1403,13 @@ function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction)
   return h;
 }
 
+function petAttorneyNames(p) {
+  var names = [];
+  if (p._att1Id && S.attProfiles[p._att1Id]) names.push(S.attProfiles[p._att1Id].name);
+  if (p._att2Id && S.attProfiles[p._att2Id]) names.push(S.attProfiles[p._att2Id].name);
+  return names.length > 0 ? names.join(', ') : '';
+}
+
 function htmlProvenanceBadge(record) {
   if (!record || !record.createdBy) return '';
   var h = '<div class="prov"><span class="prov-item">Created by <strong>' + esc(record.createdBy) + '</strong> ';
@@ -1227,6 +1443,7 @@ function renderHeader() {
   var h = '<header class="hdr"><div class="hdr-left">';
   h += '<span class="hdr-brand">Habeas</span><nav class="hdr-nav">';
   var tabs = [['board','Board'],['clients','Clients'],['directory','Directory']];
+  if (S.role === 'admin') tabs.push(['admin','Admin']);
   if (pet) tabs.push(['editor','Editor']);
   tabs.forEach(function(t) {
     h += '<button class="nav-btn' + (S.currentView === t[0] ? ' on' : '') + '" data-action="nav" data-view="' + t[0] + '">' + t[1] + '</button>';
@@ -1247,7 +1464,45 @@ function renderHeader() {
 function renderBoard() {
   var all = Object.values(S.petitions);
   var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
-  var h = '<div class="board-view"><div class="kanban">';
+
+  var h = '<div class="board-view">';
+
+  // Toggle bar
+  h += '<div class="board-toggle-bar">';
+  h += '<div class="board-toggle">';
+  h += '<button class="board-toggle-btn' + (S.boardMode === 'kanban' ? ' on' : '') + '" data-action="board-mode" data-mode="kanban">Kanban</button>';
+  h += '<button class="board-toggle-btn' + (S.boardMode === 'table' ? ' on' : '') + '" data-action="board-mode" data-mode="table">Table</button>';
+  h += '</div>';
+
+  if (S.boardMode === 'table') {
+    h += '<div class="board-group-sel">';
+    h += '<label class="board-group-label">Group by</label>';
+    h += '<select class="finp board-group-input" data-change="board-table-group">';
+    ['stage', 'attorney', 'facility', 'court'].forEach(function(g) {
+      h += '<option value="' + g + '"' + (S.boardTableGroup === g ? ' selected' : '') + '>' + g.charAt(0).toUpperCase() + g.slice(1) + '</option>';
+    });
+    h += '</select>';
+    h += '</div>';
+  }
+
+  h += '</div>';
+
+  if (S.boardMode === 'table') {
+    h += renderBoardTable(vis);
+  } else {
+    h += renderBoardKanban(vis);
+  }
+
+  if (vis.length === 0) {
+    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderBoardKanban(vis) {
+  var h = '<div class="kanban">';
   STAGES.forEach(function(stage) {
     var items = vis.filter(function(p) { return p.stage === stage; })
       .sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
@@ -1262,11 +1517,15 @@ function renderBoard() {
     items.forEach(function(p) {
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
-      h += '<div class="kb-card" style="border-left-color:' + m.color + '">';
-      h += '<div class="kb-card-name" data-action="open-petition" data-id="' + p.id + '">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
+      var attNames = petAttorneyNames(p);
+      h += '<div class="kb-card" style="border-left-color:' + m.color + '" data-action="open-petition" data-id="' + p.id + '">';
+      h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
-      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + '</div>';
+      if (attNames) {
+        h += '<div class="kb-card-meta kb-card-att">' + esc(attNames) + '</div>';
+      }
+      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + ' <span class="kb-card-ago">(' + timeAgo(p.createdAt) + ')</span></div>';
       if (p.stageHistory && p.stageHistory.length > 1) {
         h += '<div class="kb-dots">';
         p.stageHistory.forEach(function(sh) {
@@ -1283,15 +1542,92 @@ function renderBoard() {
     h += '</div></div>';
   });
   h += '</div>';
-  if (Object.keys(S.petitions).length === 0) {
-    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  return h;
+}
+
+function renderBoardTable(vis) {
+  var groupKey = S.boardTableGroup;
+  var groups = {};
+
+  vis.forEach(function(p) {
+    var key;
+    if (groupKey === 'stage') {
+      key = p.stage || 'drafted';
+    } else if (groupKey === 'attorney') {
+      key = petAttorneyNames(p) || 'Unassigned';
+    } else if (groupKey === 'facility') {
+      key = p.facilityName || 'No Facility';
+    } else if (groupKey === 'court') {
+      key = p.district || 'No Court';
+    } else {
+      key = 'All';
+    }
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  });
+
+  var groupKeys;
+  if (groupKey === 'stage') {
+    groupKeys = STAGES.filter(function(s) { return groups[s]; });
+  } else {
+    groupKeys = Object.keys(groups).sort();
   }
-  h += '</div>';
+
+  var h = '<div class="board-table-wrap"><table class="board-table">';
+  h += '<thead><tr>';
+  h += '<th>Client</th><th>Case No.</th><th>Stage</th><th>District</th>';
+  h += '<th>Facility</th><th>Attorney(s)</th><th>Created</th><th>Age</th>';
+  h += '</tr></thead>';
+  h += '<tbody>';
+
+  groupKeys.forEach(function(gk) {
+    var items = groups[gk];
+    items.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+    var collapsed = _collapsedGroups[groupKey + ':' + gk];
+    var sm = (groupKey === 'stage' && SM[gk]) ? SM[gk] : null;
+    var colorDot = sm ? '<span class="kb-dot" style="background:' + sm.color + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' : '';
+
+    h += '<tr class="board-table-group-hdr" data-action="toggle-group" data-group="' + esc(groupKey + ':' + gk) + '">';
+    h += '<td colspan="8">';
+    h += '<span class="group-arrow">' + (collapsed ? '&#9654;' : '&#9660;') + '</span> ';
+    h += colorDot + '<strong>' + esc(gk) + '</strong> <span class="group-count">(' + items.length + ')</span>';
+    h += '</td></tr>';
+
+    if (!collapsed) {
+      items.forEach(function(p) {
+        var cl = S.clients[p.clientId];
+        var attNames = petAttorneyNames(p);
+        var stm = SM[p.stage] || SM.drafted;
+        h += '<tr class="board-table-row" data-action="open-petition" data-id="' + p.id + '">';
+        h += '<td class="bt-client">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</td>';
+        h += '<td>' + esc(p.caseNumber || '\u2014') + '</td>';
+        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(p.stage) + '</span></td>';
+        h += '<td>' + esc(p.district || '\u2014') + '</td>';
+        h += '<td>' + esc(p.facilityName || '\u2014') + '</td>';
+        h += '<td>' + esc(attNames || '\u2014') + '</td>';
+        h += '<td class="bt-date">' + new Date(p.createdAt).toLocaleDateString() + '</td>';
+        h += '<td class="bt-age">' + timeAgo(p.createdAt) + '</td>';
+        h += '</tr>';
+      });
+    }
+  });
+
+  h += '</tbody></table></div>';
   return h;
 }
 
 function renderClients() {
-  var clientList = Object.values(S.clients);
+  var allClients = Object.values(S.clients);
+  var clientList;
+  if (S.role === 'admin') {
+    clientList = allClients;
+  } else {
+    var myClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+    });
+    clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
+  }
   var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
   var clientPets = client ? Object.values(S.petitions).filter(function(p) { return p.clientId === client.id; }) : [];
   var h = '<div class="clients-view"><div class="cv-sidebar"><div class="cv-head">';
@@ -1339,6 +1675,7 @@ function renderClients() {
 
 function renderDirectory() {
   var tab = S.dirTab;
+  var isAdmin = S.role === 'admin';
   var h = '<div class="dir-view"><div class="dir-tabs">';
   [['facilities', 'Facilities (' + Object.keys(S.facilities).length + ')'],
    ['courts', 'Courts (' + Object.keys(S.courts).length + ')'],
@@ -1350,12 +1687,13 @@ function renderDirectory() {
 
   if (tab === 'facilities') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
-    h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button></div>';
+    if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
+    h += '</div>';
     h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.facilities).forEach(function(f) {
       h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
-      if (S.editId === f.id) {
+      if (S.editId === f.id && isAdmin) {
         h += htmlFacilityAutocomplete();
         FACILITY_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
@@ -1370,25 +1708,31 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-facility" data-id="' + f.id + '">Delete</button></div>';
       } else {
-        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility"><strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
+        if (isAdmin) {
+          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
+        } else {
+          h += '<div class="dir-card-head" style="cursor:default">';
+        }
+        h += '<strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
         h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
         h += htmlProvenanceBadge(f);
       }
       h += '</div>';
     });
-    if (Object.keys(S.facilities).length === 0) h += '<div class="dir-empty">No facilities yet. Add one to get started.</div>';
+    if (Object.keys(S.facilities).length === 0) h += '<div class="dir-empty">No facilities yet.' + (isAdmin ? ' Add one to get started.' : '') + '</div>';
     h += '</div></div>';
   }
 
   if (tab === 'courts') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
-    h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button></div>';
+    if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
+    h += '</div>';
     h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.courts).forEach(function(c) {
       h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
-      if (S.editId === c.id) {
+      if (S.editId === c.id && isAdmin) {
         COURT_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
           var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
@@ -1400,7 +1744,12 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-court" data-id="' + c.id + '">Delete</button></div>';
       } else {
-        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court"><strong>' + esc(c.district || 'Unnamed') + '</strong>';
+        if (isAdmin) {
+          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
+        } else {
+          h += '<div class="dir-card-head" style="cursor:default">';
+        }
+        h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
         h += htmlProvenanceBadge(c);
       }
@@ -1412,12 +1761,13 @@ function renderDirectory() {
 
   if (tab === 'attorneys') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
-    h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button></div>';
+    if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
+    h += '</div>';
     h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
     h += '<div class="dir-list">';
     Object.values(S.attProfiles).forEach(function(a) {
       h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
-      if (S.editId === a.id) {
+      if (S.editId === a.id && isAdmin) {
         ATT_PROFILE_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
           var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
@@ -1431,7 +1781,12 @@ function renderDirectory() {
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="del-attorney" data-id="' + a.id + '">Delete</button></div>';
       } else {
-        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney"><strong>' + esc(a.name || 'Unnamed') + '</strong>';
+        if (isAdmin) {
+          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
+        } else {
+          h += '<div class="dir-card-head" style="cursor:default">';
+        }
+        h += '<strong>' + esc(a.name || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
         h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
         h += htmlProvenanceBadge(a);
@@ -1444,13 +1799,17 @@ function renderDirectory() {
 
   if (tab === 'national') {
     h += '<div class="dir-section"><div class="dir-head"><h3>National Defaults</h3></div>';
-    h += '<p class="dir-desc">These auto-fill on every petition. Update when officials change.</p>';
+    h += '<p class="dir-desc">These auto-fill on every petition.' + (isAdmin ? ' Update when officials change.' : '') + '</p>';
     h += '<div class="dir-card editing">';
     NATIONAL_FIELDS.forEach(function(f) {
       var val = (S.national[f.key]) || '';
       var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
       h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
-      h += htmlFieldInput(f, val, 'national-field');
+      if (isAdmin) {
+        h += htmlFieldInput(f, val, 'national-field');
+      } else {
+        h += '<input class="finp" value="' + esc(val) + '" disabled style="background:#f5f2ec;color:var(--muted)">';
+      }
       h += '</div>';
     });
     h += htmlProvenanceBadge(S.national);
@@ -1458,6 +1817,87 @@ function renderDirectory() {
   }
 
   h += '</div></div>';
+  return h;
+}
+
+function renderAdmin() {
+  if (S.role !== 'admin') {
+    return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
+  }
+
+  var h = '<div class="dir-view"><div class="dir-tabs">';
+  h += '<button class="dir-tab on">User Management</button>';
+  h += '</div><div class="dir-body"><div class="dir-section">';
+
+  // Header with create button
+  h += '<div class="dir-head"><h3>Users</h3>';
+  h += '<button class="hbtn accent" data-action="admin-show-create">+ Create User</button></div>';
+  h += '<p class="dir-desc">Manage user accounts. Creating a user registers them on the Matrix server, sets their role, and invites them to the required rooms.</p>';
+
+  // Inline create form
+  if (S.adminEditUserId === 'new') {
+    h += '<div class="dir-card editing" style="margin-bottom:16px">';
+    h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">New User</div>';
+    h += '<div class="frow"><label class="flbl">Username</label>';
+    h += '<input class="finp" value="' + esc(S.adminDraft.username || '') + '" placeholder="e.g. jsmith" data-field-key="username" data-change="admin-draft-field"></div>';
+    h += '<div class="frow"><label class="flbl">Display Name</label>';
+    h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" placeholder="Jane Smith" data-field-key="displayName" data-change="admin-draft-field"></div>';
+    h += '<div class="frow"><label class="flbl">Password</label>';
+    h += '<input class="finp" type="password" value="' + esc(S.adminDraft.password || '') + '" placeholder="Temporary password" data-field-key="password" data-change="admin-draft-field"></div>';
+    h += '<div class="frow"><label class="flbl">Role</label>';
+    h += '<select class="finp" data-change="admin-draft-role">';
+    h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
+    h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
+    h += '</select></div>';
+    h += '<div id="admin-create-error" class="login-error" style="display:none;margin-top:8px"></div>';
+    h += '<div class="dir-card-actions">';
+    h += '<button class="hbtn accent" data-action="admin-create-user" id="admin-create-btn">Create Account</button>';
+    h += '<button class="hbtn" data-action="admin-cancel-create">Cancel</button></div>';
+    h += '</div>';
+  }
+
+  // User list
+  h += '<div class="dir-list">';
+  var userList = Object.values(S.users);
+  if (userList.length === 0) {
+    h += '<div class="dir-empty">No managed users yet. Users created through this panel will appear here.</div>';
+  }
+  userList.forEach(function(u) {
+    var isEditing = S.adminEditUserId === u.mxid;
+    h += '<div class="dir-card' + (isEditing ? ' editing' : '') + '">';
+    if (isEditing) {
+      h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Edit User</div>';
+      h += '<div class="frow"><label class="flbl">Display Name</label>';
+      h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
+      h += '<div class="frow"><label class="flbl">Role</label>';
+      h += '<select class="finp" data-change="admin-draft-role">';
+      h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
+      h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
+      h += '</select></div>';
+      h += '<div class="frow"><label class="flbl">Reset Password</label>';
+      h += '<input class="finp" type="password" value="' + esc(S.adminDraft.password || '') + '" placeholder="Leave blank to keep current" data-field-key="password" data-change="admin-draft-field"></div>';
+      h += '<div id="admin-edit-error" class="login-error" style="display:none;margin-top:8px"></div>';
+      h += '<div class="dir-card-actions">';
+      h += '<button class="hbtn accent" data-action="admin-save-user">Save Changes</button>';
+      h += '<button class="hbtn" data-action="admin-cancel-edit">Cancel</button>';
+      if (u.mxid !== S.currentUser) {
+        h += '<button class="hbtn danger" data-action="admin-deactivate-user" data-mxid="' + esc(u.mxid) + '">Deactivate</button>';
+      }
+      h += '</div>';
+    } else {
+      var roleBadgeColor = u.role === 'admin' ? '#a08540' : '#8a8a9a';
+      h += '<div class="dir-card-head" data-action="admin-edit-user" data-mxid="' + esc(u.mxid) + '">';
+      h += '<strong>' + esc(u.displayName) + '</strong>';
+      h += '<span class="dir-card-sub" style="color:' + roleBadgeColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + esc(u.role) + '</span></div>';
+      h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
+      if (!u.active) {
+        h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
+      }
+      h += htmlProvenanceBadge(u);
+    }
+    h += '</div>';
+  });
+  h += '</div></div></div></div>';
   return h;
 }
 
@@ -1735,6 +2175,7 @@ function render() {
   if (S.currentView === 'board') h += renderBoard();
   else if (S.currentView === 'clients') h += renderClients();
   else if (S.currentView === 'directory') h += renderDirectory();
+  else if (S.currentView === 'admin') h += renderAdmin();
   else if (S.currentView === 'editor') h += renderEditor();
   h += '</div>';
   root.innerHTML = h;
@@ -1873,7 +2314,17 @@ document.addEventListener('click', function(e) {
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
   // Board
-  if (action === 'open-petition') { setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' }); return; }
+  if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'toggle-group') {
+    var gKey = btn.dataset.group || (btn.closest('[data-group]') && btn.closest('[data-group]').dataset.group);
+    if (gKey) { _collapsedGroups[gKey] = !_collapsedGroups[gKey]; render(); }
+    return;
+  }
+  if (action === 'open-petition') {
+    if (e.target.closest('.kb-card-actions')) return;
+    setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' });
+    return;
+  }
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
@@ -1898,11 +2349,14 @@ document.addEventListener('click', function(e) {
     S.clients[id] = { id: id, name: '', country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
     setState({ selectedClientId: id });
+    // Create a Matrix room for the client in the background
+    createClientRoom(id);
     return;
   }
   if (action === 'create-petition') {
     var cid = btn.dataset.clientId;
     var pid = uid();
+    var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
     S.petitions[pid] = {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
       stageHistory: [{ stage: 'drafted', at: now() }],
@@ -1910,10 +2364,17 @@ document.addEventListener('click', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
-      createdAt: now(), roomId: (S.clients[cid] && S.clients[cid].roomId) || '',
+      createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
+    // Sync petition to Matrix (will be picked up by createClientRoom if roomId is empty)
+    var pet = S.petitions[pid];
+    if (pet.roomId && matrix.isReady()) {
+      syncPetitionToMatrix(pet);
+      matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
+        .catch(function(e) { console.error('Block sync failed:', e); });
+    }
     return;
   }
 
@@ -1957,6 +2418,7 @@ document.addEventListener('click', function(e) {
   if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
   if (action === 'cancel-edit') { setState({ editId: null, draft: {} }); return; }
   if (action === 'edit-record') {
+    if (S.role !== 'admin') return;
     var type = btn.dataset.type;
     var id = btn.dataset.id;
     var record = type === 'facility' ? S.facilities[id] : type === 'court' ? S.courts[id] : S.attProfiles[id];
@@ -1964,6 +2426,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'add-facility') {
+    if (S.role !== 'admin') return;
     var id = uid();
     var f = { id: id, name: '', city: '', state: '', warden: '', fieldOfficeName: '', fieldOfficeDirector: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.facilities[id] = f;
@@ -1972,6 +2435,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'save-facility') {
+    if (S.role !== 'admin') return;
     var f = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
     S.facilities[f.id] = f;
     S.log.push({ op: 'UPDATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
@@ -1982,6 +2446,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'del-facility') {
+    if (S.role !== 'admin') return;
     var id = btn.dataset.id;
     delete S.facilities[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'facility' } });
@@ -1992,6 +2457,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'add-court') {
+    if (S.role !== 'admin') return;
     var id = uid();
     var c = { id: id, district: '', division: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.courts[id] = c;
@@ -2000,6 +2466,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'save-court') {
+    if (S.role !== 'admin') return;
     var c = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
     S.courts[c.id] = c;
     S.log.push({ op: 'UPDATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
@@ -2010,6 +2477,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'del-court') {
+    if (S.role !== 'admin') return;
     var id = btn.dataset.id;
     delete S.courts[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
@@ -2020,6 +2488,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'add-attorney') {
+    if (S.role !== 'admin') return;
     var id = uid();
     var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.attProfiles[id] = a;
@@ -2028,6 +2497,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'save-attorney') {
+    if (S.role !== 'admin') return;
     var a = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
     S.attProfiles[a.id] = a;
     S.log.push({ op: 'UPDATE', target: a.id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
@@ -2038,6 +2508,7 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'del-attorney') {
+    if (S.role !== 'admin') return;
     var id = btn.dataset.id;
     delete S.attProfiles[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'attorney_profile' } });
@@ -2045,6 +2516,44 @@ document.addEventListener('click', function(e) {
       matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { deleted: true }, id).catch(function(e) { console.error(e); });
     }
     setState({ editId: null, draft: {} });
+    return;
+  }
+
+  // Admin view actions
+  if (action === 'admin-show-create') {
+    if (S.role !== 'admin') return;
+    setState({ adminEditUserId: 'new', adminDraft: { username: '', displayName: '', password: '', role: 'attorney' } });
+    return;
+  }
+  if (action === 'admin-cancel-create' || action === 'admin-cancel-edit') {
+    setState({ adminEditUserId: null, adminDraft: {} });
+    return;
+  }
+  if (action === 'admin-edit-user') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    var user = S.users[mxid];
+    if (user) {
+      setState({ adminEditUserId: mxid, adminDraft: { displayName: user.displayName, role: user.role, password: '' } });
+    }
+    return;
+  }
+  if (action === 'admin-create-user') {
+    if (S.role !== 'admin') return;
+    handleAdminCreateUser();
+    return;
+  }
+  if (action === 'admin-save-user') {
+    if (S.role !== 'admin') return;
+    handleAdminSaveUser();
+    return;
+  }
+  if (action === 'admin-deactivate-user') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    if (mxid && confirm('Deactivate user ' + mxid + '? This cannot be undone.')) {
+      handleAdminDeactivateUser(mxid);
+    }
     return;
   }
 
@@ -2059,7 +2568,14 @@ function dispatchFieldChange(action, key, val) {
     S.draft[key] = val;
     return;
   }
+
+  if (action === 'admin-draft-field') {
+    S.adminDraft[key] = val;
+    return;
+  }
+
   if (action === 'national-field') {
+    if (S.role !== 'admin') return;
     S.national[key] = val;
     S.national.updatedBy = S.currentUser;
     S.national.updatedAt = now();
@@ -2075,7 +2591,14 @@ function dispatchFieldChange(action, key, val) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
-    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
+    debouncedSync('client-' + client.id, function() {
+      if (client.roomId) {
+        syncClientToMatrix(client);
+      } else if (matrix.isReady()) {
+        // Room hasn't been created yet — create it now (includes initial sync)
+        createClientRoom(client.id);
+      }
+    });
     return;
   }
   if (action === 'editor-client-field') {
@@ -2085,7 +2608,13 @@ function dispatchFieldChange(action, key, val) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
-    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
+    debouncedSync('client-' + client.id, function() {
+      if (client.roomId) {
+        syncClientToMatrix(client);
+      } else if (matrix.isReady()) {
+        createClientRoom(client.id);
+      }
+    });
     return;
   }
   if (action === 'editor-pet-field') {
@@ -2139,7 +2668,16 @@ document.addEventListener('change', function(e) {
     return;
   }
 
-  // Existing picker handlers (apply-court, apply-facility, etc.)
+  if (action === 'admin-draft-role') {
+    S.adminDraft.role = val;
+    return;
+  }
+
+  if (action === 'board-table-group') {
+    setState({ boardTableGroup: val });
+    return;
+  }
+
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) return;
 
@@ -2179,10 +2717,211 @@ document.addEventListener('change', function(e) {
   }
 });
 
+// ── Admin Business Logic ─────────────────────────────────────────
+function showAdminError(elementId, msg) {
+  var el = document.getElementById(elementId);
+  if (el) {
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+}
+
+function handleAdminCreateUser() {
+  var d = S.adminDraft;
+  if (!d.username || !d.password) {
+    showAdminError('admin-create-error', 'Username and password are required.');
+    return;
+  }
+
+  var mxid = '@' + d.username.trim() + ':' + CONFIG.MATRIX_SERVER_NAME;
+  var displayName = d.displayName || d.username;
+  var role = d.role || 'attorney';
+  var powerLevel = role === 'admin' ? 50 : 0;
+
+  var createBtn = document.getElementById('admin-create-btn');
+  if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
+
+  // Step 1: Create account via Synapse admin API
+  matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+    password: d.password,
+    displayname: displayName,
+    admin: false,
+    deactivated: false,
+  })
+  .then(function() {
+    // Step 2: Store role in !org room as EVT_USER state event
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+      displayName: displayName,
+      role: role,
+      active: true,
+    }, mxid);
+  })
+  .then(function() {
+    // Step 3: Invite user to !org room
+    return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
+      if (e.errcode === 'M_FORBIDDEN') return;
+      console.warn('Invite to org room failed:', e);
+    });
+  })
+  .then(function() {
+    // Step 4: Invite user to !templates room
+    if (matrix.templatesRoomId) {
+      return matrix.inviteUser(matrix.templatesRoomId, mxid).catch(function(e) {
+        if (e.errcode === 'M_FORBIDDEN') return;
+        console.warn('Invite to templates room failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Step 5: Set power levels in !org room
+    return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
+      console.warn('Set org power level failed:', e);
+    });
+  })
+  .then(function() {
+    // Step 6: Set power levels in !templates room
+    if (matrix.templatesRoomId) {
+      return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
+        console.warn('Set templates power level failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Update local state
+    S.users[mxid] = {
+      mxid: mxid,
+      displayName: displayName,
+      role: role,
+      active: true,
+      createdBy: S.currentUser,
+      updatedAt: now(),
+    };
+    S.log.push({ op: 'CREATE', target: mxid, payload: displayName, frame: { t: now(), entity: 'user' } });
+    setState({ adminEditUserId: null, adminDraft: {} });
+  })
+  .catch(function(err) {
+    var msg = (err && err.error) || (err && err.message) || 'Failed to create user.';
+    if (err && err.status === 403) {
+      msg = 'Access denied. Your account may not have Synapse server admin privileges. Create users via command line instead.';
+    }
+    showAdminError('admin-create-error', msg);
+    if (createBtn) { createBtn.disabled = false; createBtn.textContent = 'Create Account'; }
+  });
+}
+
+function handleAdminSaveUser() {
+  var mxid = S.adminEditUserId;
+  if (!mxid || mxid === 'new') return;
+  var d = S.adminDraft;
+  var displayName = d.displayName || mxid.replace(/@(.+):.*/, '$1');
+  var role = d.role || 'attorney';
+  var powerLevel = role === 'admin' ? 50 : 0;
+
+  // Update EVT_USER state event
+  var chain = matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    displayName: displayName,
+    role: role,
+    active: S.users[mxid] ? S.users[mxid].active : true,
+  }, mxid);
+
+  // Update power levels in both rooms
+  chain = chain.then(function() {
+    return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
+      console.warn('Set org PL failed:', e);
+    });
+  })
+  .then(function() {
+    if (matrix.templatesRoomId) {
+      return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
+        console.warn('Set templates PL failed:', e);
+      });
+    }
+  });
+
+  // Optionally reset password
+  if (d.password && d.password.trim()) {
+    chain = chain.then(function() {
+      return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+        password: d.password,
+      });
+    });
+  }
+
+  chain.then(function() {
+    S.users[mxid] = Object.assign({}, S.users[mxid], {
+      displayName: displayName,
+      role: role,
+      updatedAt: now(),
+    });
+    S.log.push({ op: 'UPDATE', target: mxid, payload: role, frame: { t: now(), entity: 'user' } });
+    setState({ adminEditUserId: null, adminDraft: {} });
+  })
+  .catch(function(err) {
+    var msg = (err && err.error) || 'Failed to update user.';
+    showAdminError('admin-edit-error', msg);
+  });
+}
+
+function handleAdminDeactivateUser(mxid) {
+  matrix.adminApi('POST', '/v1/deactivate/' + encodeURIComponent(mxid), { erase: false })
+    .then(function() {
+      return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+        displayName: S.users[mxid] ? S.users[mxid].displayName : mxid,
+        role: S.users[mxid] ? S.users[mxid].role : 'attorney',
+        active: false,
+      }, mxid);
+    })
+    .then(function() {
+      if (S.users[mxid]) {
+        S.users[mxid].active = false;
+        S.users[mxid].updatedAt = now();
+      }
+      S.log.push({ op: 'DELETE', target: mxid, payload: null, frame: { t: now(), entity: 'user' } });
+      setState({ adminEditUserId: null, adminDraft: {} });
+    })
+    .catch(function(err) {
+      alert('Deactivation failed: ' + ((err && err.error) || 'unknown error'));
+    });
+}
+
+// ── Flush pending syncs on visibility change / page unload ──────
+// When the user switches tabs or is about to leave, immediately fire
+// any pending debounced syncs (best-effort — fetch may be cancelled)
+function flushPendingSyncs() {
+  var keys = Object.keys(_syncTimers);
+  if (keys.length === 0) return;
+  keys.forEach(function(key) {
+    // clearTimeout returns undefined; we need to re-invoke the sync
+    clearTimeout(_syncTimers[key]);
+    delete _syncTimers[key];
+  });
+  // Re-sync all clients and petitions that have room IDs
+  if (!matrix.isReady()) return;
+  Object.values(S.clients).forEach(function(client) {
+    if (client.roomId) syncClientToMatrix(client);
+  });
+  Object.values(S.petitions).forEach(function(pet) {
+    if (pet.roomId) syncPetitionToMatrix(pet);
+  });
+}
+
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') flushPendingSyncs();
+});
+window.addEventListener('beforeunload', flushPendingSyncs);
+
 // ── Initialization ───────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+  render(); // Show loading state immediately
   if (matrix.loadSession()) {
-    matrix.initialSync()
+    // First verify the token is still valid with /whoami
+    matrix.whoami()
+      .then(function(whoamiData) {
+        console.log('Session verified for:', whoamiData.user_id);
+        // Ensure userId matches what we have stored
+        if (whoamiData.user_id) matrix.userId = whoamiData.user_id;
+        return matrix.initialSync();
+      })
       .then(function() {
         S.authenticated = true;
         S.loading = false;
@@ -2194,6 +2933,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var status = (err && err.status) || 0;
         // On 401/403 (invalid token), clear session and show login
         if (status === 401 || status === 403) {
+          console.warn('Token invalid or expired, clearing session');
           matrix.clearSession();
           S.loading = false;
           render();
