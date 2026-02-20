@@ -1200,6 +1200,214 @@ function capSub(s, vars) {
   return subVars(s, vars).replace(/\n/g, '<br>');
 }
 
+// ── DOCX Export (proper .docx via docx library) ─────────────────
+function parseDocxRuns(content, vars, extraProps) {
+  extraProps = extraProps || {};
+  var text = subVars(content, vars);
+  var segments = [];
+  var re = /<em>([\s\S]*?)<\/em>/g;
+  var lastIndex = 0;
+  var match;
+  while ((match = re.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push({ text: text.slice(lastIndex, match.index), italic: false });
+    }
+    segments.push({ text: match[1], italic: true });
+    lastIndex = re.lastIndex;
+  }
+  if (lastIndex < text.length) {
+    segments.push({ text: text.slice(lastIndex), italic: false });
+  }
+  if (segments.length === 0) {
+    segments.push({ text: text, italic: false });
+  }
+  var runs = [];
+  segments.forEach(function(seg) {
+    var props = { text: seg.text, font: 'Times New Roman', size: 24 };
+    if (seg.italic) props.italics = true;
+    Object.keys(extraProps).forEach(function(k) { props[k] = extraProps[k]; });
+    runs.push(new docx.TextRun(props));
+  });
+  return runs;
+}
+
+function makeDocxLinesRuns(text, extraProps) {
+  extraProps = extraProps || {};
+  var lines = text.split('\n');
+  var runs = [];
+  lines.forEach(function(line, i) {
+    if (i > 0) runs.push(new docx.TextRun(Object.assign({ break: 1, font: 'Times New Roman', size: 24 }, extraProps)));
+    runs.push(new docx.TextRun(Object.assign({ text: line, font: 'Times New Roman', size: 24 }, extraProps)));
+  });
+  return runs;
+}
+
+function buildDocxDocument(blocks, vars) {
+  var noBorder = { style: docx.BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+  var borders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
+  var defaultSpacing = { line: 324 }; // 1.35x line height (240 * 1.35)
+
+  var titleBlocks = blocks.filter(function(b) { return TITLE_IDS[b.id]; });
+  var capLeftBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
+  var capRightBlocks = blocks.filter(function(b) { return CAP_R.indexOf(b.id) >= 0; });
+  var bodyBlocks = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
+
+  var children = [];
+
+  // Title paragraphs (centered, bold)
+  titleBlocks.forEach(function(b) {
+    children.push(new docx.Paragraph({
+      alignment: docx.AlignmentType.CENTER,
+      spacing: Object.assign({ after: 0 }, defaultSpacing),
+      children: parseDocxRuns(b.content, vars, { bold: true }),
+    }));
+  });
+
+  // Spacer before caption
+  children.push(new docx.Paragraph({ spacing: { after: 200 }, children: [] }));
+
+  // Caption table (3 columns: left 55%, middle 5% parens, right 40%)
+  var leftChildren = [];
+  capLeftBlocks.forEach(function(b) {
+    var alignment, extra = {};
+    if (b.type === 'cap-name') { alignment = docx.AlignmentType.CENTER; extra.bold = true; }
+    else if (b.type === 'cap-center') { alignment = docx.AlignmentType.CENTER; }
+    else { alignment = docx.AlignmentType.LEFT; }
+    var text = subVars(b.content, vars);
+    leftChildren.push(new docx.Paragraph({
+      alignment: alignment,
+      spacing: b.type === 'cap-center' ? { before: 100, after: 100 } : { after: 80 },
+      children: makeDocxLinesRuns(text, extra),
+    }));
+  });
+
+  var parenRuns = [];
+  for (var pi = 0; pi < 24; pi++) {
+    if (pi > 0) parenRuns.push(new docx.TextRun({ break: 1, font: 'Times New Roman', size: 24 }));
+    parenRuns.push(new docx.TextRun({ text: ')', font: 'Times New Roman', size: 24 }));
+  }
+
+  var rightChildren = [];
+  capRightBlocks.forEach(function(b) {
+    if (b.type === 'cap-case') {
+      rightChildren.push(new docx.Paragraph({
+        spacing: { after: 280 },
+        children: parseDocxRuns(b.content, vars),
+      }));
+    } else {
+      // cap-doctitle: bold
+      rightChildren.push(new docx.Paragraph({
+        spacing: { after: 0 },
+        children: parseDocxRuns(b.content, vars, { bold: true }),
+      }));
+    }
+  });
+
+  children.push(new docx.Table({
+    width: { size: 100, type: docx.WidthType.PERCENTAGE },
+    rows: [
+      new docx.TableRow({
+        children: [
+          new docx.TableCell({
+            width: { size: 55, type: docx.WidthType.PERCENTAGE },
+            borders: borders,
+            children: leftChildren,
+          }),
+          new docx.TableCell({
+            width: { size: 5, type: docx.WidthType.PERCENTAGE },
+            borders: borders,
+            verticalAlign: docx.VerticalAlign.TOP,
+            children: [new docx.Paragraph({
+              alignment: docx.AlignmentType.CENTER,
+              children: parenRuns,
+            })],
+          }),
+          new docx.TableCell({
+            width: { size: 40, type: docx.WidthType.PERCENTAGE },
+            borders: borders,
+            verticalAlign: docx.VerticalAlign.CENTER,
+            children: rightChildren,
+          }),
+        ],
+      }),
+    ],
+  }));
+
+  // Spacer after caption
+  children.push(new docx.Paragraph({ spacing: { after: 200 }, children: [] }));
+
+  // Body blocks
+  bodyBlocks.forEach(function(b) {
+    if (b.type === 'heading') {
+      var hText = subVars(b.content, vars).toUpperCase();
+      children.push(new docx.Paragraph({
+        spacing: Object.assign({ before: 360, after: 120 }, defaultSpacing),
+        children: [new docx.TextRun({ text: hText, bold: true, font: 'Times New Roman', size: 24 })],
+      }));
+    } else if (b.type === 'sig') {
+      var sigText = subVars(b.content, vars);
+      children.push(new docx.Paragraph({
+        spacing: Object.assign({ after: 200 }, defaultSpacing),
+        children: makeDocxLinesRuns(sigText),
+      }));
+    } else if (b.type === 'sig-label') {
+      children.push(new docx.Paragraph({
+        spacing: Object.assign({ after: 200 }, defaultSpacing),
+        children: parseDocxRuns(b.content, vars, { italics: true }),
+      }));
+    } else {
+      // para (default)
+      children.push(new docx.Paragraph({
+        alignment: docx.AlignmentType.BOTH,
+        spacing: Object.assign({ after: 200 }, defaultSpacing),
+        children: parseDocxRuns(b.content, vars),
+      }));
+    }
+  });
+
+  return new docx.Document({
+    sections: [{
+      properties: {
+        page: {
+          size: {
+            orientation: docx.PageOrientation.PORTRAIT,
+            width: docx.convertInchesToTwip(8.5),
+            height: docx.convertInchesToTwip(11),
+          },
+          margin: {
+            top: docx.convertInchesToTwip(1),
+            bottom: docx.convertInchesToTwip(1),
+            left: docx.convertInchesToTwip(1),
+            right: docx.convertInchesToTwip(1),
+          },
+        },
+      },
+      children: children,
+    }],
+  });
+}
+
+function doExportDocx(blocks, vars, name) {
+  try {
+    var doc = buildDocxDocument(blocks, vars);
+    docx.Packer.toBlob(doc).then(function(blob) {
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      a.href = url;
+      a.download = 'habeas-' + (name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.docx';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    }).catch(function(err) {
+      console.error('DOCX packing failed, falling back to HTML .doc:', err);
+      doExportDoc(blocks, vars, name);
+    });
+  } catch (err) {
+    console.error('DOCX build failed, falling back to HTML .doc:', err);
+    doExportDoc(blocks, vars, name);
+  }
+}
+
 function buildDocHTML(blocks, vars) {
   var titles = blocks.filter(function(b) { return TITLE_IDS[b.id]; })
     .map(function(b) { return '<div class="title">' + capSub(b.content, vars) + '</div>'; }).join('');
@@ -1744,7 +1952,7 @@ function renderHeader() {
   if (pet) {
     var sm = SM[pet.stage] || SM.drafted;
     h += '<span class="stage-badge" style="background:' + sm.color + '">' + pet.stage + '</span>';
-    h += '<button class="hbtn export" data-action="export-word">Word</button>';
+    h += '<button class="hbtn export" data-action="export-word">DOCX</button>';
     h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
   }
   h += '<button class="hbtn" data-action="logout">Sign Out</button>';
@@ -2714,31 +2922,42 @@ document.addEventListener('click', function(e) {
     var a1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
     var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
     var vars = buildVarMap(cl, pet, a1 || {}, a2 || {}, S.national);
-    var isWord = action === 'export-word';
-    buildExportFromTemplate(vars, isWord)
-      .then(function(html) {
-        if (isWord) {
-          var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
-          var url = URL.createObjectURL(blob);
-          var a = document.createElement('a');
-          a.href = url;
-          a.download = 'habeas-' + (cl.name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
-          document.body.appendChild(a);
-          a.click();
-          setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
-        } else {
+    if (action === 'export-word') {
+      // Use proper .docx generation if library loaded, else fall back to HTML .doc
+      if (typeof docx !== 'undefined' && docx.Packer) {
+        doExportDocx(pet.blocks, vars, cl.name);
+      } else {
+        buildExportFromTemplate(vars, true)
+          .then(function(html) {
+            var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'habeas-' + (cl.name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+          })
+          .catch(function(err) {
+            console.error('Template export failed, falling back to block export:', err);
+            doExportDoc(pet.blocks, vars, cl.name);
+          });
+      }
+    } else {
+      // PDF: template-based print flow
+      buildExportFromTemplate(vars, false)
+        .then(function(html) {
           var w = window.open('', '_blank', 'width=850,height=1100');
           if (!w) { alert('Allow popups for PDF export'); return; }
           w.document.write(html);
           w.document.close();
           setTimeout(function() { w.focus(); w.print(); }, 500);
-        }
-      })
-      .catch(function(err) {
-        console.error('Template export failed, falling back to block export:', err);
-        if (isWord) doExportDoc(pet.blocks, vars, cl.name);
-        else doExportPDF(pet.blocks, vars);
-      });
+        })
+        .catch(function(err) {
+          console.error('Template export failed, falling back to block export:', err);
+          doExportPDF(pet.blocks, vars);
+        });
+    }
     return;
   }
 
