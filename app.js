@@ -1,0 +1,1468 @@
+/* ================================================================
+   Amino Habeas - Plain HTML App (vanilla JS, no build step)
+   Replaces React/Vite/TypeScript with plain JS + Matrix REST API
+   ================================================================ */
+
+// ── Configuration ────────────────────────────────────────────────
+var CONFIG = {
+  MATRIX_SERVER_URL: 'https://app.aminoimmigration.com',
+  MATRIX_SERVER_NAME: 'aminoimmigration.com',
+  ORG_ROOM_ALIAS: '#org:aminoimmigration.com',
+  TEMPLATES_ROOM_ALIAS: '#templates:aminoimmigration.com',
+};
+
+// ── Utilities ────────────────────────────────────────────────────
+function uid() { return Math.random().toString(36).slice(2, 10); }
+function now() { return new Date().toISOString(); }
+function ts(iso) {
+  try {
+    return new Date(iso).toLocaleDateString('en-US', {
+      month: 'short', day: 'numeric', year: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+  } catch (e) { return iso; }
+}
+function esc(s) {
+  var d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+var STAGES = ['drafted', 'reviewed', 'submitted'];
+var SM = {
+  drafted:   { color: '#c9a040', bg: '#faf5e4', label: 'Drafted' },
+  reviewed:  { color: '#5a9e6f', bg: '#eaf5ee', label: 'Reviewed' },
+  submitted: { color: '#4a7ab5', bg: '#e8f0fa', label: 'Submitted' },
+};
+
+// ── Field Definitions ────────────────────────────────────────────
+var FACILITY_FIELDS = [
+  { key: 'name', label: 'Facility Name', ph: 'South Louisiana ICE Processing Center' },
+  { key: 'city', label: 'City', ph: 'Basile' },
+  { key: 'state', label: 'State', ph: 'Louisiana' },
+  { key: 'warden', label: 'Warden', ph: 'John Smith' },
+  { key: 'fieldOfficeName', label: 'Field Office', ph: 'New Orleans Field Office' },
+  { key: 'fieldOfficeDirector', label: 'Field Office Director', ph: 'Jane Doe' },
+];
+var COURT_FIELDS = [
+  { key: 'district', label: 'District', ph: 'Middle District of Tennessee' },
+  { key: 'division', label: 'Division', ph: 'Nashville Division' },
+];
+var NATIONAL_FIELDS = [
+  { key: 'iceDirector', label: 'ICE Director', ph: 'Tom Homan' },
+  { key: 'iceDirectorTitle', label: 'ICE Title', ph: 'Director' },
+  { key: 'dhsSecretary', label: 'DHS Secretary', ph: 'Kristi Noem' },
+  { key: 'attorneyGeneral', label: 'Attorney General', ph: 'Pam Bondi' },
+];
+var ATT_PROFILE_FIELDS = [
+  { key: 'name', label: 'Name', ph: '' },
+  { key: 'barNo', label: 'Bar No.', ph: '' },
+  { key: 'firm', label: 'Firm', ph: '' },
+  { key: 'address', label: 'Address', ph: '' },
+  { key: 'cityStateZip', label: 'City/St/Zip', ph: '' },
+  { key: 'phone', label: 'Phone', ph: '' },
+  { key: 'fax', label: 'Fax', ph: '' },
+  { key: 'email', label: 'Email', ph: '' },
+  { key: 'proHacVice', label: 'Pro Hac Vice', ph: '*Pro hac vice pending' },
+];
+var CLIENT_FIELDS = [
+  { key: 'name', label: 'Full Name', ph: 'Juan Carlos Rivera' },
+  { key: 'country', label: 'Country', ph: 'Honduras' },
+  { key: 'yearsInUS', label: 'Years in U.S.', ph: '12' },
+  { key: 'entryDate', label: 'Entry Date', ph: 'approximately 2013' },
+  { key: 'entryMethod', label: 'Entry Method', ph: 'without inspection' },
+  { key: 'apprehensionLocation', label: 'Arrest Location', ph: 'Nashville, Tennessee' },
+  { key: 'apprehensionDate', label: 'Arrest Date', ph: 'January 15, 2026' },
+  { key: 'criminalHistory', label: 'Criminal History', ph: 'has no criminal record' },
+  { key: 'communityTies', label: 'Community Ties', ph: 'has strong family and community ties' },
+];
+var FILING_FIELDS = [
+  { key: 'filingDate', label: 'Filing Date', ph: 'February 19, 2026' },
+  { key: 'filingDay', label: 'Filing Day', ph: '19th' },
+  { key: 'filingMonthYear', label: 'Month & Year', ph: 'February, 2026' },
+];
+var RESPONDENT_FIELDS = [
+  { key: 'warden', label: 'Warden', ph: '' },
+  { key: 'fieldOfficeDirector', label: 'FOD', ph: '' },
+  { key: 'fieldOfficeName', label: 'Field Office', ph: '' },
+];
+
+function buildVarMap(c, p, a1, a2, nat) {
+  c = c || {}; p = p || {}; a1 = a1 || {}; a2 = a2 || {}; nat = nat || {};
+  return {
+    COURT_DISTRICT: p.district || '', COURT_DIVISION: p.division || '',
+    CASE_NUMBER: p.caseNumber || '',
+    PETITIONER_FULL_NAME: c.name || '', PETITIONER_COUNTRY: c.country || '',
+    PETITIONER_YEARS_IN_US: c.yearsInUS || '', PETITIONER_ENTRY_DATE: c.entryDate || '',
+    PETITIONER_ENTRY_METHOD: c.entryMethod || '',
+    PETITIONER_APPREHENSION_LOCATION: c.apprehensionLocation || '',
+    PETITIONER_APPREHENSION_DATE: c.apprehensionDate || '',
+    PETITIONER_CRIMINAL_HISTORY: c.criminalHistory || '',
+    PETITIONER_COMMUNITY_TIES: c.communityTies || '',
+    DETENTION_FACILITY_NAME: p.facilityName || '',
+    DETENTION_FACILITY_CITY: p.facilityCity || '',
+    DETENTION_FACILITY_STATE: p.facilityState || '',
+    WARDEN_NAME: p.warden || '', FIELD_OFFICE_DIRECTOR: p.fieldOfficeDirector || '',
+    FIELD_OFFICE_NAME: p.fieldOfficeName || '',
+    ICE_DIRECTOR: nat.iceDirector || '', ICE_DIRECTOR_TITLE: nat.iceDirectorTitle || '',
+    DHS_SECRETARY: nat.dhsSecretary || '', ATTORNEY_GENERAL: nat.attorneyGeneral || '',
+    FILING_DATE: p.filingDate || '', FILING_DAY: p.filingDay || '',
+    FILING_MONTH_YEAR: p.filingMonthYear || '',
+    ATTORNEY1_NAME: a1.name || '', ATTORNEY1_BAR_NO: a1.barNo || '',
+    ATTORNEY1_FIRM: a1.firm || '', ATTORNEY1_ADDRESS: a1.address || '',
+    ATTORNEY1_CITY_STATE_ZIP: a1.cityStateZip || '',
+    ATTORNEY1_PHONE: a1.phone || '', ATTORNEY1_FAX: a1.fax || '',
+    ATTORNEY1_EMAIL: a1.email || '',
+    ATTORNEY2_NAME: a2.name || '', ATTORNEY2_BAR_NO: a2.barNo || '',
+    ATTORNEY2_FIRM: a2.firm || '', ATTORNEY2_ADDRESS: a2.address || '',
+    ATTORNEY2_CITY_STATE_ZIP: a2.cityStateZip || '',
+    ATTORNEY2_PHONE: a2.phone || '', ATTORNEY2_EMAIL: a2.email || '',
+    ATTORNEY2_PRO_HAC: a2.proHacVice || '',
+  };
+}
+
+// ── Default Template Blocks ──────────────────────────────────────
+var DEFAULT_BLOCKS = [
+  { id: 'ct-1', type: 'title', content: 'UNITED STATES DISTRICT COURT' },
+  { id: 'ct-2', type: 'title', content: 'FOR THE {{COURT_DISTRICT}}' },
+  { id: 'ct-3', type: 'title', content: '{{COURT_DIVISION}}' },
+  { id: 'cap-pet', type: 'cap-name', content: '{{PETITIONER_FULL_NAME}},' },
+  { id: 'cap-role', type: 'cap-center', content: 'Petitioner-Plaintiff,' },
+  { id: 'cap-v', type: 'cap-center', content: 'v.' },
+  { id: 'cap-r1', type: 'cap-resp', content: '{{WARDEN_NAME}}, Warden of {{DETENTION_FACILITY_NAME}};' },
+  { id: 'cap-r2', type: 'cap-resp', content: '{{FIELD_OFFICE_DIRECTOR}}, FOD, {{FIELD_OFFICE_NAME}}, ERO, ICE;' },
+  { id: 'cap-r3', type: 'cap-resp', content: 'U.S. Department of Homeland Security;' },
+  { id: 'cap-r4', type: 'cap-resp', content: '{{ICE_DIRECTOR}}, {{ICE_DIRECTOR_TITLE}}, ICE, DHS;' },
+  { id: 'cap-r5', type: 'cap-resp', content: '{{DHS_SECRETARY}}, Secretary, DHS; and' },
+  { id: 'cap-r6', type: 'cap-resp', content: '{{ATTORNEY_GENERAL}}, Attorney General; Respondents-Defendants.' },
+  { id: 'cap-case', type: 'cap-case', content: 'C/A No. {{CASE_NUMBER}}' },
+  { id: 'cap-title', type: 'cap-doctitle', content: 'PETITION FOR WRIT OF HABEAS CORPUS AND COMPLAINT FOR DECLARATORY AND INJUNCTIVE RELIEF' },
+  { id: 'h-intro', type: 'heading', content: 'INTRODUCTION' },
+  { id: 'p-1', type: 'para', content: '1. {{PETITIONER_FULL_NAME}} ("Petitioner") is a citizen of {{PETITIONER_COUNTRY}} who has resided in the U.S. for {{PETITIONER_YEARS_IN_US}} years. ICE apprehended him in {{PETITIONER_APPREHENSION_LOCATION}} on or about {{PETITIONER_APPREHENSION_DATE}}.' },
+  { id: 'p-2', type: 'para', content: '2. Petitioner is detained at {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}.' },
+  { id: 'p-3', type: 'para', content: '3. The BIA reinterpreted the INA. <em>Matter of Yajure Hurtado</em>, 29 I&N Dec. 216 (BIA 2025). Petitioner is subject to mandatory detention under \u00a7 1225(b)(2)(A) with no bond.' },
+  { id: 'p-4', type: 'para', content: '4. This violates the INA. Petitioner, residing nearly {{PETITIONER_YEARS_IN_US}} years, is not an "applicant for admission." He should be under \u00a7 1226(a), which allows bond.' },
+  { id: 'p-5', type: 'para', content: '5. Petitioner seeks declaratory relief under \u00a7 1226(a) and asks for release or a bond hearing.' },
+  { id: 'h-cust', type: 'heading', content: 'CUSTODY' },
+  { id: 'p-6', type: 'para', content: '6. Petitioner is in ICE custody at {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}. <em>Jones v. Cunningham</em>, 371 U.S. 236, 243 (1963).' },
+  { id: 'h-jur', type: 'heading', content: 'JURISDICTION' },
+  { id: 'p-7', type: 'para', content: '7. Jurisdiction under 28 U.S.C. \u00a7 2241, \u00a7 1331, the Suspension Clause, and the INA.' },
+  { id: 'h-ven', type: 'heading', content: 'VENUE' },
+  { id: 'p-12', type: 'para', content: '12. Venue proper under 28 U.S.C. \u00a7 1391(e). Petitioner is under ICE\u2019s {{FIELD_OFFICE_NAME}} and detained at {{DETENTION_FACILITY_NAME}}.' },
+  { id: 'h-par', type: 'heading', content: 'PARTIES' },
+  { id: 'p-16', type: 'para', content: '16. Petitioner {{PETITIONER_FULL_NAME}} is from {{PETITIONER_COUNTRY}}, in the U.S. since {{PETITIONER_ENTRY_DATE}}.' },
+  { id: 'p-17', type: 'para', content: '17\u201321. Respondents {{WARDEN_NAME}}, {{FIELD_OFFICE_DIRECTOR}}, {{ICE_DIRECTOR}}, {{DHS_SECRETARY}}, and {{ATTORNEY_GENERAL}} are sued in their official capacities.' },
+  { id: 'h-leg', type: 'heading', content: 'LEGAL BACKGROUND' },
+  { id: 'p-22', type: 'para', content: '22\u201337. \u00a7 1226(a) allows bond. \u00a7 1225(b) is for those seeking admission at borders. The BIA\u2019s reinterpretation in <em>Yajure Hurtado</em> is contrary to statute, regulations, and precedent. Under <em>Loper Bright</em>, 603 U.S. 369 (2024), no deference is owed.' },
+  { id: 'h-facts', type: 'heading', content: 'STATEMENT OF FACTS' },
+  { id: 'p-38', type: 'para', content: '38\u201343. Petitioner is from {{PETITIONER_COUNTRY}}, entered {{PETITIONER_ENTRY_METHOD}} in {{PETITIONER_ENTRY_DATE}}, {{PETITIONER_CRIMINAL_HISTORY}}, arrested in {{PETITIONER_APPREHENSION_LOCATION}} on {{PETITIONER_APPREHENSION_DATE}}, detained at {{DETENTION_FACILITY_NAME}}.' },
+  { id: 'h-c1', type: 'heading', content: 'COUNT I \u2014 Violation of \u00a7 1226(a)' },
+  { id: 'p-45', type: 'para', content: '45. Petitioner is entitled to a bond hearing under \u00a7 1226(a). His detention is unlawful.' },
+  { id: 'h-c2', type: 'heading', content: 'COUNT II \u2014 Violation of Bond Regulations' },
+  { id: 'p-51', type: 'para', content: '51. Application of \u00a7 1225(b)(2) violates 8 C.F.R. \u00a7\u00a7 236.1, 1236.1, 1003.19.' },
+  { id: 'h-c3', type: 'heading', content: 'COUNT III \u2014 Fifth Amendment Due Process' },
+  { id: 'p-57', type: 'para', content: '57. Petitioner {{PETITIONER_CRIMINAL_HISTORY}} and {{PETITIONER_COMMUNITY_TIES}}. Risk of erroneous deprivation is high.' },
+  { id: 'h-pray', type: 'heading', content: 'PRAYER FOR RELIEF' },
+  { id: 'p-pray', type: 'para', content: 'WHEREFORE: (1) jurisdiction; (2) expedited; (3) no transfer; (4) OSC; (5) declare unlawful; (6) Writ with bond hearing; (7) EAJA fees; (8) further relief.' },
+  { id: 'sig-date', type: 'sig', content: 'Date: {{FILING_DATE}}' },
+  { id: 'sig-sub', type: 'sig', content: 'Respectfully Submitted,' },
+  { id: 'sig-a1', type: 'sig', content: '/s/ {{ATTORNEY1_NAME}}\n{{ATTORNEY1_BAR_NO}}\n{{ATTORNEY1_FIRM}}\n{{ATTORNEY1_ADDRESS}}\n{{ATTORNEY1_CITY_STATE_ZIP}}\n{{ATTORNEY1_PHONE}} \u00b7 {{ATTORNEY1_FAX}}\n{{ATTORNEY1_EMAIL}}' },
+  { id: 'sig-a2', type: 'sig', content: '/s/ {{ATTORNEY2_NAME}}\n{{ATTORNEY2_BAR_NO}}*\n{{ATTORNEY2_FIRM}}\n{{ATTORNEY2_ADDRESS}}\n{{ATTORNEY2_CITY_STATE_ZIP}}\n{{ATTORNEY2_PHONE}}\n{{ATTORNEY2_EMAIL}}\n{{ATTORNEY2_PRO_HAC}}' },
+  { id: 'sig-role', type: 'sig-label', content: 'Attorneys for Petitioner' },
+  { id: 'h-ver', type: 'heading', content: 'VERIFICATION \u2014 28 U.S.C. \u00a7 2242' },
+  { id: 'p-ver', type: 'para', content: 'I represent {{PETITIONER_FULL_NAME}} and verify the foregoing. Dated {{FILING_DAY}} day of {{FILING_MONTH_YEAR}}.' },
+  { id: 'sig-ver', type: 'sig', content: '/s/ {{ATTORNEY2_NAME}}\nAttorney for Petitioner Pro Hac Vice' },
+];
+
+// ── Matrix Event Types ───────────────────────────────────────────
+var EVT_NATIONAL = 'com.amino.config.national';
+var EVT_FACILITY = 'com.amino.facility';
+var EVT_COURT    = 'com.amino.court';
+var EVT_ATTORNEY = 'com.amino.attorney';
+var EVT_USER     = 'com.amino.user';
+var EVT_TEMPLATE = 'com.amino.template';
+var EVT_CLIENT   = 'com.amino.client';
+var EVT_PETITION = 'com.amino.petition';
+var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
+var EVT_OP       = 'com.amino.op';
+
+// ── Matrix REST Client ───────────────────────────────────────────
+var matrix = {
+  baseUrl: '', accessToken: '', userId: '', deviceId: '',
+  rooms: {},       // roomId -> { stateEvents: { eventType: { stateKey: {content,sender,origin_server_ts} } } }
+  orgRoomId: null,
+  templatesRoomId: null,
+  _txnId: 0,
+
+  _headers: function() {
+    return {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + this.accessToken,
+    };
+  },
+
+  _api: function(method, path, body) {
+    var opts = { method: method, headers: this._headers() };
+    if (body) opts.body = JSON.stringify(body);
+    return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
+      .then(function(r) {
+        if (!r.ok) return r.json().then(function(e) { throw e; });
+        return r.json();
+      });
+  },
+
+  login: function(baseUrl, username, password) {
+    this.baseUrl = baseUrl;
+    return fetch(baseUrl + '/_matrix/client/v3/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'm.login.password',
+        identifier: { type: 'm.id.user', user: username },
+        password: password,
+        initial_device_display_name: 'Amino Habeas App',
+      }),
+    })
+    .then(function(r) {
+      if (!r.ok) return r.json().then(function(e) { throw e; });
+      return r.json();
+    })
+    .then(function(data) {
+      matrix.accessToken = data.access_token;
+      matrix.userId = data.user_id;
+      matrix.deviceId = data.device_id;
+      matrix.saveSession();
+      return data;
+    });
+  },
+
+  initialSync: function() {
+    var filter = JSON.stringify({
+      room: {
+        state: { lazy_load_members: true },
+        timeline: { limit: 0 },
+      }
+    });
+    return this._api('GET', '/sync?timeout=0&filter=' + encodeURIComponent(filter))
+      .then(function(data) {
+        var joinedRooms = data.rooms && data.rooms.join ? data.rooms.join : {};
+        Object.keys(joinedRooms).forEach(function(roomId) {
+          var room = joinedRooms[roomId];
+          var stateEvents = {};
+          var events = (room.state && room.state.events) || [];
+          events.forEach(function(evt) {
+            if (!stateEvents[evt.type]) stateEvents[evt.type] = {};
+            stateEvents[evt.type][evt.state_key] = {
+              content: evt.content,
+              sender: evt.sender,
+              origin_server_ts: evt.origin_server_ts,
+            };
+          });
+          matrix.rooms[roomId] = { stateEvents: stateEvents };
+        });
+        return data;
+      });
+  },
+
+  resolveAlias: function(alias) {
+    return this._api('GET', '/directory/room/' + encodeURIComponent(alias))
+      .then(function(data) { return data.room_id; });
+  },
+
+  getStateEvents: function(roomId, eventType) {
+    var room = this.rooms[roomId];
+    if (!room || !room.stateEvents[eventType]) return {};
+    return room.stateEvents[eventType];
+  },
+
+  getStateEvent: function(roomId, eventType, stateKey) {
+    var room = this.rooms[roomId];
+    if (!room || !room.stateEvents[eventType]) return null;
+    return room.stateEvents[eventType][stateKey] || null;
+  },
+
+  sendStateEvent: function(roomId, eventType, content, stateKey) {
+    var sk = encodeURIComponent(stateKey);
+    var self = this;
+    return this._api('PUT', '/rooms/' + encodeURIComponent(roomId) + '/state/' + encodeURIComponent(eventType) + '/' + sk, content)
+      .then(function(data) {
+        // Update local cache
+        if (!self.rooms[roomId]) self.rooms[roomId] = { stateEvents: {} };
+        if (!self.rooms[roomId].stateEvents[eventType]) self.rooms[roomId].stateEvents[eventType] = {};
+        self.rooms[roomId].stateEvents[eventType][stateKey] = {
+          content: content, sender: self.userId, origin_server_ts: Date.now(),
+        };
+        return data;
+      });
+  },
+
+  sendEvent: function(roomId, eventType, content) {
+    var txnId = 'm' + Date.now() + '.' + (this._txnId++);
+    return this._api('PUT', '/rooms/' + encodeURIComponent(roomId) + '/send/' + encodeURIComponent(eventType) + '/' + txnId, content);
+  },
+
+  createRoom: function(options) {
+    return this._api('POST', '/createRoom', options);
+  },
+
+  isReady: function() {
+    return !!this.accessToken;
+  },
+
+  saveSession: function() {
+    try {
+      sessionStorage.setItem('amino_matrix_session', JSON.stringify({
+        baseUrl: this.baseUrl, userId: this.userId,
+        accessToken: this.accessToken, deviceId: this.deviceId,
+      }));
+    } catch(e) {}
+  },
+
+  loadSession: function() {
+    try {
+      var raw = sessionStorage.getItem('amino_matrix_session');
+      if (!raw) return false;
+      var s = JSON.parse(raw);
+      this.baseUrl = s.baseUrl;
+      this.userId = s.userId;
+      this.accessToken = s.accessToken;
+      this.deviceId = s.deviceId;
+      return true;
+    } catch(e) { return false; }
+  },
+
+  clearSession: function() {
+    sessionStorage.removeItem('amino_matrix_session');
+    this.accessToken = '';
+    this.userId = '';
+    this.rooms = {};
+    this.orgRoomId = null;
+    this.templatesRoomId = null;
+  },
+};
+
+// ── App State ────────────────────────────────────────────────────
+var S = {
+  authenticated: false,
+  loading: true,
+  syncError: '',
+  facilities: {},
+  courts: {},
+  attProfiles: {},
+  national: { iceDirector: '', iceDirectorTitle: '', dhsSecretary: '', attorneyGeneral: '' },
+  clients: {},
+  petitions: {},
+  log: [],
+  role: null,
+  currentUser: '',
+  currentView: 'board',
+  selectedClientId: null,
+  selectedPetitionId: null,
+  editorTab: 'client',
+  dirTab: 'facilities',
+  editId: null,
+  draft: {},
+  _rendering: false,
+};
+
+var _prevView = null;
+function setState(updates) {
+  Object.assign(S, updates);
+  if (!S._rendering) {
+    S._rendering = true;
+    requestAnimationFrame(function() {
+      S._rendering = false;
+      render();
+    });
+  }
+}
+
+// ── Hydration from Matrix ────────────────────────────────────────
+function hydrateFromMatrix() {
+  return matrix.resolveAlias(CONFIG.ORG_ROOM_ALIAS)
+    .then(function(orgId) {
+      matrix.orgRoomId = orgId;
+      return matrix.resolveAlias(CONFIG.TEMPLATES_ROOM_ALIAS).catch(function() { return null; });
+    })
+    .then(function(tmplId) {
+      matrix.templatesRoomId = tmplId;
+
+      // Facilities
+      var facEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_FACILITY);
+      var facilities = {};
+      Object.keys(facEvents).forEach(function(k) {
+        var e = facEvents[k];
+        if (k && e.content && e.content.name && !e.content.deleted) {
+          facilities[k] = Object.assign({ id: k, createdBy: e.sender, updatedAt: new Date(e.origin_server_ts).toISOString() }, e.content);
+        }
+      });
+
+      // Courts
+      var crtEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_COURT);
+      var courts = {};
+      Object.keys(crtEvents).forEach(function(k) {
+        var e = crtEvents[k];
+        if (k && e.content && e.content.district && !e.content.deleted) {
+          courts[k] = Object.assign({ id: k, createdBy: e.sender, updatedAt: new Date(e.origin_server_ts).toISOString() }, e.content);
+        }
+      });
+
+      // Attorney profiles
+      var attEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_ATTORNEY);
+      var attProfiles = {};
+      Object.keys(attEvents).forEach(function(k) {
+        var e = attEvents[k];
+        if (k && e.content && e.content.name && !e.content.deleted) {
+          attProfiles[k] = Object.assign({ id: k, createdBy: e.sender, updatedAt: new Date(e.origin_server_ts).toISOString() }, e.content);
+        }
+      });
+
+      // National defaults
+      var natEvt = matrix.getStateEvent(matrix.orgRoomId, EVT_NATIONAL, '');
+      var national = { iceDirector: '', iceDirectorTitle: '', dhsSecretary: '', attorneyGeneral: '' };
+      if (natEvt && natEvt.content) {
+        national = {
+          iceDirector: natEvt.content.iceDirector || '',
+          iceDirectorTitle: natEvt.content.iceDirectorTitle || '',
+          dhsSecretary: natEvt.content.dhsSecretary || '',
+          attorneyGeneral: natEvt.content.attorneyGeneral || '',
+          createdBy: natEvt.sender,
+          updatedAt: new Date(natEvt.origin_server_ts).toISOString(),
+        };
+      }
+
+      // Client rooms + petitions
+      var clients = {};
+      var petitions = {};
+      Object.keys(matrix.rooms).forEach(function(roomId) {
+        var clientEvt = matrix.getStateEvent(roomId, EVT_CLIENT, '');
+        if (!clientEvt || !clientEvt.content || clientEvt.content.deleted) return;
+        var cc = clientEvt.content;
+        var cid = cc.id || roomId;
+        clients[cid] = {
+          id: cid, name: cc.name || '', country: cc.country || '',
+          yearsInUS: cc.yearsInUS || '', entryDate: cc.entryDate || '',
+          entryMethod: cc.entryMethod || 'without inspection',
+          apprehensionLocation: cc.apprehensionLocation || '',
+          apprehensionDate: cc.apprehensionDate || '',
+          criminalHistory: cc.criminalHistory || '',
+          communityTies: cc.communityTies || '',
+          createdAt: new Date(clientEvt.origin_server_ts).toISOString(),
+          roomId: roomId,
+        };
+
+        // Petitions in this room
+        var petEvents = matrix.getStateEvents(roomId, EVT_PETITION);
+        Object.keys(petEvents).forEach(function(petId) {
+          var pe = petEvents[petId];
+          if (!petId || !pe.content || pe.content.deleted) return;
+          var pc = pe.content;
+          var blocksEvt = matrix.getStateEvent(roomId, EVT_PETITION_BLOCKS, petId);
+          var blocks = (blocksEvt && blocksEvt.content && blocksEvt.content.blocks) || [];
+          petitions[petId] = {
+            id: petId, clientId: pc.clientId || cid, createdBy: pe.sender || '',
+            stage: pc.stage || 'drafted',
+            stageHistory: pc.stageHistory || [{ stage: 'drafted', at: new Date(pe.origin_server_ts).toISOString() }],
+            blocks: blocks,
+            district: pc.district || '', division: pc.division || '',
+            caseNumber: pc.caseNumber || '',
+            facilityName: pc.facilityName || '', facilityCity: pc.facilityCity || '',
+            facilityState: pc.facilityState || '', warden: pc.warden || '',
+            fieldOfficeDirector: pc.fieldOfficeDirector || '',
+            fieldOfficeName: pc.fieldOfficeName || '',
+            filingDate: pc.filingDate || '', filingDay: pc.filingDay || '',
+            filingMonthYear: pc.filingMonthYear || '',
+            templateId: pc.templateId, att1Id: pc.att1Id, att2Id: pc.att2Id,
+            _facilityId: pc._facilityId, _courtId: pc._courtId,
+            _att1Id: pc._att1Id, _att2Id: pc._att2Id,
+            createdAt: new Date(pe.origin_server_ts).toISOString(),
+            roomId: roomId,
+          };
+        });
+      });
+
+      // Role
+      var role = 'attorney';
+      if (matrix.orgRoomId) {
+        var plEvt = matrix.getStateEvent(matrix.orgRoomId, 'm.room.power_levels', '');
+        if (plEvt && plEvt.content && plEvt.content.users) {
+          var myPl = plEvt.content.users[matrix.userId] || 0;
+          if (myPl >= 50) role = 'admin';
+        }
+      }
+
+      setState({
+        facilities: facilities, courts: courts, attProfiles: attProfiles,
+        national: national, clients: clients, petitions: petitions,
+        role: role, currentUser: matrix.userId,
+      });
+    });
+}
+
+// ── Export Functions ─────────────────────────────────────────────
+var TITLE_IDS = { 'ct-1': 1, 'ct-2': 1, 'ct-3': 1 };
+var CAP_L = ['cap-pet','cap-role','cap-v','cap-r1','cap-r2','cap-r3','cap-r4','cap-r5','cap-r6'];
+var CAP_R = ['cap-case','cap-title'];
+var CAP_ALL = {};
+Object.keys(TITLE_IDS).forEach(function(k) { CAP_ALL[k] = 1; });
+CAP_L.forEach(function(k) { CAP_ALL[k] = 1; });
+CAP_R.forEach(function(k) { CAP_ALL[k] = 1; });
+
+function subVars(s, vars) {
+  return s.replace(/\{\{(\w+)\}\}/g, function(_, k) {
+    return (vars[k] && vars[k].trim()) ? vars[k] : '[' + k + ']';
+  });
+}
+function capSub(s, vars) {
+  return subVars(s, vars).replace(/\n/g, '<br>');
+}
+
+function buildDocHTML(blocks, vars) {
+  var titles = blocks.filter(function(b) { return TITLE_IDS[b.id]; })
+    .map(function(b) { return '<div class="title">' + capSub(b.content, vars) + '</div>'; }).join('');
+  var capLeft = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; })
+    .map(function(b) {
+      var cls = b.type === 'cap-name' ? 'cn' : b.type === 'cap-center' ? 'cc' : 'rr';
+      return '<div class="' + cls + '">' + capSub(b.content, vars) + '</div>';
+    }).join('');
+  var capRight = blocks.filter(function(b) { return CAP_R.indexOf(b.id) >= 0; })
+    .map(function(b) {
+      var cls = b.type === 'cap-case' ? 'ck' : 'cd';
+      return '<div class="' + cls + '">' + capSub(b.content, vars) + '</div>';
+    }).join('');
+  var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; })
+    .map(function(b) {
+      var cls = b.type === 'heading' ? 'heading' : b.type === 'sig' ? 'sig' : b.type === 'sig-label' ? 'sig-label' : 'para';
+      var text = b.type === 'heading' ? capSub(b.content, vars).toUpperCase() : capSub(b.content, vars);
+      return '<div class="' + cls + '">' + text + '</div>';
+    }).join('');
+  var parens = Array(24).fill(')').join('<br>');
+  return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>@page{size:8.5in 11in;margin:1in}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body>' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</body></html>';
+}
+
+function doExportDoc(blocks, vars, name) {
+  var html = buildDocHTML(blocks, vars);
+  var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = 'habeas-' + (name || 'petition').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+function doExportPDF(blocks, vars) {
+  var w = window.open('', '_blank', 'width=850,height=1100');
+  if (!w) { alert('Allow popups for PDF export'); return; }
+  w.document.write(buildDocHTML(blocks, vars));
+  w.document.close();
+  setTimeout(function() { w.focus(); w.print(); }, 500);
+}
+
+// ── Block / Variable HTML helpers ────────────────────────────────
+var CLS_MAP = {
+  title: 'blk-title', heading: 'blk-heading', para: 'blk-para',
+  'cap-name': 'blk-cap-name', 'cap-center': 'blk-cap-center',
+  'cap-resp': 'blk-cap-resp', 'cap-case': 'blk-cap-case',
+  'cap-doctitle': 'blk-cap-doctitle', sig: 'blk-sig', 'sig-label': 'blk-sig-label',
+};
+
+function blockToHtml(content, vars) {
+  var h = content.replace(/\n/g, '<br/>');
+  return h.replace(/\{\{(\w+)\}\}/g, function(_, k) {
+    var v = vars[k] ? vars[k].trim() : '';
+    return v
+      ? '<span data-var="' + k + '" contenteditable="false" class="vf">' + esc(v) + '</span>'
+      : '<span data-var="' + k + '" contenteditable="false" class="ve">\u27E8' + k + '\u27E9</span>';
+  });
+}
+
+function extractBlockContent(el) {
+  var c = el.cloneNode(true);
+  c.querySelectorAll('br').forEach(function(b) {
+    b.replaceWith('\n');
+  });
+  c.querySelectorAll('[data-var]').forEach(function(s) {
+    s.replaceWith('{{' + s.dataset.var + '}}');
+  });
+  return c.textContent || '';
+}
+
+// ── Component Renderers ──────────────────────────────────────────
+function htmlFieldGroup(title, fields, data, onChangePrefix) {
+  var h = '<div class="fg"><div class="fg-title">' + esc(title) + '</div>';
+  fields.forEach(function(f) {
+    var val = (data && data[f.key]) || '';
+    var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+    h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
+    h += '<input type="text" class="finp" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="' + onChangePrefix + '"></div>';
+  });
+  h += '</div>';
+  return h;
+}
+
+function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction) {
+  var h = '<div class="picker"><label class="flbl">' + esc(label) + '</label><div class="picker-row">';
+  h += '<select class="finp picker-sel" data-change="' + onChangeAction + '">';
+  h += '<option value="">\u2014 Select \u2014</option>';
+  items.forEach(function(it) {
+    var sel = it.id === value ? ' selected' : '';
+    h += '<option value="' + esc(it.id) + '"' + sel + '>' + esc(displayFn(it)) + '</option>';
+  });
+  h += '</select>';
+  if (onNewAction) {
+    h += '<button class="hbtn sm" data-action="' + onNewAction + '">+</button>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+function htmlProvenanceBadge(record) {
+  if (!record || !record.createdBy) return '';
+  var h = '<div class="prov"><span class="prov-item">Created by <strong>' + esc(record.createdBy) + '</strong> ';
+  if (record.createdAt) h += ts(record.createdAt);
+  h += '</span>';
+  if (record.updatedAt && record.updatedAt !== record.createdAt) {
+    h += '<span class="prov-item">Updated by <strong>' + esc(record.updatedBy || '') + '</strong> ' + ts(record.updatedAt) + '</span>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// ── View Renderers ───────────────────────────────────────────────
+function renderLogin() {
+  return '<div class="login-wrap"><form class="login-box" id="login-form">' +
+    '<div class="login-brand">Habeas</div>' +
+    '<div class="login-sub">Amino Immigration</div>' +
+    '<div id="login-error" class="login-error" style="display:none"></div>' +
+    '<div class="frow"><label class="flbl">Username</label>' +
+    '<input class="finp" type="text" id="login-user" placeholder="attorney" autofocus></div>' +
+    '<div class="frow"><label class="flbl">Password</label>' +
+    '<input class="finp" type="password" id="login-pass" placeholder="password"></div>' +
+    '<button type="submit" class="hbtn accent login-btn" id="login-btn">Sign In</button>' +
+    '<div class="login-server">Server: ' + CONFIG.MATRIX_SERVER_URL.replace('https://', '') + '</div>' +
+    '</form></div>';
+}
+
+function renderHeader() {
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  var petClient = pet ? S.clients[pet.clientId] : null;
+  var h = '<header class="hdr"><div class="hdr-left">';
+  h += '<span class="hdr-brand">Habeas</span><nav class="hdr-nav">';
+  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory']];
+  if (pet) tabs.push(['editor','Editor']);
+  tabs.forEach(function(t) {
+    h += '<button class="nav-btn' + (S.currentView === t[0] ? ' on' : '') + '" data-action="nav" data-view="' + t[0] + '">' + t[1] + '</button>';
+  });
+  h += '</nav></div><div class="hdr-right">';
+  h += '<span class="role-badge" style="color:' + (S.role === 'admin' ? '#a08540' : '#8a8a9a') + '">' + (S.role === 'admin' ? 'Admin' : 'Attorney') + '</span>';
+  if (pet) {
+    var sm = SM[pet.stage] || SM.drafted;
+    h += '<span class="stage-badge" style="background:' + sm.color + '">' + pet.stage + '</span>';
+    h += '<button class="hbtn export" data-action="export-word">Word</button>';
+    h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
+  }
+  h += '<button class="hbtn" data-action="logout">Sign Out</button>';
+  h += '</div></header>';
+  return h;
+}
+
+function renderBoard() {
+  var all = Object.values(S.petitions);
+  var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  var h = '<div class="board-view"><div class="kanban">';
+  STAGES.forEach(function(stage) {
+    var items = vis.filter(function(p) { return p.stage === stage; })
+      .sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+    var m = SM[stage];
+    h += '<div class="kb-col"><div class="kb-col-head" style="border-bottom-color:' + m.color + '">';
+    h += '<span class="kb-col-title">' + m.label + '</span>';
+    h += '<span class="kb-col-count" style="background:' + m.color + '">' + items.length + '</span>';
+    h += '</div><div class="kb-col-body">';
+    if (items.length === 0) {
+      h += '<div class="kb-empty">None</div>';
+    }
+    items.forEach(function(p) {
+      var cl = S.clients[p.clientId];
+      var si = STAGES.indexOf(p.stage);
+      h += '<div class="kb-card" style="border-left-color:' + m.color + '">';
+      h += '<div class="kb-card-name" data-action="open-petition" data-id="' + p.id + '">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
+      h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
+      h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
+      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + '</div>';
+      if (p.stageHistory && p.stageHistory.length > 1) {
+        h += '<div class="kb-dots">';
+        p.stageHistory.forEach(function(sh) {
+          var sc = SM[sh.stage] ? SM[sh.stage].color : '#ccc';
+          h += '<span class="kb-dot" style="background:' + sc + '" title="' + sh.stage + ' ' + ts(sh.at) + '"></span>';
+        });
+        h += '</div>';
+      }
+      h += '<div class="kb-card-actions">';
+      if (si > 0) h += '<button class="kb-btn" data-action="stage-change" data-id="' + p.id + '" data-dir="revert">&larr; ' + STAGES[si - 1] + '</button>';
+      if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + STAGES[si + 1] + ' &rarr;</button>';
+      h += '</div></div>';
+    });
+    h += '</div></div>';
+  });
+  h += '</div>';
+  if (Object.keys(S.petitions).length === 0) {
+    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderClients() {
+  var clientList = Object.values(S.clients);
+  var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+  var clientPets = client ? Object.values(S.petitions).filter(function(p) { return p.clientId === client.id; }) : [];
+  var h = '<div class="clients-view"><div class="cv-sidebar"><div class="cv-head">';
+  h += '<span class="cv-title">Clients</span>';
+  h += '<button class="hbtn accent" data-action="create-client">+ New</button></div>';
+  h += '<div class="cv-list">';
+  if (clientList.length === 0) {
+    h += '<div class="cv-empty">No clients yet.</div>';
+  }
+  clientList.forEach(function(c) {
+    var pets = Object.values(S.petitions).filter(function(p) { return p.clientId === c.id; });
+    h += '<div class="cv-item' + (S.selectedClientId === c.id ? ' on' : '') + '" data-action="select-client" data-id="' + c.id + '">';
+    h += '<div class="cv-item-name">' + esc(c.name || 'Unnamed') + '</div>';
+    h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' pet.' : '') + '</div>';
+    pets.forEach(function(p) {
+      var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
+      h += '<span class="stage-badge sm" style="background:' + sc + '">' + p.stage + '</span>';
+    });
+    h += '</div>';
+  });
+  h += '</div></div>';
+  h += '<div class="cv-detail">';
+  if (client) {
+    h += '<div class="cv-detail-head"><h2>' + esc(client.name || 'New Client') + '</h2>';
+    h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Petition</button></div>';
+    h += htmlFieldGroup('Client Information', CLIENT_FIELDS, client, 'client-field');
+    if (clientPets.length > 0) {
+      h += '<div class="fg"><div class="fg-title">Petitions</div>';
+      clientPets.forEach(function(p) {
+        var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
+        h += '<div class="pet-row" data-action="open-petition" data-id="' + p.id + '">';
+        h += '<span class="stage-badge" style="background:' + sc + '">' + p.stage + '</span>';
+        h += '<span style="flex:1;font-size:12px">' + esc(p.caseNumber || 'No case no.') + '</span>';
+        h += '<span style="font-size:11px;color:#aaa">' + new Date(p.createdAt).toLocaleDateString() + '</span>';
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+  } else {
+    h += '<div class="cv-empty-detail"><div style="font-size:48px;opacity:.3;margin-bottom:16px">&#9878;</div><p>Select or create a client.</p></div>';
+  }
+  h += '</div></div>';
+  return h;
+}
+
+function renderDirectory() {
+  var tab = S.dirTab;
+  var h = '<div class="dir-view"><div class="dir-tabs">';
+  [['facilities', 'Facilities (' + Object.keys(S.facilities).length + ')'],
+   ['courts', 'Courts (' + Object.keys(S.courts).length + ')'],
+   ['attorneys', 'Attorney Profiles (' + Object.keys(S.attProfiles).length + ')'],
+   ['national', 'National Defaults']].forEach(function(t) {
+    h += '<button class="dir-tab' + (tab === t[0] ? ' on' : '') + '" data-action="dir-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
+  });
+  h += '</div><div class="dir-body">';
+
+  if (tab === 'facilities') {
+    h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
+    h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button></div>';
+    h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
+    h += '<div class="dir-list">';
+    Object.values(S.facilities).forEach(function(f) {
+      h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
+      if (S.editId === f.id) {
+        FACILITY_FIELDS.forEach(function(ff) {
+          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
+          h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
+        });
+        h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-facility">Save</button>';
+        h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
+        h += '<button class="hbtn danger" data-action="del-facility" data-id="' + f.id + '">Delete</button></div>';
+      } else {
+        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility"><strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
+        h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
+        h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        h += htmlProvenanceBadge(f);
+      }
+      h += '</div>';
+    });
+    if (Object.keys(S.facilities).length === 0) h += '<div class="dir-empty">No facilities yet. Add one to get started.</div>';
+    h += '</div></div>';
+  }
+
+  if (tab === 'courts') {
+    h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
+    h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button></div>';
+    h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
+    h += '<div class="dir-list">';
+    Object.values(S.courts).forEach(function(c) {
+      h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
+      if (S.editId === c.id) {
+        COURT_FIELDS.forEach(function(ff) {
+          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
+          h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
+        });
+        h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-court">Save</button>';
+        h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
+        h += '<button class="hbtn danger" data-action="del-court" data-id="' + c.id + '">Delete</button></div>';
+      } else {
+        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court"><strong>' + esc(c.district || 'Unnamed') + '</strong>';
+        h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
+        h += htmlProvenanceBadge(c);
+      }
+      h += '</div>';
+    });
+    if (Object.keys(S.courts).length === 0) h += '<div class="dir-empty">No courts yet.</div>';
+    h += '</div></div>';
+  }
+
+  if (tab === 'attorneys') {
+    h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
+    h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button></div>';
+    h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
+    h += '<div class="dir-list">';
+    Object.values(S.attProfiles).forEach(function(a) {
+      h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
+      if (S.editId === a.id) {
+        ATT_PROFILE_FIELDS.forEach(function(ff) {
+          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
+          h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
+        });
+        h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-attorney">Save</button>';
+        h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
+        h += '<button class="hbtn danger" data-action="del-attorney" data-id="' + a.id + '">Delete</button></div>';
+      } else {
+        h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney"><strong>' + esc(a.name || 'Unnamed') + '</strong>';
+        h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
+        h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
+        h += htmlProvenanceBadge(a);
+      }
+      h += '</div>';
+    });
+    if (Object.keys(S.attProfiles).length === 0) h += '<div class="dir-empty">No attorney profiles yet.</div>';
+    h += '</div></div>';
+  }
+
+  if (tab === 'national') {
+    h += '<div class="dir-section"><div class="dir-head"><h3>National Defaults</h3></div>';
+    h += '<p class="dir-desc">These auto-fill on every petition. Update when officials change.</p>';
+    h += '<div class="dir-card editing">';
+    NATIONAL_FIELDS.forEach(function(f) {
+      h += '<div class="frow"><label class="flbl">' + esc(f.label) + '</label>';
+      h += '<input class="finp" value="' + esc((S.national[f.key]) || '') + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="national-field"></div>';
+    });
+    h += htmlProvenanceBadge(S.national);
+    h += '</div></div>';
+  }
+
+  h += '</div></div>';
+  return h;
+}
+
+function renderEditor() {
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) {
+    return '<div class="editor-view"><div style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa">No petition selected.</div></div>';
+  }
+  var client = S.clients[pet.clientId] || null;
+  var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
+  var att2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
+  var vars = buildVarMap(client || {}, pet, att1 || {}, att2 || {}, S.national);
+  var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
+
+  var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
+  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+    h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
+  });
+  h += '</div><div class="ed-fields">';
+
+  if (S.editorTab === 'client' && client) {
+    h += htmlFieldGroup('Client (shared)', CLIENT_FIELDS, client, 'editor-client-field');
+  }
+
+  if (S.editorTab === 'court') {
+    h += htmlPicker('Select Court', Object.values(S.courts), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'goto-directory');
+    h += htmlFieldGroup('Court (manual override)', COURT_FIELDS, pet, 'editor-pet-field');
+    h += '<div style="height:8px"></div>';
+    h += htmlPicker('Select Facility', Object.values(S.facilities), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'goto-directory');
+    h += htmlFieldGroup('Facility (manual override)', FACILITY_FIELDS, pet, 'editor-pet-field');
+    h += htmlFieldGroup('Respondents (manual override)', RESPONDENT_FIELDS, pet, 'editor-pet-field');
+  }
+
+  if (S.editorTab === 'atty') {
+    var attList = Object.values(S.attProfiles);
+    h += htmlPicker('Attorney 1', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att1Id || '', 'apply-att1', 'goto-directory');
+    h += htmlPicker('Attorney 2', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att2Id || '', 'apply-att2', 'goto-directory');
+    if (!pet._att1Id && !pet._att2Id) {
+      h += '<p style="font-size:11px;color:#aaa;margin-top:8px">Select attorney profiles from the Directory, or add new ones with +</p>';
+    }
+  }
+
+  if (S.editorTab === 'filing') {
+    h += htmlFieldGroup('Filing', FILING_FIELDS, pet, 'editor-pet-field');
+  }
+
+  if (S.editorTab === 'log') {
+    h += '<div class="lscroll">';
+    if (S.log.length === 0) h += '<div class="lempty">No operations yet.</div>';
+    var logColors = { FILL:'#5aa06f', REVISE:'#c9a040', CREATE:'#7a70c0', STAGE:'#4a7ab5', APPLY:'#60a0d0', UPDATE:'#a08540', DELETE:'#c05050' };
+    S.log.forEach(function(e, i) {
+      h += '<div class="lentry"><span class="lts">' + new Date(e.frame.t).toLocaleTimeString('en-US', {hour12:false}) + '</span> ';
+      h += '<span style="color:' + (logColors[e.op] || '#888') + ';font-weight:600">' + e.op + '</span>';
+      h += '<span class="ld">(</span><span class="lt">' + esc(e.target) + '</span>';
+      if (e.payload != null) {
+        var pStr = typeof e.payload === 'string' ? '"' + e.payload.slice(0, 25) + (e.payload.length > 25 ? '\u2026' : '') + '"' : '\u2026';
+        h += '<span class="ld">, </span><span class="lp">' + esc(pStr) + '</span>';
+      }
+      h += '<span class="ld">)</span></div>';
+    });
+    h += '</div>';
+  }
+
+  h += '</div></div>';
+
+  // Document area
+  h += '<div class="doc-scroll" id="doc-scroll">';
+  h += renderPaginatedDoc(pet.blocks, vars, caseNo);
+  h += '<div style="height:60px;flex-shrink:0"></div>';
+  h += '</div></div>';
+  return h;
+}
+
+function renderPaginatedDoc(blocks, vars, caseNo) {
+  var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
+  var capBlocks = blocks.filter(function(b) { return TITLE_IDS[b.id]; });
+  var capLBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
+  var capRBlocks = blocks.filter(function(b) { return CAP_R.indexOf(b.id) >= 0; });
+
+  var PAGE_W = 816, PAGE_H = 1056, MG = 96;
+
+  function renderBlock(b, editable) {
+    var cls = CLS_MAP[b.type] || 'blk-para';
+    var ce = editable ? ' contenteditable="true"' : '';
+    return '<div class="blk ' + cls + '" data-block-id="' + b.id + '"' + ce + '>' + blockToHtml(b.content, vars) + '</div>';
+  }
+
+  function renderCaption(editable) {
+    var c = '';
+    capBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    c += '<div class="caption-grid"><div class="cap-left-col">';
+    capLBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    c += '</div><div class="cap-mid-col">';
+    for (var i = 0; i < 24; i++) c += '<div>)</div>';
+    c += '</div><div class="cap-right-col">';
+    capRBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    c += '</div></div>';
+    return c;
+  }
+
+  // Measurement pass (offscreen) + page shells
+  // We do a simple approach: render all blocks then paginate after mount
+  var USABLE_H = PAGE_H - 2 * MG - 28;
+
+  var h = '<div class="measure-box" id="measure-box" style="width:' + (PAGE_W - 2 * MG) + 'px" aria-hidden="true">';
+  h += '<div data-mr="cap">' + renderCaption(false) + '</div>';
+  h += '<div data-mr="body">';
+  body.forEach(function(b) { h += renderBlock(b, false); });
+  h += '</div></div>';
+
+  // Initial single page - will be repaginated by initPagination()
+  h += '<div id="pages-container">';
+  h += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
+  h += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
+  h += renderCaption(true);
+  body.forEach(function(b) { h += renderBlock(b, true); });
+  h += '</div><div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span>Page 1 of 1</span></div>';
+  h += '</div></div>';
+  h += '</div>';
+
+  return h;
+}
+
+// ── Pagination after mount ───────────────────────────────────────
+function initPagination() {
+  var mb = document.getElementById('measure-box');
+  var pc = document.getElementById('pages-container');
+  if (!mb || !pc) return;
+
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) return;
+  var client = S.clients[pet.clientId] || null;
+  var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
+  var att2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
+  var vars = buildVarMap(client || {}, pet, att1 || {}, att2 || {}, S.national);
+  var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
+  var blocks = pet.blocks;
+  var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
+
+  var PAGE_W = 816, PAGE_H = 1056, MG = 96, USABLE_H = PAGE_H - 2 * MG - 28;
+
+  var capEl = mb.querySelector('[data-mr="cap"]');
+  var capH = capEl ? capEl.offsetHeight : 0;
+  var blockEls = Array.from(mb.querySelectorAll('[data-mr="body"]>[data-block-id]'));
+  var hs = blockEls.map(function(e) { return { id: e.dataset.blockId, h: e.offsetHeight }; });
+
+  var pages = [];
+  var cur = [];
+  var rem = USABLE_H - capH;
+  var pi = 0;
+  hs.forEach(function(item) {
+    if (item.h > rem && cur.length > 0) {
+      pages.push({ ids: cur, first: pi === 0 });
+      cur = [];
+      rem = USABLE_H;
+      pi++;
+    }
+    cur.push(item.id);
+    rem -= item.h;
+  });
+  if (cur.length > 0 || pages.length === 0) {
+    pages.push({ ids: cur, first: pi === 0 });
+  }
+
+  var bm = {};
+  blocks.forEach(function(b) { bm[b.id] = b; });
+  var total = pages.length || 1;
+
+  function renderBlock(b, editable) {
+    var cls = CLS_MAP[b.type] || 'blk-para';
+    var ce = editable ? ' contenteditable="true"' : '';
+    return '<div class="blk ' + cls + '" data-block-id="' + b.id + '"' + ce + '>' + blockToHtml(b.content, vars) + '</div>';
+  }
+
+  function renderCaption(editable) {
+    var capBlocks = blocks.filter(function(b) { return TITLE_IDS[b.id]; });
+    var capLBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
+    var capRBlocks = blocks.filter(function(b) { return CAP_R.indexOf(b.id) >= 0; });
+    var c = '';
+    capBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    c += '<div class="caption-grid"><div class="cap-left-col">';
+    capLBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    c += '</div><div class="cap-mid-col">';
+    for (var i = 0; i < 24; i++) c += '<div>)</div>';
+    c += '</div><div class="cap-right-col">';
+    capRBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    c += '</div></div>';
+    return c;
+  }
+
+  var html = '';
+  pages.forEach(function(pg, idx) {
+    html += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
+    html += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
+    if (pg.first) html += renderCaption(true);
+    pg.ids.forEach(function(id) {
+      var b = bm[id];
+      if (b) html += renderBlock(b, true);
+    });
+    html += '</div><div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span>Page ' + (idx + 1) + ' of ' + total + '</span></div>';
+    html += '</div></div>';
+  });
+
+  pc.innerHTML = html;
+  attachBlockListeners();
+}
+
+function attachBlockListeners() {
+  var pc = document.getElementById('pages-container');
+  if (!pc) return;
+  var editingBlocks = {};
+
+  pc.querySelectorAll('.blk[contenteditable="true"]').forEach(function(el) {
+    el.addEventListener('focus', function() {
+      editingBlocks[el.dataset.blockId] = true;
+    });
+    el.addEventListener('blur', function() {
+      delete editingBlocks[el.dataset.blockId];
+      var bid = el.dataset.blockId;
+      var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+      if (!pet) return;
+      var block = pet.blocks.find(function(b) { return b.id === bid; });
+      if (!block) return;
+      var nc = extractBlockContent(el);
+      var norm = function(s) { return s.replace(/\s+/g, ' ').trim(); };
+      if (norm(nc) !== norm(block.content)) {
+        var newBlocks = pet.blocks.map(function(b) {
+          return b.id === bid ? { id: b.id, type: b.type, content: nc } : b;
+        });
+        S.petitions[pet.id] = Object.assign({}, pet, { blocks: newBlocks });
+        S.log.push({ op: 'REVISE', target: bid, payload: nc, frame: { t: now(), prior: block.content, petition: pet.id } });
+        // Sync to matrix
+        if (matrix.isReady() && pet.roomId) {
+          matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: newBlocks }, pet.id).catch(function(e) { console.error('Block sync failed:', e); });
+        }
+      }
+      // Re-render the HTML with vars
+      var client = S.clients[pet.clientId] || {};
+      var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
+      var att2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
+      var vars = buildVarMap(client, pet, att1 || {}, att2 || {}, S.national);
+      var actualBlock = S.petitions[pet.id].blocks.find(function(b) { return b.id === bid; });
+      if (actualBlock) el.innerHTML = blockToHtml(actualBlock.content, vars);
+    });
+  });
+}
+
+// ── Main Render ──────────────────────────────────────────────────
+function render() {
+  var root = document.getElementById('root');
+  if (!root) return;
+
+  if (S.loading) {
+    root.innerHTML = '<div class="loading-wrap"><div class="loading-text">Connecting...</div></div>';
+    return;
+  }
+
+  if (!S.authenticated) {
+    root.innerHTML = renderLogin();
+    var form = document.getElementById('login-form');
+    if (form) {
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        handleLogin();
+      });
+    }
+    return;
+  }
+
+  var h = '<div class="root">';
+  if (S.syncError) {
+    h += '<div class="sync-banner">' + esc(S.syncError) + '<button data-action="dismiss-error" style="margin-left:12px;background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:11px">Dismiss</button></div>';
+  }
+  h += renderHeader();
+  if (S.currentView === 'board') h += renderBoard();
+  else if (S.currentView === 'clients') h += renderClients();
+  else if (S.currentView === 'directory') h += renderDirectory();
+  else if (S.currentView === 'editor') h += renderEditor();
+  h += '</div>';
+  root.innerHTML = h;
+
+  // Post-render: pagination for editor
+  if (S.currentView === 'editor') {
+    requestAnimationFrame(function() { initPagination(); });
+  }
+}
+
+// ── Event Handling (delegation) ──────────────────────────────────
+function handleLogin() {
+  var userEl = document.getElementById('login-user');
+  var passEl = document.getElementById('login-pass');
+  var errEl = document.getElementById('login-error');
+  var btnEl = document.getElementById('login-btn');
+  if (!userEl || !passEl) return;
+  var username = userEl.value.trim();
+  var password = passEl.value;
+  if (!username || !password) return;
+
+  btnEl.disabled = true;
+  btnEl.textContent = 'Signing in...';
+  errEl.style.display = 'none';
+
+  matrix.login(CONFIG.MATRIX_SERVER_URL, username, password)
+    .then(function() { return matrix.initialSync(); })
+    .then(function() {
+      S.authenticated = true;
+      S.loading = false;
+      return hydrateFromMatrix();
+    })
+    .then(function() { render(); })
+    .catch(function(err) {
+      errEl.textContent = (err && err.error) || (err && err.message) || 'Login failed. Check your credentials.';
+      errEl.style.display = 'block';
+      btnEl.disabled = false;
+      btnEl.textContent = 'Sign In';
+    });
+}
+
+document.addEventListener('click', function(e) {
+  var btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  var action = btn.dataset.action;
+
+  if (action === 'nav') { setState({ currentView: btn.dataset.view }); return; }
+  if (action === 'logout') { matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
+  if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
+
+  // Board
+  if (action === 'open-petition') { setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' }); return; }
+  if (action === 'stage-change') {
+    var pet = S.petitions[btn.dataset.id];
+    if (!pet) return;
+    var idx = STAGES.indexOf(pet.stage);
+    var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
+    if (ni < 0 || ni >= STAGES.length) return;
+    var next = STAGES[ni];
+    var t = now();
+    S.log.push({ op: 'STAGE', target: btn.dataset.id, payload: next, frame: { t: t, prior: pet.stage } });
+    S.petitions[pet.id] = Object.assign({}, pet, { stage: next, stageHistory: pet.stageHistory.concat([{ stage: next, at: t }]) });
+    if (matrix.isReady() && pet.roomId) {
+      matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: next, stageHistory: S.petitions[pet.id].stageHistory }), pet.id).catch(function(e) { console.error(e); });
+    }
+    render();
+    return;
+  }
+
+  // Clients
+  if (action === 'select-client') { setState({ selectedClientId: btn.dataset.id }); return; }
+  if (action === 'create-client') {
+    var id = uid();
+    S.clients[id] = { id: id, name: '', country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
+    S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
+    setState({ selectedClientId: id });
+    return;
+  }
+  if (action === 'create-petition') {
+    var cid = btn.dataset.clientId;
+    var pid = uid();
+    S.petitions[pid] = {
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
+      stageHistory: [{ stage: 'drafted', at: now() }],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
+      facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      filingDate: '', filingDay: '', filingMonthYear: '',
+      createdAt: now(), roomId: (S.clients[cid] && S.clients[cid].roomId) || '',
+    };
+    S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
+    return;
+  }
+
+  // Export
+  if (action === 'export-word' || action === 'export-pdf') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    var cl = S.clients[pet.clientId] || {};
+    var a1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
+    var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
+    var vars = buildVarMap(cl, pet, a1 || {}, a2 || {}, S.national);
+    if (action === 'export-word') doExportDoc(pet.blocks, vars, cl.name);
+    else doExportPDF(pet.blocks, vars);
+    return;
+  }
+
+  // Directory
+  if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
+  if (action === 'cancel-edit') { setState({ editId: null, draft: {} }); return; }
+  if (action === 'edit-record') {
+    var type = btn.dataset.type;
+    var id = btn.dataset.id;
+    var record = type === 'facility' ? S.facilities[id] : type === 'court' ? S.courts[id] : S.attProfiles[id];
+    if (record) setState({ editId: id, draft: Object.assign({}, record) });
+    return;
+  }
+  if (action === 'add-facility') {
+    var id = uid();
+    var f = { id: id, name: '', city: '', state: '', warden: '', fieldOfficeName: '', fieldOfficeDirector: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    S.facilities[id] = f;
+    S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'facility' } });
+    setState({ editId: id, draft: Object.assign({}, f) });
+    return;
+  }
+  if (action === 'save-facility') {
+    var f = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.facilities[f.id] = f;
+    S.log.push({ op: 'UPDATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, f.id).catch(function(e) { console.error(e); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'del-facility') {
+    var id = btn.dataset.id;
+    delete S.facilities[id];
+    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'facility' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { deleted: true }, id).catch(function(e) { console.error(e); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'add-court') {
+    var id = uid();
+    var c = { id: id, district: '', division: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    S.courts[id] = c;
+    S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
+    setState({ editId: id, draft: Object.assign({}, c) });
+    return;
+  }
+  if (action === 'save-court') {
+    var c = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.courts[c.id] = c;
+    S.log.push({ op: 'UPDATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division }, c.id).catch(function(e) { console.error(e); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'del-court') {
+    var id = btn.dataset.id;
+    delete S.courts[id];
+    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { deleted: true }, id).catch(function(e) { console.error(e); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'add-attorney') {
+    var id = uid();
+    var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    S.attProfiles[id] = a;
+    S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'attorney_profile' } });
+    setState({ editId: id, draft: Object.assign({}, a) });
+    return;
+  }
+  if (action === 'save-attorney') {
+    var a = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    S.attProfiles[a.id] = a;
+    S.log.push({ op: 'UPDATE', target: a.id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice }, a.id).catch(function(e) { console.error(e); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'del-attorney') {
+    var id = btn.dataset.id;
+    delete S.attProfiles[id];
+    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'attorney_profile' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { deleted: true }, id).catch(function(e) { console.error(e); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+
+  // Editor tabs
+  if (action === 'ed-tab') { setState({ editorTab: btn.dataset.tab }); return; }
+  if (action === 'goto-directory') { setState({ currentView: 'directory' }); return; }
+});
+
+// ── Input/Change Event Handling ──────────────────────────────────
+document.addEventListener('input', function(e) {
+  var el = e.target;
+  if (!el.dataset || !el.dataset.change) return;
+  var action = el.dataset.change;
+  var key = el.dataset.fieldKey;
+  var val = el.value;
+
+  if (action === 'draft-field') {
+    S.draft[key] = val;
+    return;
+  }
+
+  if (action === 'national-field') {
+    S.national[key] = val;
+    S.national.updatedBy = S.currentUser;
+    S.national.updatedAt = now();
+    S.log.push({ op: 'UPDATE', target: 'national', payload: val, frame: { t: now(), field: key } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      var data = {};
+      data[key] = val;
+      var full = { iceDirector: S.national.iceDirector, iceDirectorTitle: S.national.iceDirectorTitle, dhsSecretary: S.national.dhsSecretary, attorneyGeneral: S.national.attorneyGeneral };
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); });
+    }
+    return;
+  }
+
+  if (action === 'client-field') {
+    var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+    if (!client) return;
+    client[key] = val;
+    S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    return;
+  }
+
+  if (action === 'editor-client-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    var client = S.clients[pet.clientId];
+    if (!client) return;
+    client[key] = val;
+    S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    return;
+  }
+
+  if (action === 'editor-pet-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    pet[key] = val;
+    S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    return;
+  }
+});
+
+// Select/change handler for pickers
+document.addEventListener('change', function(e) {
+  var el = e.target;
+  if (!el.dataset || !el.dataset.change) return;
+  var action = el.dataset.change;
+  var val = el.value;
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) return;
+
+  if (action === 'apply-court') {
+    var c = S.courts[val];
+    if (c) {
+      Object.assign(pet, { district: c.district, division: c.division, _courtId: val });
+      S.log.push({ op: 'APPLY', target: 'court', payload: val, frame: { t: now(), petition: pet.id } });
+      render();
+    }
+    return;
+  }
+  if (action === 'apply-facility') {
+    var f = S.facilities[val];
+    if (f) {
+      Object.assign(pet, { facilityName: f.name, facilityCity: f.city, facilityState: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, _facilityId: val });
+      S.log.push({ op: 'APPLY', target: 'facility', payload: val, frame: { t: now(), petition: pet.id } });
+      render();
+    }
+    return;
+  }
+  if (action === 'apply-att1') {
+    pet._att1Id = val;
+    S.log.push({ op: 'APPLY', target: 'att1', payload: val, frame: { t: now(), petition: pet.id } });
+    render();
+    return;
+  }
+  if (action === 'apply-att2') {
+    pet._att2Id = val;
+    S.log.push({ op: 'APPLY', target: 'att2', payload: val, frame: { t: now(), petition: pet.id } });
+    render();
+    return;
+  }
+});
+
+// ── Initialization ───────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  if (matrix.loadSession()) {
+    matrix.initialSync()
+      .then(function() {
+        S.authenticated = true;
+        S.loading = false;
+        return hydrateFromMatrix();
+      })
+      .then(function() { render(); })
+      .catch(function(err) {
+        console.error('Session restore failed:', err);
+        matrix.clearSession();
+        S.loading = false;
+        render();
+      });
+  } else {
+    S.loading = false;
+    render();
+  }
+});
