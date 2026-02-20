@@ -3445,7 +3445,9 @@ function renderEditor() {
 
   if (S.editorTab === 'atty') {
     var attDisplayFn = function(a) { return a.name + ' \u2014 ' + a.firm; };
-    var attList = sortByFrequency(Object.values(S.attProfiles).filter(function(a) { return !a.archived; }), countAttorneyUsage(), attDisplayFn);
+    var attAll = Object.values(S.attProfiles).filter(function(a) { return !a.archived; });
+    var attFiltered = S.role === 'admin' ? attAll : attAll.filter(function(a) { return a.createdBy === S.currentUser; });
+    var attList = sortByFrequency(attFiltered, countAttorneyUsage(), attDisplayFn);
     h += htmlPicker('Attorney 1', attList, attDisplayFn, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
     if (S.inlineAdd && S.inlineAdd.type === 'att1') {
       h += htmlInlineAddForm('att1');
