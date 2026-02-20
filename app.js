@@ -1492,7 +1492,7 @@ function renderDirectory() {
   if (tab === 'facilities') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
-    h += '<button class="hbtn sm" data-action="export-facilities-csv">&#8681; CSV</button>';
+    if (isAdmin) h += '<button class="hbtn sm" data-action="export-facilities-csv">&#8681; CSV</button>';
     h += '</div>';
     h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
@@ -1526,7 +1526,7 @@ function renderDirectory() {
   if (tab === 'courts') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
-    h += '<button class="hbtn sm" data-action="export-courts-csv">&#8681; CSV</button>';
+    if (isAdmin) h += '<button class="hbtn sm" data-action="export-courts-csv">&#8681; CSV</button>';
     h += '</div>';
     h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
     h += '<div class="dir-list">';
@@ -1559,7 +1559,7 @@ function renderDirectory() {
   if (tab === 'attorneys') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
-    h += '<button class="hbtn sm" data-action="export-attorneys-csv">&#8681; CSV</button>';
+    if (isAdmin) h += '<button class="hbtn sm" data-action="export-attorneys-csv">&#8681; CSV</button>';
     h += '</div>';
     h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
     h += '<div class="dir-list">';
@@ -2130,9 +2130,9 @@ document.addEventListener('click', function(e) {
   // CSV exports
   if (action === 'export-petitions-csv') { exportPetitionsCSV(); return; }
   if (action === 'export-clients-csv') { exportClientsCSV(); return; }
-  if (action === 'export-facilities-csv') { exportFacilitiesCSV(); return; }
-  if (action === 'export-courts-csv') { exportCourtsCSV(); return; }
-  if (action === 'export-attorneys-csv') { exportAttorneyProfilesCSV(); return; }
+  if (action === 'export-facilities-csv') { if (S.role === 'admin') exportFacilitiesCSV(); return; }
+  if (action === 'export-courts-csv') { if (S.role === 'admin') exportCourtsCSV(); return; }
+  if (action === 'export-attorneys-csv') { if (S.role === 'admin') exportAttorneyProfilesCSV(); return; }
 
   // Directory
   if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
