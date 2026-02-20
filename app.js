@@ -557,6 +557,7 @@ var matrix = {
   _syncToken: null,
   _polling: false,
   _pollAbort: null,
+  _flushing: false,
 
   _headers: function() {
     return {
@@ -568,13 +569,19 @@ var matrix = {
   _api: function(method, path, body) {
     var opts = { method: method, headers: this._headers() };
     if (body) opts.body = JSON.stringify(body);
-    // Abort fetch after 15 seconds to avoid hanging on unreachable servers
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
-    opts.signal = controller.signal;
+    var controller, timeoutId;
+    if (this._flushing) {
+      // During page unload flush: use keepalive so browser doesn't cancel the request
+      opts.keepalive = true;
+    } else {
+      // Normal operation: abort fetch after 15 seconds to avoid hanging
+      controller = new AbortController();
+      timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+      opts.signal = controller.signal;
+    }
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (!r.ok) {
           var httpStatus = r.status;
           return r.text().then(function(text) {
@@ -594,7 +601,7 @@ var matrix = {
         return r.json();
       })
       .catch(function(e) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (e && e.errcode) throw e;
         if (e && e.name === 'AbortError') {
           throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
@@ -900,16 +907,19 @@ var matrix = {
       }
 
       events.forEach(function(evt) {
-        if (evt.sender === self.userId) return;
         if (!self.rooms[roomId].stateEvents[evt.type]) {
           self.rooms[roomId].stateEvents[evt.type] = {};
         }
+        var existing = self.rooms[roomId].stateEvents[evt.type][evt.state_key];
         self.rooms[roomId].stateEvents[evt.type][evt.state_key] = {
           content: evt.content,
           sender: evt.sender,
           origin_server_ts: evt.origin_server_ts,
         };
-        changed = true;
+        // Trigger hydrateFromMatrix for non-self events or newly appearing state keys
+        if (evt.sender !== self.userId || !existing) {
+          changed = true;
+        }
       });
     });
 
@@ -1432,11 +1442,14 @@ function buildExportFromTemplate(vars, forWord) {
 // ── Matrix sync helpers ─────────────────────────────────────────
 var _syncTimers = {};
 function debouncedSync(key, fn) {
-  if (_syncTimers[key]) clearTimeout(_syncTimers[key]);
-  _syncTimers[key] = setTimeout(fn, 1000);
+  if (_syncTimers[key]) clearTimeout(_syncTimers[key].timer);
+  _syncTimers[key] = {
+    timer: setTimeout(function() { delete _syncTimers[key]; fn(); }, 1000),
+    fn: fn
+  };
 }
 
-function syncClientToMatrix(client) {
+function syncClientToMatrix(client, label) {
   if (!matrix.isReady() || !client.roomId) return Promise.resolve();
   return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
     id: client.id, name: client.name, country: client.country,
@@ -1446,7 +1459,10 @@ function syncClientToMatrix(client) {
     apprehensionDate: client.apprehensionDate,
     criminalHistory: client.criminalHistory,
     communityTies: client.communityTies,
-  }, '').catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
+  }, '').then(function(data) {
+    if (label) toast('CON \u22C8 ' + label, 'success');
+    return data;
+  }).catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
 }
 
 // Create a Matrix room for a client and sync initial data
@@ -1505,7 +1521,7 @@ function createClientRoom(clientId) {
       if (p.clientId === clientId && !p.roomId) {
         p.roomId = roomId;
         // Sync any pending petitions now that we have a roomId
-        syncPetitionToMatrix(p);
+        syncPetitionToMatrix(p, 'petition');
         if (p.blocks && p.blocks.length > 0) {
           matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
             .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
@@ -2678,7 +2694,9 @@ document.addEventListener('click', function(e) {
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
     setState({ selectedClientId: id });
     // Create a Matrix room for the client in the background
-    createClientRoom(id);
+    createClientRoom(id).then(function(roomId) {
+      if (roomId) toast('INS \u2295 client', 'success');
+    });
     return;
   }
   if (action === 'create-petition') {
@@ -2696,12 +2714,23 @@ document.addEventListener('click', function(e) {
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
-    // Sync petition to Matrix (will be picked up by createClientRoom if roomId is empty)
+    // Sync petition to Matrix
     var pet = S.petitions[pid];
     if (pet.roomId && matrix.isReady()) {
-      syncPetitionToMatrix(pet);
+      // Room already exists — sync immediately
+      syncPetitionToMatrix(pet, 'petition');
       matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
         .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+    } else if (_pendingRoomCreations[cid]) {
+      // Room creation in flight — wait for it, then sync
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
@@ -2942,9 +2971,12 @@ function dispatchFieldChange(action, key, val) {
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
       if (client.roomId) {
-        syncClientToMatrix(client);
+        syncClientToMatrix(client, 'client');
+      } else if (_pendingRoomCreations[client.id]) {
+        _pendingRoomCreations[client.id].then(function(roomId) {
+          if (roomId) syncClientToMatrix(client, 'client');
+        });
       } else if (matrix.isReady()) {
-        // Room hasn't been created yet — create it now (includes initial sync)
         createClientRoom(client.id);
       }
     });
@@ -2959,7 +2991,11 @@ function dispatchFieldChange(action, key, val) {
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
       if (client.roomId) {
-        syncClientToMatrix(client);
+        syncClientToMatrix(client, 'client');
+      } else if (_pendingRoomCreations[client.id]) {
+        _pendingRoomCreations[client.id].then(function(roomId) {
+          if (roomId) syncClientToMatrix(client, 'client');
+        });
       } else if (matrix.isReady()) {
         createClientRoom(client.id);
       }
@@ -2971,7 +3007,7 @@ function dispatchFieldChange(action, key, val) {
     if (!pet) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
-    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
     return;
   }
 }
@@ -3045,9 +3081,18 @@ document.addEventListener('change', function(e) {
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
     var newPet = S.petitions[pid];
     if (newPet.roomId && matrix.isReady()) {
-      syncPetitionToMatrix(newPet);
+      syncPetitionToMatrix(newPet, 'petition');
       matrix.sendStateEvent(newPet.roomId, EVT_PETITION_BLOCKS, { blocks: newPet.blocks }, newPet.id)
-        .catch(function(e) { console.error('Block sync failed:', e); });
+        .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+    } else if (_pendingRoomCreations[cid]) {
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
@@ -3264,19 +3309,14 @@ function handleAdminDeactivateUser(mxid) {
 function flushPendingSyncs() {
   var keys = Object.keys(_syncTimers);
   if (keys.length === 0) return;
+  matrix._flushing = true;
   keys.forEach(function(key) {
-    // clearTimeout returns undefined; we need to re-invoke the sync
-    clearTimeout(_syncTimers[key]);
-    delete _syncTimers[key];
+    var entry = _syncTimers[key];
+    clearTimeout(entry.timer);
+    entry.fn();
   });
-  // Re-sync all clients and petitions that have room IDs
-  if (!matrix.isReady()) return;
-  Object.values(S.clients).forEach(function(client) {
-    if (client.roomId) syncClientToMatrix(client);
-  });
-  Object.values(S.petitions).forEach(function(pet) {
-    if (pet.roomId) syncPetitionToMatrix(pet);
-  });
+  _syncTimers = {};
+  matrix._flushing = false;
 }
 
 document.addEventListener('visibilitychange', function() {
@@ -3301,7 +3341,7 @@ document.addEventListener('DOMContentLoaded', function() {
         S.loading = false;
         return hydrateFromMatrix();
       })
-      .then(function() { render(); matrix.startLongPoll(); })
+      .then(function() { render(); matrix.startLongPoll(); toast('Session restored', 'info'); })
       .catch(function(err) {
         console.error('Session restore failed:', err);
         var status = (err && err.status) || 0;
