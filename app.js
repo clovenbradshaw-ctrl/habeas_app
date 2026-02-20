@@ -2235,6 +2235,21 @@ function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction)
   return h;
 }
 
+function cleanupInlineAdd() {
+  if (!S.inlineAdd) return;
+  var ia = S.inlineAdd;
+  if (ia.type === 'court') {
+    var c = S.courts[ia.id];
+    if (c && !c.district && !c.division) delete S.courts[ia.id];
+  } else if (ia.type === 'facility') {
+    var f = S.facilities[ia.id];
+    if (f && !f.name) delete S.facilities[ia.id];
+  } else {
+    var a = S.attProfiles[ia.id];
+    if (a && !a.name) delete S.attProfiles[ia.id];
+  }
+}
+
 function htmlInlineAddForm(type) {
   var fields, saveAction, title;
   if (type === 'court') {
@@ -3559,7 +3574,7 @@ document.addEventListener('click', function(e) {
   if (!btn) return;
   var action = btn.dataset.action;
 
-  if (action === 'nav') { setState({ currentView: btn.dataset.view, boardAddingMatter: false }); return; }
+  if (action === 'nav') { cleanupInlineAdd(); setState({ currentView: btn.dataset.view, boardAddingMatter: false, inlineAdd: null, draft: {} }); return; }
   if (action === 'logout') { matrix.stopLongPoll(); matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
@@ -3921,35 +3936,40 @@ document.addEventListener('click', function(e) {
   }
 
   // Editor tabs
-  if (action === 'ed-tab') { setState({ editorTab: btn.dataset.tab, inlineAdd: null, draft: {} }); return; }
+  if (action === 'ed-tab') { cleanupInlineAdd(); setState({ editorTab: btn.dataset.tab, inlineAdd: null, draft: {} }); return; }
   if (action === 'goto-directory') { setState({ currentView: 'directory', inlineAdd: null, draft: {} }); return; }
 
   // ── Inline Add-to-Directory from Editor ───────────────────────
   if (action === 'inline-add-court') {
+    cleanupInlineAdd();
     var id = uid();
     var c = { id: id, district: '', division: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     setState({ inlineAdd: { type: 'court', id: id }, draft: Object.assign({}, c) });
     return;
   }
   if (action === 'inline-add-facility') {
+    cleanupInlineAdd();
     var id = uid();
     var f = { id: id, name: '', city: '', state: '', warden: '', fieldOfficeName: '', fieldOfficeDirector: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     setState({ inlineAdd: { type: 'facility', id: id }, draft: Object.assign({}, f) });
     return;
   }
   if (action === 'inline-add-att1') {
+    cleanupInlineAdd();
     var id = uid();
     var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     setState({ inlineAdd: { type: 'att1', id: id }, draft: Object.assign({}, a) });
     return;
   }
   if (action === 'inline-add-att2') {
+    cleanupInlineAdd();
     var id = uid();
     var a = { id: id, name: '', barNo: '', firm: '', address: '', cityStateZip: '', phone: '', fax: '', email: '', proHacVice: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     setState({ inlineAdd: { type: 'att2', id: id }, draft: Object.assign({}, a) });
     return;
   }
   if (action === 'inline-cancel') {
+    cleanupInlineAdd();
     setState({ inlineAdd: null, draft: {} });
     return;
   }
