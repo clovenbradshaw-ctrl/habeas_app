@@ -406,6 +406,12 @@ var RESPONDENT_FIELDS = [
   { key: 'fieldOfficeDirector', label: 'FOD', ph: '' },
   { key: 'fieldOfficeName', label: 'Field Office', ph: '' },
 ];
+var NATIONAL_OVERRIDE_FIELDS = [
+  { key: 'natIceDirector', label: 'ICE Director', ph: '' },
+  { key: 'natIceDirectorTitle', label: 'ICE Title', ph: '', type: 'enum', options: ICE_TITLE_OPTIONS },
+  { key: 'natDhsSecretary', label: 'DHS Secretary', ph: '' },
+  { key: 'natAttorneyGeneral', label: 'Attorney General', ph: '' },
+];
 
 var DEFAULT_PAGE_SETTINGS = {
   headerLeft: '', headerCenter: '', headerRight: '',
@@ -431,8 +437,8 @@ function buildVarMap(c, p, a1, a2, nat) {
     DETENTION_FACILITY_STATE: p.facilityState || '',
     WARDEN_NAME: p.warden || '', FIELD_OFFICE_DIRECTOR: p.fieldOfficeDirector || '',
     FIELD_OFFICE_NAME: p.fieldOfficeName || '',
-    ICE_DIRECTOR: nat.iceDirector || '', ICE_DIRECTOR_TITLE: nat.iceDirectorTitle || '',
-    DHS_SECRETARY: nat.dhsSecretary || '', ATTORNEY_GENERAL: nat.attorneyGeneral || '',
+    ICE_DIRECTOR: p.natIceDirector || nat.iceDirector || '', ICE_DIRECTOR_TITLE: p.natIceDirectorTitle || nat.iceDirectorTitle || '',
+    DHS_SECRETARY: p.natDhsSecretary || nat.dhsSecretary || '', ATTORNEY_GENERAL: p.natAttorneyGeneral || nat.attorneyGeneral || '',
     FILING_DATE: p.filingDate || '', FILING_DAY: p.filingDay || '',
     FILING_MONTH_YEAR: p.filingMonthYear || '',
     ATTORNEY1_NAME: a1.name || '', ATTORNEY1_BAR_NO: a1.barNo || '',
@@ -614,10 +620,12 @@ var matrix = {
     }
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
-        if (timeoutId) clearTimeout(timeoutId);
+        // Don't clear timeout yet — keep it active to cover body reads (r.json/r.text).
+        // If the body stream stalls, the AbortController will cancel after 15s.
         if (!r.ok) {
           var httpStatus = r.status;
           return r.text().then(function(text) {
+            if (timeoutId) clearTimeout(timeoutId);
             try {
               var parsed = JSON.parse(text);
               // Always include HTTP status on error objects
@@ -631,7 +639,10 @@ var matrix = {
             }
           });
         }
-        return r.json();
+        return r.json().then(function(data) {
+          if (timeoutId) clearTimeout(timeoutId);
+          return data;
+        });
       })
       .catch(function(e) {
         if (timeoutId) clearTimeout(timeoutId);
@@ -659,9 +670,9 @@ var matrix = {
       signal: controller.signal,
     })
     .then(function(r) {
-      clearTimeout(timeoutId);
       if (!r.ok) {
         return r.text().then(function(text) {
+          clearTimeout(timeoutId);
           try {
             throw JSON.parse(text);
           } catch(e) {
@@ -676,6 +687,7 @@ var matrix = {
       return r.json();
     })
     .then(function(data) {
+      clearTimeout(timeoutId);
       matrix.accessToken = data.access_token;
       matrix.userId = data.user_id;
       matrix.deviceId = data.device_id;
@@ -816,6 +828,12 @@ var matrix = {
         content.users[userId] = level;
         return self._api('PUT', '/rooms/' + encodeURIComponent(roomId) + '/state/m.room.power_levels/', content);
       });
+  },
+
+  makeRoomAdmin: function(roomId, userId) {
+    return this.adminApi('POST', '/v1/rooms/' + encodeURIComponent(roomId) + '/make_room_admin', {
+      user_id: userId || this.userId,
+    });
   },
 
   isReady: function() {
@@ -996,6 +1014,7 @@ var S = {
   serverUsersError: '',
   log: [],
   role: null,
+  isSynapseAdmin: false,
   adminEditUserId: null,
   adminDraft: {},
   currentUser: '',
@@ -1017,6 +1036,7 @@ var S = {
 };
 
 var _collapsedGroups = {};
+var _wasDragged = false;
 var _prevView = null;
 function setState(updates) {
   Object.assign(S, updates);
@@ -1308,6 +1328,8 @@ function hydrateFromMatrix() {
             facilityState: pc.facilityState || '', warden: pc.warden || '',
             fieldOfficeDirector: pc.fieldOfficeDirector || '',
             fieldOfficeName: pc.fieldOfficeName || '',
+            natIceDirector: pc.natIceDirector || '', natIceDirectorTitle: pc.natIceDirectorTitle || '',
+            natDhsSecretary: pc.natDhsSecretary || '', natAttorneyGeneral: pc.natAttorneyGeneral || '',
             filingDate: pc.filingDate || '', filingDay: pc.filingDay || '',
             filingMonthYear: pc.filingMonthYear || '',
             templateId: pc.templateId, att1Id: pc.att1Id, att2Id: pc.att2Id,
@@ -1321,12 +1343,13 @@ function hydrateFromMatrix() {
         });
       });
 
-      // Role
+      // Role — determine from power levels in !org room
       var role = 'attorney';
+      var myPl = 0;
       if (matrix.orgRoomId) {
         var plEvt = matrix.getStateEvent(matrix.orgRoomId, 'm.room.power_levels', '');
         if (plEvt && plEvt.content && plEvt.content.users) {
-          var myPl = plEvt.content.users[matrix.userId] || 0;
+          myPl = plEvt.content.users[matrix.userId] || 0;
           if (myPl >= 50) role = 'admin';
         }
       }
@@ -1342,13 +1365,49 @@ function hydrateFromMatrix() {
         users: users, role: role, currentUser: matrix.userId, syncError: syncError,
       });
 
-      // For admins, fetch all server users and merge with managed users
-      if (role === 'admin') {
-        matrix.listUsers()
-          .then(function(serverUsers) {
+      // Check if current user is a Synapse server admin by trying listUsers.
+      // If they are, auto-promote to PL 100 in org/templates rooms via make_room_admin.
+      matrix.listUsers()
+        .then(function(serverUsers) {
+          // listUsers succeeded — user IS a Synapse server admin
+          setState({ isSynapseAdmin: true });
+
+          // Auto-promote to room admin if PL < 100
+          var promoteChain = Promise.resolve();
+          if (matrix.orgRoomId && myPl < 100) {
+            promoteChain = matrix.makeRoomAdmin(matrix.orgRoomId)
+              .then(function() {
+                console.log('[amino] Auto-promoted to room admin in !org');
+              })
+              .catch(function(e) {
+                console.warn('[amino] make_room_admin failed for org room:', e);
+              });
+          }
+          if (matrix.templatesRoomId) {
+            promoteChain = promoteChain.then(function() {
+              return matrix.makeRoomAdmin(matrix.templatesRoomId)
+                .then(function() {
+                  console.log('[amino] Auto-promoted to room admin in !templates');
+                })
+                .catch(function(e) {
+                  console.warn('[amino] make_room_admin failed for templates room:', e);
+                });
+            });
+          }
+
+          return promoteChain.then(function() {
+            // After promotion, ensure role is admin
+            if (role !== 'admin') {
+              role = 'admin';
+              setState({ role: 'admin' });
+            }
             setState({ users: mergeServerUsers(serverUsers), serverUsersLoaded: true, serverUsersError: '' });
-          })
-          .catch(function(err) {
+          });
+        })
+        .catch(function(err) {
+          // listUsers failed — not a Synapse server admin (or network error)
+          if (role === 'admin') {
+            // User has room PL >= 50 but is not a Synapse admin — show server users error
             var msg = '';
             if (err && err.status === 403) {
               msg = 'Cannot list server users: your account lacks Synapse server admin privileges.';
@@ -1356,8 +1415,8 @@ function hydrateFromMatrix() {
               msg = 'Could not fetch server user list: ' + ((err && err.error) || 'unknown error');
             }
             setState({ serverUsersLoaded: true, serverUsersError: msg });
-          });
-      }
+          }
+        });
     });
 }
 
@@ -1896,6 +1955,7 @@ function updateFieldLocally(action, key, val) {
     S.national[key] = val;
     S.national.updatedBy = S.currentUser;
     S.national.updatedAt = now();
+    refreshVariableSpans();
     return;
   }
   if (action === 'client-field') {
@@ -1908,6 +1968,7 @@ function updateFieldLocally(action, key, val) {
       if (!hasOwnership) return;
     }
     client[key] = val;
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-client-field') {
@@ -1917,6 +1978,7 @@ function updateFieldLocally(action, key, val) {
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-pet-field') {
@@ -1924,6 +1986,7 @@ function updateFieldLocally(action, key, val) {
     if (!pet) return;
     if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     pet[key] = val;
+    refreshVariableSpans();
     return;
   }
 }
@@ -2035,6 +2098,8 @@ function syncPetitionToMatrix(pet, label) {
     _att1Id: pet._att1Id, _att2Id: pet._att2Id,
     templateId: pet.templateId,
     pageSettings: pet.pageSettings,
+    natIceDirector: pet.natIceDirector, natIceDirectorTitle: pet.natIceDirectorTitle,
+    natDhsSecretary: pet.natDhsSecretary, natAttorneyGeneral: pet.natAttorneyGeneral,
   };
   if (pet.archived) content.archived = true;
   return matrix.sendStateEvent(pet.roomId, EVT_PETITION, content, pet.id).then(function(data) {
@@ -2073,6 +2138,32 @@ function extractBlockContent(el) {
     s.replaceWith('{{' + s.dataset.var + '}}');
   });
   return c.textContent || '';
+}
+
+// Update all variable spans in the document in-place (no full re-render).
+// Called on every keystroke while editing sidebar fields so the document
+// preview instantly reflects the new values.
+function refreshVariableSpans() {
+  if (S.currentView !== 'editor') return;
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) return;
+  var client = S.clients[pet.clientId] || {};
+  var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : {};
+  var att2 = pet._att2Id ? S.attProfiles[pet._att2Id] : {};
+  var vars = buildVarMap(client, pet, att1, att2, S.national);
+  var spans = document.querySelectorAll('[data-var]');
+  for (var i = 0; i < spans.length; i++) {
+    var span = spans[i];
+    var k = span.dataset.var;
+    var v = vars[k] ? vars[k].trim() : '';
+    if (v) {
+      span.textContent = v;
+      span.className = 'vf';
+    } else {
+      span.textContent = '\u27E8' + k + '\u27E9';
+      span.className = 've';
+    }
+  }
 }
 
 // ── Component Renderers ──────────────────────────────────────────
@@ -2241,7 +2332,7 @@ function renderHeader() {
     h += '<button class="nav-btn' + (S.currentView === t[0] ? ' on' : '') + '" data-action="nav" data-view="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</nav></div><div class="hdr-right">';
-  h += '<span class="role-badge" style="color:' + (S.role === 'admin' ? '#a08540' : '#8a8a9a') + '">' + (S.role === 'admin' ? 'Admin' : 'Attorney') + '</span>';
+  h += '<span class="role-badge" style="color:' + (S.role === 'admin' ? '#a08540' : '#8a8a9a') + '">' + (S.isSynapseAdmin ? 'Super Admin' : S.role === 'admin' ? 'Admin' : 'Attorney') + '</span>';
   if (pet) {
     var sm = SM[pet.stage] || SM.drafted;
     h += '<span class="stage-badge" style="background:' + sm.color + '">' + pet.stage + '</span>';
@@ -2600,15 +2691,20 @@ function renderDirectory() {
     h += '<div class="dir-list">';
     var facList = Object.values(S.facilities).filter(function(f) { return S.dirShowArchived || !f.archived; });
     facList.forEach(function(f) {
-      h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + (f.archived ? ' archived' : '') + '">';
       if (f.archived) {
+        h += '<div class="dir-card archived">';
         h += '<div class="dir-card-head" style="cursor:default"><strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
         h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
         h += '<div class="dir-card-actions"><span class="archived-badge">Archived</span>';
         if (isAdmin) h += '<button class="hbtn accent sm" data-action="recover-facility" data-id="' + f.id + '">Recover</button>';
         h += '</div>';
-      } else if (S.editId === f.id && isAdmin) {
+      } else if (isAdmin && S.editId !== f.id) {
+        h += '<div class="dir-card" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
+      } else {
+        h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
+      }
+      if (!f.archived && S.editId === f.id && isAdmin) {
         h += htmlFacilityAutocomplete();
         FACILITY_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
@@ -2622,15 +2718,21 @@ function renderDirectory() {
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-facility">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="archive-facility" data-id="' + f.id + '">Archive</button></div>';
-      } else {
-        if (isAdmin) {
-          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
-        } else {
-          h += '<div class="dir-card-head" style="cursor:default">';
-        }
+      } else if (!f.archived) {
+        h += '<div class="dir-card-head">';
         h += '<strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
-        h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        if (isAdmin) {
+          h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        } else {
+          h += '<div class="frow" style="margin:8px 0"><label class="flbl">Warden</label>';
+          h += '<div style="display:flex;gap:6px;flex:1"><input class="finp" value="' + esc(f.warden || '') + '" data-warden-input="' + f.id + '" placeholder="Enter warden name">';
+          h += '<button class="hbtn accent" data-action="update-warden" data-id="' + f.id + '" style="white-space:nowrap">Update</button></div></div>';
+          h += '<div class="dir-card-detail">FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        }
+        if (f.wardenUpdatedBy) {
+          h += '<div class="prov"><span class="prov-item">Warden updated by <strong>' + esc(f.wardenUpdatedBy) + '</strong> ' + ts(f.wardenUpdatedAt) + '</span></div>';
+        }
         h += htmlProvenanceBadge(f);
       }
       h += '</div>';
@@ -2649,14 +2751,19 @@ function renderDirectory() {
     h += '<div class="dir-list">';
     var crtList = Object.values(S.courts).filter(function(c) { return S.dirShowArchived || !c.archived; });
     crtList.forEach(function(c) {
-      h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + (c.archived ? ' archived' : '') + '">';
       if (c.archived) {
+        h += '<div class="dir-card archived">';
         h += '<div class="dir-card-head" style="cursor:default"><strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
         h += '<div class="dir-card-actions"><span class="archived-badge">Archived</span>';
         if (isAdmin) h += '<button class="hbtn accent sm" data-action="recover-court" data-id="' + c.id + '">Recover</button>';
         h += '</div>';
-      } else if (S.editId === c.id && isAdmin) {
+      } else if (isAdmin && S.editId !== c.id) {
+        h += '<div class="dir-card" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
+      } else {
+        h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
+      }
+      if (!c.archived && S.editId === c.id && isAdmin) {
         COURT_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
           var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
@@ -2667,12 +2774,8 @@ function renderDirectory() {
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-court">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="archive-court" data-id="' + c.id + '">Archive</button></div>';
-      } else {
-        if (isAdmin) {
-          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
-        } else {
-          h += '<div class="dir-card-head" style="cursor:default">';
-        }
+      } else if (!c.archived) {
+        h += '<div class="dir-card-head">';
         h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
         h += htmlProvenanceBadge(c);
@@ -2693,15 +2796,20 @@ function renderDirectory() {
     h += '<div class="dir-list">';
     var attList = Object.values(S.attProfiles).filter(function(a) { return S.dirShowArchived || !a.archived; });
     attList.forEach(function(a) {
-      h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + (a.archived ? ' archived' : '') + '">';
       if (a.archived) {
+        h += '<div class="dir-card archived">';
         h += '<div class="dir-card-head" style="cursor:default"><strong>' + esc(a.name || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
         h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
         h += '<div class="dir-card-actions"><span class="archived-badge">Archived</span>';
         if (isAdmin) h += '<button class="hbtn accent sm" data-action="recover-attorney" data-id="' + a.id + '">Recover</button>';
         h += '</div>';
-      } else if (S.editId === a.id && isAdmin) {
+      } else if (isAdmin && S.editId !== a.id) {
+        h += '<div class="dir-card" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
+      } else {
+        h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
+      }
+      if (!a.archived && S.editId === a.id && isAdmin) {
         ATT_PROFILE_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
           var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
@@ -2714,12 +2822,8 @@ function renderDirectory() {
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-attorney">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
         h += '<button class="hbtn danger" data-action="archive-attorney" data-id="' + a.id + '">Archive</button></div>';
-      } else {
-        if (isAdmin) {
-          h += '<div class="dir-card-head" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
-        } else {
-          h += '<div class="dir-card-head" style="cursor:default">';
-        }
+      } else if (!a.archived) {
+        h += '<div class="dir-card-head">';
         h += '<strong>' + esc(a.name || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
         h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
@@ -2892,6 +2996,15 @@ function renderAdmin() {
         h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
         h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
         h += '</select></div>';
+        h += '<div class="frow"><label class="flbl">Set Password</label>';
+        h += '<div style="display:flex;gap:8px;align-items:flex-start">';
+        h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Optional \u2014 generate or type" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+        h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
+        h += '</div>';
+        if (S.adminDraft.passwordVisible && S.adminDraft.password) {
+          h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
+        }
+        h += '</div>';
         h += '<div id="admin-adopt-error" class="login-error" style="display:none;margin-top:8px"></div>';
         h += '<div class="dir-card-actions">';
         h += '<button class="hbtn accent" data-action="admin-adopt-user" data-mxid="' + esc(u.mxid) + '">Adopt User</button>';
@@ -2949,6 +3062,7 @@ function renderEditor() {
     h += htmlPicker('Select Facility', Object.values(S.facilities).filter(function(f) { return !f.archived; }), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'goto-directory');
     h += htmlFieldGroup('Facility (manual override)', FACILITY_FIELDS, pet, 'editor-pet-field');
     h += htmlFieldGroup('Respondents (manual override)', RESPONDENT_FIELDS, pet, 'editor-pet-field');
+    h += htmlFieldGroup('National Officials (override)', NATIONAL_OVERRIDE_FIELDS, pet, 'editor-pet-field');
   }
 
   if (S.editorTab === 'atty') {
@@ -3327,6 +3441,7 @@ function initKanbanDragDrop() {
         e.preventDefault();
         return;
       }
+      _wasDragged = true;
       e.dataTransfer.setData('text/plain', card.dataset.dragId);
       e.dataTransfer.effectAllowed = 'move';
       card.classList.add('kb-dragging');
@@ -3474,14 +3589,26 @@ function handleLogin() {
   errEl.style.display = 'none';
 
   matrix.login(CONFIG.MATRIX_SERVER_URL, username, password)
-    .then(function() { return matrix.initialSync(); })
     .then(function() {
+      // Login succeeded — show "Connecting..." while we sync and hydrate.
+      // This prevents the "Signing in..." button from appearing stuck.
       S.authenticated = true;
-      S.loading = false;
+      S.loading = true;
+      render();
+      return matrix.initialSync();
+    })
+    .then(function() {
       return hydrateFromMatrix();
     })
-    .then(function() { render(); matrix.startLongPoll(); })
+    .then(function() {
+      S.loading = false;
+      render();
+      matrix.startLongPoll();
+    })
     .catch(function(err) {
+      // Reset auth state so the login form re-appears
+      S.authenticated = false;
+      S.loading = false;
       var status = (err && err.status) || 0;
       var msg;
       if (status === 502 || status === 503 || status === 504) {
@@ -3491,10 +3618,15 @@ function handleLogin() {
       } else {
         msg = (err && err.error) || (err && err.message) || 'Login failed. Check your credentials.';
       }
-      errEl.textContent = msg;
-      errEl.style.display = 'block';
-      btnEl.disabled = false;
-      btnEl.textContent = 'Sign In';
+      render();
+      // Show error on the freshly rendered login form
+      setTimeout(function() {
+        var newErrEl = document.getElementById('login-error');
+        if (newErrEl) {
+          newErrEl.textContent = msg;
+          newErrEl.style.display = 'block';
+        }
+      }, 0);
     });
 }
 
@@ -3550,6 +3682,7 @@ document.addEventListener('click', function(e) {
   }
   if (action === 'open-petition') {
     if (e.target.closest('.kb-card-actions')) return;
+    if (_wasDragged) { _wasDragged = false; return; }
     setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' });
     return;
   }
@@ -3651,6 +3784,7 @@ document.addEventListener('click', function(e) {
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
@@ -3755,15 +3889,39 @@ document.addEventListener('click', function(e) {
   }
   if (action === 'save-facility') {
     if (S.role !== 'admin') return;
+    var oldF = S.facilities[S.draft.id];
     var f = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    if (oldF && f.warden !== oldF.warden) {
+      f.wardenUpdatedBy = S.currentUser;
+      f.wardenUpdatedAt = now();
+    }
     S.facilities[f.id] = f;
     S.log.push({ op: 'UPDATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, f.id)
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, wardenUpdatedBy: f.wardenUpdatedBy, wardenUpdatedAt: f.wardenUpdatedAt }, f.id)
         .then(function() { toast('ALT \u21CC facility', 'success'); })
         .catch(function(e) { console.error(e); toast('ALT \u21CC facility failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'update-warden') {
+    var id = btn.dataset.id;
+    var f = S.facilities[id];
+    if (!f) return;
+    var input = document.querySelector('[data-warden-input="' + id + '"]');
+    if (!input) return;
+    var newWarden = input.value.trim();
+    f.warden = newWarden;
+    f.wardenUpdatedBy = S.currentUser;
+    f.wardenUpdatedAt = now();
+    S.log.push({ op: 'UPDATE', target: 'facility.' + id + '.warden', payload: newWarden, frame: { t: now(), entity: 'facility' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, wardenUpdatedBy: f.wardenUpdatedBy, wardenUpdatedAt: f.wardenUpdatedAt }, f.id)
+        .then(function() { toast('Warden updated', 'success'); })
+        .catch(function(e) { console.error(e); toast('Warden update failed', 'error'); });
+    }
+    render();
     return;
   }
   if (action === 'archive-facility') {
@@ -3997,6 +4155,7 @@ function dispatchFieldChange(action, key, val) {
         matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); toast('ALT \u21CC national defaults sync failed', 'error'); });
       });
     }
+    refreshVariableSpans();
     return;
   }
   if (action === 'client-field') {
@@ -4021,6 +4180,7 @@ function dispatchFieldChange(action, key, val) {
         createClientRoom(client.id);
       }
     });
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-client-field') {
@@ -4042,6 +4202,7 @@ function dispatchFieldChange(action, key, val) {
         createClientRoom(client.id);
       }
     });
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-pet-field') {
@@ -4051,6 +4212,7 @@ function dispatchFieldChange(action, key, val) {
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
+    refreshVariableSpans();
     return;
   }
   if (action === 'page-settings') {
@@ -4143,6 +4305,7 @@ document.addEventListener('change', function(e) {
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
@@ -4414,6 +4577,14 @@ function handleAdminAdoptUser(mxid) {
     if (matrix.templatesRoomId) {
       return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
         console.warn('Set templates PL failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Step 6: Reset password if provided
+    if (d.password && d.password.trim()) {
+      return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+        password: d.password,
       });
     }
   })
