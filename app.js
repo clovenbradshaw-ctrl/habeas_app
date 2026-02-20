@@ -406,6 +406,12 @@ var RESPONDENT_FIELDS = [
   { key: 'fieldOfficeDirector', label: 'FOD', ph: '' },
   { key: 'fieldOfficeName', label: 'Field Office', ph: '' },
 ];
+var NATIONAL_OVERRIDE_FIELDS = [
+  { key: 'natIceDirector', label: 'ICE Director', ph: '' },
+  { key: 'natIceDirectorTitle', label: 'ICE Title', ph: '', type: 'enum', options: ICE_TITLE_OPTIONS },
+  { key: 'natDhsSecretary', label: 'DHS Secretary', ph: '' },
+  { key: 'natAttorneyGeneral', label: 'Attorney General', ph: '' },
+];
 
 var DEFAULT_PAGE_SETTINGS = {
   headerLeft: '', headerCenter: '', headerRight: '',
@@ -431,8 +437,8 @@ function buildVarMap(c, p, a1, a2, nat) {
     DETENTION_FACILITY_STATE: p.facilityState || '',
     WARDEN_NAME: p.warden || '', FIELD_OFFICE_DIRECTOR: p.fieldOfficeDirector || '',
     FIELD_OFFICE_NAME: p.fieldOfficeName || '',
-    ICE_DIRECTOR: nat.iceDirector || '', ICE_DIRECTOR_TITLE: nat.iceDirectorTitle || '',
-    DHS_SECRETARY: nat.dhsSecretary || '', ATTORNEY_GENERAL: nat.attorneyGeneral || '',
+    ICE_DIRECTOR: p.natIceDirector || nat.iceDirector || '', ICE_DIRECTOR_TITLE: p.natIceDirectorTitle || nat.iceDirectorTitle || '',
+    DHS_SECRETARY: p.natDhsSecretary || nat.dhsSecretary || '', ATTORNEY_GENERAL: p.natAttorneyGeneral || nat.attorneyGeneral || '',
     FILING_DATE: p.filingDate || '', FILING_DAY: p.filingDay || '',
     FILING_MONTH_YEAR: p.filingMonthYear || '',
     ATTORNEY1_NAME: a1.name || '', ATTORNEY1_BAR_NO: a1.barNo || '',
@@ -1310,6 +1316,8 @@ function hydrateFromMatrix() {
             facilityState: pc.facilityState || '', warden: pc.warden || '',
             fieldOfficeDirector: pc.fieldOfficeDirector || '',
             fieldOfficeName: pc.fieldOfficeName || '',
+            natIceDirector: pc.natIceDirector || '', natIceDirectorTitle: pc.natIceDirectorTitle || '',
+            natDhsSecretary: pc.natDhsSecretary || '', natAttorneyGeneral: pc.natAttorneyGeneral || '',
             filingDate: pc.filingDate || '', filingDay: pc.filingDay || '',
             filingMonthYear: pc.filingMonthYear || '',
             templateId: pc.templateId, att1Id: pc.att1Id, att2Id: pc.att2Id,
@@ -2040,6 +2048,8 @@ function syncPetitionToMatrix(pet, label) {
     _att1Id: pet._att1Id, _att2Id: pet._att2Id,
     templateId: pet.templateId,
     pageSettings: pet.pageSettings,
+    natIceDirector: pet.natIceDirector, natIceDirectorTitle: pet.natIceDirectorTitle,
+    natDhsSecretary: pet.natDhsSecretary, natAttorneyGeneral: pet.natAttorneyGeneral,
   }, pet.id).then(function(data) {
     if (label) toast('CON \u22C8 ' + label, 'success');
     return data;
@@ -2623,7 +2633,17 @@ function renderDirectory() {
         }
         h += '<strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
-        h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        if (isAdmin) {
+          h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        } else {
+          h += '<div class="frow" style="margin:8px 0"><label class="flbl">Warden</label>';
+          h += '<div style="display:flex;gap:6px;flex:1"><input class="finp" value="' + esc(f.warden || '') + '" data-warden-input="' + f.id + '" placeholder="Enter warden name">';
+          h += '<button class="hbtn accent" data-action="update-warden" data-id="' + f.id + '" style="white-space:nowrap">Update</button></div></div>';
+          h += '<div class="dir-card-detail">FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        }
+        if (f.wardenUpdatedBy) {
+          h += '<div class="prov"><span class="prov-item">Warden updated by <strong>' + esc(f.wardenUpdatedBy) + '</strong> ' + ts(f.wardenUpdatedAt) + '</span></div>';
+        }
         h += htmlProvenanceBadge(f);
       }
       h += '</div>';
@@ -2925,6 +2945,7 @@ function renderEditor() {
     h += htmlPicker('Select Facility', Object.values(S.facilities), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'goto-directory');
     h += htmlFieldGroup('Facility (manual override)', FACILITY_FIELDS, pet, 'editor-pet-field');
     h += htmlFieldGroup('Respondents (manual override)', RESPONDENT_FIELDS, pet, 'editor-pet-field');
+    h += htmlFieldGroup('National Officials (override)', NATIONAL_OVERRIDE_FIELDS, pet, 'editor-pet-field');
   }
 
   if (S.editorTab === 'atty') {
@@ -3554,6 +3575,7 @@ document.addEventListener('click', function(e) {
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
@@ -3657,15 +3679,39 @@ document.addEventListener('click', function(e) {
   }
   if (action === 'save-facility') {
     if (S.role !== 'admin') return;
+    var oldF = S.facilities[S.draft.id];
     var f = Object.assign({}, S.draft, { updatedBy: S.currentUser, updatedAt: now() });
+    if (oldF && f.warden !== oldF.warden) {
+      f.wardenUpdatedBy = S.currentUser;
+      f.wardenUpdatedAt = now();
+    }
     S.facilities[f.id] = f;
     S.log.push({ op: 'UPDATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, f.id)
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, wardenUpdatedBy: f.wardenUpdatedBy, wardenUpdatedAt: f.wardenUpdatedAt }, f.id)
         .then(function() { toast('ALT \u21CC facility', 'success'); })
         .catch(function(e) { console.error(e); toast('ALT \u21CC facility failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'update-warden') {
+    var id = btn.dataset.id;
+    var f = S.facilities[id];
+    if (!f) return;
+    var input = document.querySelector('[data-warden-input="' + id + '"]');
+    if (!input) return;
+    var newWarden = input.value.trim();
+    f.warden = newWarden;
+    f.wardenUpdatedBy = S.currentUser;
+    f.wardenUpdatedAt = now();
+    S.log.push({ op: 'UPDATE', target: 'facility.' + id + '.warden', payload: newWarden, frame: { t: now(), entity: 'facility' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, wardenUpdatedBy: f.wardenUpdatedBy, wardenUpdatedAt: f.wardenUpdatedAt }, f.id)
+        .then(function() { toast('Warden updated', 'success'); })
+        .catch(function(e) { console.error(e); toast('Warden update failed', 'error'); });
+    }
+    render();
     return;
   }
   if (action === 'del-facility') {
@@ -3998,6 +4044,7 @@ document.addEventListener('change', function(e) {
       blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
