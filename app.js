@@ -527,6 +527,9 @@ var matrix = {
   orgRoomId: null,
   templatesRoomId: null,
   _txnId: 0,
+  _syncToken: null,
+  _polling: false,
+  _pollAbort: null,
 
   _headers: function() {
     return {
@@ -645,6 +648,7 @@ var matrix = {
           });
           matrix.rooms[roomId] = { stateEvents: stateEvents };
         });
+        matrix._syncToken = data.next_batch || null;
         return data;
       });
   },
@@ -770,6 +774,121 @@ var matrix = {
     this.rooms = {};
     this.orgRoomId = null;
     this.templatesRoomId = null;
+    this._syncToken = null;
+    this._polling = false;
+    this._pollAbort = null;
+  },
+
+  startLongPoll: function() {
+    if (this._polling) return;
+    if (!this._syncToken) {
+      console.warn('Cannot start long-poll: no sync token');
+      return;
+    }
+    this._polling = true;
+    this._doPoll();
+  },
+
+  stopLongPoll: function() {
+    this._polling = false;
+    if (this._pollAbort) {
+      try { this._pollAbort.abort(); } catch(e) {}
+      this._pollAbort = null;
+    }
+  },
+
+  _doPoll: function() {
+    if (!this._polling) return;
+    var self = this;
+    var filter = JSON.stringify({
+      room: {
+        state: { lazy_load_members: true },
+        timeline: { limit: 50 },
+      }
+    });
+    var url = this.baseUrl + '/_matrix/client/v3/sync?timeout=30000&since='
+      + encodeURIComponent(this._syncToken)
+      + '&filter=' + encodeURIComponent(filter);
+
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    this._pollAbort = controller;
+
+    var fetchOpts = { method: 'GET', headers: this._headers() };
+    if (controller) fetchOpts.signal = controller.signal;
+
+    fetch(url, fetchOpts)
+      .then(function(r) {
+        if (!r.ok) {
+          return r.text().then(function(text) {
+            var err;
+            try { err = JSON.parse(text); } catch(e) {
+              err = { errcode: 'M_UNKNOWN', error: 'HTTP ' + r.status, status: r.status };
+            }
+            err.status = r.status;
+            throw err;
+          });
+        }
+        return r.json();
+      })
+      .then(function(data) {
+        if (!self._polling) return;
+        self._syncToken = data.next_batch || self._syncToken;
+        self._processIncrementalSync(data);
+        self._doPoll();
+      })
+      .catch(function(err) {
+        if (!self._polling) return;
+        if (err && (err.status === 401 || err.status === 403)) {
+          console.error('Sync auth failed, stopping poll');
+          self._polling = false;
+          return;
+        }
+        console.warn('Long-poll error, retrying in 5s:', err && err.error || err);
+        setTimeout(function() { self._doPoll(); }, 5000);
+      });
+  },
+
+  _processIncrementalSync: function(data) {
+    var joinedRooms = data.rooms && data.rooms.join ? data.rooms.join : {};
+    var changed = false;
+    var self = this;
+
+    Object.keys(joinedRooms).forEach(function(roomId) {
+      var room = joinedRooms[roomId];
+      var events = [];
+      if (room.state && room.state.events) {
+        events = events.concat(room.state.events);
+      }
+      if (room.timeline && room.timeline.events) {
+        room.timeline.events.forEach(function(evt) {
+          if (evt.state_key !== undefined && evt.state_key !== null) {
+            events.push(evt);
+          }
+        });
+      }
+      if (events.length === 0) return;
+
+      if (!self.rooms[roomId]) {
+        self.rooms[roomId] = { stateEvents: {} };
+      }
+
+      events.forEach(function(evt) {
+        if (evt.sender === self.userId) return;
+        if (!self.rooms[roomId].stateEvents[evt.type]) {
+          self.rooms[roomId].stateEvents[evt.type] = {};
+        }
+        self.rooms[roomId].stateEvents[evt.type][evt.state_key] = {
+          content: evt.content,
+          sender: evt.sender,
+          origin_server_ts: evt.origin_server_ts,
+        };
+        changed = true;
+      });
+    });
+
+    if (changed) {
+      hydrateFromMatrix();
+    }
   },
 };
 
@@ -2303,7 +2422,7 @@ function handleLogin() {
       S.loading = false;
       return hydrateFromMatrix();
     })
-    .then(function() { render(); })
+    .then(function() { render(); matrix.startLongPoll(); })
     .catch(function(err) {
       var status = (err && err.status) || 0;
       var msg;
@@ -2327,7 +2446,7 @@ document.addEventListener('click', function(e) {
   var action = btn.dataset.action;
 
   if (action === 'nav') { setState({ currentView: btn.dataset.view, boardAddingMatter: false }); return; }
-  if (action === 'logout') { matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
+  if (action === 'logout') { matrix.stopLongPoll(); matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
   // Board
@@ -2608,8 +2727,10 @@ function dispatchFieldChange(action, key, val) {
     S.national.updatedAt = now();
     S.log.push({ op: 'UPDATE', target: 'national', payload: val, frame: { t: now(), field: key } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      var full = { iceDirector: S.national.iceDirector, iceDirectorTitle: S.national.iceDirectorTitle, dhsSecretary: S.national.dhsSecretary, attorneyGeneral: S.national.attorneyGeneral };
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); });
+      debouncedSync('national', function() {
+        var full = { iceDirector: S.national.iceDirector, iceDirectorTitle: S.national.iceDirectorTitle, dhsSecretary: S.national.dhsSecretary, attorneyGeneral: S.national.attorneyGeneral };
+        matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); });
+      });
     }
     return;
   }
@@ -2979,7 +3100,7 @@ document.addEventListener('DOMContentLoaded', function() {
         S.loading = false;
         return hydrateFromMatrix();
       })
-      .then(function() { render(); })
+      .then(function() { render(); matrix.startLongPoll(); })
       .catch(function(err) {
         console.error('Session restore failed:', err);
         var status = (err && err.status) || 0;
