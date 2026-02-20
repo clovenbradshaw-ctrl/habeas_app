@@ -355,6 +355,103 @@ function stateAbbrToName(abbr) {
   return US_STATES[abbr] || abbr;
 }
 
+var COURT_SEEDS = [
+  {d:'Middle District of Alabama',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ALMDC',e:'https://ecf.almd.uscourts.gov/'},
+  {d:'Northern District of Alabama',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ALNDC',e:'https://ecf.alnd.uscourts.gov/'},
+  {d:'Southern District of Alabama',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ALSDC',e:'https://ecf.alsd.uscourts.gov/'},
+  {d:'District of Alaska',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/AKDC',e:'https://ecf.akd.uscourts.gov/'},
+  {d:'District of Arizona',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/AZDC',e:'https://ecf.azd.uscourts.gov/'},
+  {d:'Eastern District of Arkansas',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/AREDC',e:'https://ecf.ared.uscourts.gov/'},
+  {d:'Western District of Arkansas',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ARWDC',e:'https://ecf.arwd.uscourts.gov/'},
+  {d:'Central District of California',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/CACDC',e:'https://ecf.cacd.uscourts.gov/'},
+  {d:'Eastern District of California',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/CAEDC',e:'https://ecf.caed.uscourts.gov/'},
+  {d:'Northern District of California',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/CANDC',e:'https://ecf.cand.uscourts.gov/'},
+  {d:'Southern District of California',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/CASDC',e:'https://ecf.casd.uscourts.gov/'},
+  {d:'District of Colorado',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/CODC',e:'https://ecf.cod.uscourts.gov/'},
+  {d:'District of Connecticut',ci:'02',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/CTDC',e:'https://ecf.ctd.uscourts.gov/'},
+  {d:'District of Delaware',ci:'03',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/DEDC',e:'https://ecf.ded.uscourts.gov/'},
+  {d:'District of Columbia',ci:'DC',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/DCDC',e:'https://ecf.dcd.uscourts.gov/'},
+  {d:'Middle District of Florida',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/FLMDC',e:'https://ecf.flmd.uscourts.gov/'},
+  {d:'Northern District of Florida',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/FLNDC',e:'https://ecf.flnd.uscourts.gov/'},
+  {d:'Southern District of Florida',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/FLSDC',e:'https://ecf.flsd.uscourts.gov/'},
+  {d:'Middle District of Georgia',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/GAMDC',e:'https://ecf.gamd.uscourts.gov/'},
+  {d:'Northern District of Georgia',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/GANDC',e:'https://ecf.gand.uscourts.gov/'},
+  {d:'Southern District of Georgia',ci:'11',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/GASDC',e:'https://ecf.gasd.uscourts.gov/'},
+  {d:'District of Guam',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/GUDC',e:'https://ecf.gud.uscourts.gov/'},
+  {d:'District of Hawaii',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/HIDC',e:'https://ecf.hid.uscourts.gov/'},
+  {d:'District of Idaho',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/IDDC',e:'https://ecf.idd.uscourts.gov/'},
+  {d:'Central District of Illinois',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ILCDC',e:'https://ecf.ilcd.uscourts.gov/'},
+  {d:'Northern District of Illinois',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ILNDC',e:'https://ecf.ilnd.uscourts.gov/'},
+  {d:'Southern District of Illinois',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ILSDC',e:'https://ecf.ilsd.uscourts.gov/'},
+  {d:'Northern District of Indiana',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/INNDC',e:'https://ecf.innd.uscourts.gov/'},
+  {d:'Southern District of Indiana',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/INSDC',e:'https://ecf.insd.uscourts.gov/'},
+  {d:'Northern District of Iowa',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/IANDC',e:'https://ecf.iand.uscourts.gov/'},
+  {d:'Southern District of Iowa',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/IASDC',e:'https://ecf.iasd.uscourts.gov/'},
+  {d:'District of Kansas',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/KSDC',e:'https://ecf.ksd.uscourts.gov/'},
+  {d:'Eastern District of Kentucky',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/KYEDC',e:'https://ecf.kyed.uscourts.gov/'},
+  {d:'Western District of Kentucky',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/KYWDC',e:'https://ecf.kywd.uscourts.gov/'},
+  {d:'Eastern District of Louisiana',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/LAEDC',e:'https://ecf.laed.uscourts.gov/'},
+  {d:'Middle District of Louisiana',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/LAMDC',e:'https://ecf.lamd.uscourts.gov/'},
+  {d:'Western District of Louisiana',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/LAWDC',e:'https://ecf.lawd.uscourts.gov/'},
+  {d:'District of Maine',ci:'01',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MEDC',e:'https://ecf.med.uscourts.gov/'},
+  {d:'District of Maryland',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MDDC',e:'https://ecf.mdd.uscourts.gov/'},
+  {d:'District of Massachusetts',ci:'01',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MADC',e:'https://ecf.mad.uscourts.gov/'},
+  {d:'Eastern District of Michigan',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MIEDC',e:'https://ecf.mied.uscourts.gov/'},
+  {d:'Western District of Michigan',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MIWDC',e:'https://ecf.miwd.uscourts.gov/'},
+  {d:'District of Minnesota',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MNDC',e:'https://ecf.mnd.uscourts.gov/'},
+  {d:'Northern District of Mississippi',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MSNDC',e:'https://ecf.msnd.uscourts.gov/'},
+  {d:'Southern District of Mississippi',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MSSDC',e:'https://ecf.mssd.uscourts.gov/'},
+  {d:'Eastern District of Missouri',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MOEDC',e:'https://ecf.moed.uscourts.gov/'},
+  {d:'Western District of Missouri',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MOWDC',e:'https://ecf.mowd.uscourts.gov/'},
+  {d:'District of Montana',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/MTDC',e:'https://ecf.mtd.uscourts.gov/'},
+  {d:'District of Nebraska',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NEDC',e:'https://ecf.ned.uscourts.gov/'},
+  {d:'District of Nevada',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NVDC',e:'https://ecf.nvd.uscourts.gov/'},
+  {d:'District of New Hampshire',ci:'01',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NHDC',e:'https://ecf.nhd.uscourts.gov/'},
+  {d:'District of New Jersey',ci:'03',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NJDC',e:'https://ecf.njd.uscourts.gov/'},
+  {d:'District of New Mexico',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NMDC',e:'https://ecf.nmd.uscourts.gov/'},
+  {d:'Eastern District of New York',ci:'02',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NYEDC',e:'https://ecf.nyed.uscourts.gov/'},
+  {d:'Northern District of New York',ci:'02',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NYNDC',e:'https://ecf.nynd.uscourts.gov/'},
+  {d:'Southern District of New York',ci:'02',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NYSDC',e:'https://ecf.nysd.uscourts.gov/'},
+  {d:'Western District of New York',ci:'02',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NYWDC',e:'https://ecf.nywd.uscourts.gov/'},
+  {d:'Eastern District of North Carolina',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NCEDC',e:'https://ecf.nced.uscourts.gov/'},
+  {d:'Middle District of North Carolina',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NCMDC',e:'https://ecf.ncmd.uscourts.gov/'},
+  {d:'Western District of North Carolina',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NCWDC',e:'https://ecf.ncwd.uscourts.gov/'},
+  {d:'District of North Dakota',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NDDC',e:'https://ecf.ndd.uscourts.gov/'},
+  {d:'District of the Northern Mariana Islands',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/NMIDC',e:'https://ecf.nmid.uscourts.gov/'},
+  {d:'Northern District of Ohio',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/OHNDC',e:'https://ecf.ohnd.uscourts.gov/'},
+  {d:'Southern District of Ohio',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/OHSDC',e:'https://ecf.ohsd.uscourts.gov/'},
+  {d:'Eastern District of Oklahoma',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/OKEDC',e:'https://ecf.oked.uscourts.gov/'},
+  {d:'Northern District of Oklahoma',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/OKNDC',e:'https://ecf.oknd.uscourts.gov/'},
+  {d:'Western District of Oklahoma',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/OKWDC',e:'https://ecf.okwd.uscourts.gov/'},
+  {d:'District of Oregon',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/ORDC',e:'https://ecf.ord.uscourts.gov/'},
+  {d:'Eastern District of Pennsylvania',ci:'03',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/PAEDC',e:'https://ecf.paed.uscourts.gov/'},
+  {d:'Middle District of Pennsylvania',ci:'03',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/PAMDC',e:'https://ecf.pamd.uscourts.gov/'},
+  {d:'Western District of Pennsylvania',ci:'03',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/PAWDC',e:'https://ecf.pawd.uscourts.gov/'},
+  {d:'District of Puerto Rico',ci:'01',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/PRDC',e:'https://ecf.prd.uscourts.gov/'},
+  {d:'District of Rhode Island',ci:'01',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/RIDC',e:'https://ecf.rid.uscourts.gov/'},
+  {d:'District of South Carolina',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/SCDC',e:'https://ecf.scd.uscourts.gov/'},
+  {d:'District of South Dakota',ci:'08',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/SDDC',e:'https://ecf.sdd.uscourts.gov/'},
+  {d:'Eastern District of Tennessee',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TNEDC',e:'https://ecf.tned.uscourts.gov/'},
+  {d:'Middle District of Tennessee',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TNMDC',e:'https://ecf.tnmd.uscourts.gov/'},
+  {d:'Western District of Tennessee',ci:'06',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TNWDC',e:'https://ecf.tnwd.uscourts.gov/'},
+  {d:'Eastern District of Texas',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TXEDC',e:'https://ecf.txed.uscourts.gov/'},
+  {d:'Northern District of Texas',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TXNDC',e:'https://ecf.txnd.uscourts.gov/'},
+  {d:'Southern District of Texas',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TXSDC',e:'https://ecf.txsd.uscourts.gov/'},
+  {d:'Western District of Texas',ci:'05',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TXWDC',e:'https://ecf.txwd.uscourts.gov/'},
+  {d:'District of Utah',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/UTDC',e:'https://ecf.utd.uscourts.gov/'},
+  {d:'District of Vermont',ci:'02',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/VTDC',e:'https://ecf.vtd.uscourts.gov/'},
+  {d:'District of the Virgin Islands',ci:'03',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/VIDC',e:'https://ecf.vid.uscourts.gov/'},
+  {d:'Eastern District of Virginia',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/VAEDC',e:'https://ecf.vaed.uscourts.gov/'},
+  {d:'Western District of Virginia',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/VAWDC',e:'https://ecf.vawd.uscourts.gov/'},
+  {d:'Eastern District of Washington',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WAEDC',e:'https://ecf.waed.uscourts.gov/'},
+  {d:'Western District of Washington',ci:'09',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WAWDC',e:'https://ecf.wawd.uscourts.gov/'},
+  {d:'Northern District of West Virginia',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WVNDC',e:'https://ecf.wvnd.uscourts.gov/'},
+  {d:'Southern District of West Virginia',ci:'04',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WVSDC',e:'https://ecf.wvsd.uscourts.gov/'},
+  {d:'Eastern District of Wisconsin',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WIEDC',e:'https://ecf.wied.uscourts.gov/'},
+  {d:'Western District of Wisconsin',ci:'07',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WIWDC',e:'https://ecf.wiwd.uscourts.gov/'},
+  {d:'District of Wyoming',ci:'10',p:'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/WYDC',e:'https://ecf.wyd.uscourts.gov/'}
+];
+
 // ── Field Definitions ────────────────────────────────────────────
 var FACILITY_FIELDS = [
   { key: 'name', label: 'Facility Name', ph: 'South Louisiana ICE Processing Center' },
@@ -367,7 +464,9 @@ var FACILITY_FIELDS = [
 var COURT_FIELDS = [
   { key: 'district', label: 'District', ph: 'Middle District of Tennessee' },
   { key: 'division', label: 'Division', ph: 'Nashville Division' },
-  { key: 'website', label: 'Court Website', ph: 'https://ecf.vaed.uscourts.gov/' },
+  { key: 'circuit', label: 'Circuit', ph: '6' },
+  { key: 'ecfUrl', label: 'CM/ECF Portal', ph: 'https://ecf.tnmd.uscourts.gov/', type: 'url' },
+  { key: 'pacerUrl', label: 'PACER Page', ph: 'https://pacer.uscourts.gov/file-case/court-cmecf-lookup/court/TNMDC', type: 'url' },
 ];
 var NATIONAL_FIELDS = [
   { key: 'iceDirector', label: 'ICE Director', ph: 'Tom Homan' },
@@ -1249,6 +1348,25 @@ function hydrateFromMatrix() {
         }
       });
 
+      // Seed all federal district courts so they are available in the directory for all users.
+      // Only adds seeds that haven't already been saved (or deleted) in Matrix.
+      COURT_SEEDS.forEach(function(seed) {
+        var seedId = 'seed-' + seed.d.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        // Skip if this court already exists in Matrix (active or deleted)
+        if (crtEvents[seedId]) return;
+        courts[seedId] = {
+          id: seedId,
+          district: seed.d,
+          division: '',
+          circuit: seed.ci,
+          ecfUrl: seed.e,
+          pacerUrl: seed.p,
+          createdBy: 'system',
+          updatedAt: new Date().toISOString(),
+          seeded: true
+        };
+      });
+
       // Attorney profiles
       var attEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_ATTORNEY);
       var attProfiles = {};
@@ -1830,9 +1948,9 @@ function exportFacilitiesCSV() {
 function exportCourtsCSV() {
   var items = Object.values(S.courts).filter(function(c) { return !c.archived; });
   items.sort(function(a, b) { return (a.district || '').localeCompare(b.district || ''); });
-  var headers = ['District', 'Division', 'Website'];
+  var headers = ['District', 'Division', 'Circuit', 'CM/ECF Portal', 'PACER Page'];
   var rows = items.map(function(c) {
-    return [c.district || '', c.division || '', c.website || ''];
+    return [c.district || '', c.division || '', c.circuit || '', c.ecfUrl || c.website || '', c.pacerUrl || ''];
   });
   downloadCSV(buildCSV(headers, rows), 'courts-' + new Date().toISOString().slice(0, 10) + '.csv');
 }
@@ -2806,7 +2924,7 @@ function renderDirectory() {
     if (isAdmin) h += '<button class="hbtn sm" data-action="export-courts-csv">&#8681; CSV</button>';
     if (isAdmin) h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-dir-archived"' + (S.dirShowArchived ? ' checked' : '') + '> Show archived</label>';
     h += '</div>';
-    h += '<p class="dir-desc">District + division combos with court filing website. Selecting a court on a matter fills all fields.</p>';
+    h += '<p class="dir-desc">Federal district courts with CM/ECF and PACER portal links. Selecting a court on a matter fills district + division.</p>';
     h += '<div class="dir-list">';
     var crtList = Object.values(S.courts).filter(function(c) { return S.dirShowArchived || !c.archived; });
     crtList.forEach(function(c) {
@@ -2836,8 +2954,14 @@ function renderDirectory() {
       } else if (!c.archived) {
         h += '<div class="dir-card-head">';
         h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
+        if (c.circuit) h += '<span class="dir-card-badge">Cir. ' + esc(c.circuit) + '</span>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
-        if (c.website) h += '<div class="dir-card-link"><a href="' + esc(c.website) + '" target="_blank" rel="noopener noreferrer">&#128279; ' + esc(c.website) + '</a></div>';
+        if (c.ecfUrl || c.website || c.pacerUrl) {
+          h += '<div class="dir-card-links">';
+          if (c.ecfUrl || c.website) h += '<a href="' + esc(c.ecfUrl || c.website) + '" target="_blank" rel="noopener" class="dir-link">CM/ECF Portal &#8599;</a>';
+          if (c.pacerUrl) h += '<a href="' + esc(c.pacerUrl) + '" target="_blank" rel="noopener" class="dir-link">PACER &#8599;</a>';
+          h += '</div>';
+        }
         h += htmlProvenanceBadge(c);
       }
       h += '</div>';
@@ -3116,11 +3240,17 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'court') {
-    h += htmlPicker('Select Court', Object.values(S.courts).filter(function(c) { return !c.archived; }), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'inline-add-court');
+    h += htmlPicker('Select Court', Object.values(S.courts).filter(function(c) { return !c.archived; }), function(c) { return c.district + (c.division ? ' \u2014 ' + c.division : '') + (c.circuit ? ' (Cir. ' + c.circuit + ')' : ''); }, pet._courtId || '', 'apply-court', 'inline-add-court');
     if (S.inlineAdd && S.inlineAdd.type === 'court') {
       h += htmlInlineAddForm('court');
     }
-    if (pet.courtWebsite) h += '<div class="dir-card-link" style="margin-bottom:6px"><a href="' + esc(pet.courtWebsite) + '" target="_blank" rel="noopener noreferrer">&#128279; Court Filing Portal</a></div>';
+    var selectedCourt = pet._courtId ? S.courts[pet._courtId] : null;
+    if (selectedCourt && (selectedCourt.ecfUrl || selectedCourt.website || selectedCourt.pacerUrl)) {
+      h += '<div class="ed-court-links">';
+      if (selectedCourt.ecfUrl || selectedCourt.website) h += '<a href="' + esc(selectedCourt.ecfUrl || selectedCourt.website) + '" target="_blank" rel="noopener" class="dir-link">CM/ECF Portal &#8599;</a>';
+      if (selectedCourt.pacerUrl) h += '<a href="' + esc(selectedCourt.pacerUrl) + '" target="_blank" rel="noopener" class="dir-link">PACER &#8599;</a>';
+      h += '</div>';
+    }
     h += htmlFieldGroup('Court (manual override)', COURT_FIELDS, pet, 'editor-pet-field');
     h += '<div style="height:8px"></div>';
     h += htmlPicker('Select Facility', Object.values(S.facilities).filter(function(f) { return !f.archived; }), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'inline-add-facility');
@@ -4030,7 +4160,7 @@ document.addEventListener('click', function(e) {
   if (action === 'add-court') {
     if (S.role !== 'admin') return;
     var id = uid();
-    var c = { id: id, district: '', division: '', website: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    var c = { id: id, district: '', division: '', circuit: '', ecfUrl: '', pacerUrl: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     S.courts[id] = c;
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
     setState({ editId: id, draft: Object.assign({}, c) });
@@ -4042,7 +4172,7 @@ document.addEventListener('click', function(e) {
     S.courts[c.id] = c;
     S.log.push({ op: 'UPDATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division, website: c.website || '' }, c.id)
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division, circuit: c.circuit || '', ecfUrl: c.ecfUrl || '', pacerUrl: c.pacerUrl || '' }, c.id)
         .then(function() { toast('ALT \u21CC court', 'success'); })
         .catch(function(e) { console.error(e); toast('ALT \u21CC court failed', 'error'); });
     }
@@ -4207,7 +4337,7 @@ document.addEventListener('click', function(e) {
   if (action === 'inline-add-court') {
     cleanupInlineAdd();
     var id = uid();
-    var c = { id: id, district: '', division: '', website: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
+    var c = { id: id, district: '', division: '', circuit: '', ecfUrl: '', pacerUrl: '', createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now() };
     setState({ inlineAdd: { type: 'court', id: id }, draft: Object.assign({}, c) });
     return;
   }
@@ -4244,12 +4374,12 @@ document.addEventListener('click', function(e) {
     S.courts[c.id] = c;
     S.log.push({ op: 'CREATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division, website: c.website || '' }, c.id)
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division, circuit: c.circuit || '', ecfUrl: c.ecfUrl || '', pacerUrl: c.pacerUrl || '' }, c.id)
         .then(function() { toast('Court added', 'success'); })
         .catch(function(e) { console.error(e); toast('Court save failed', 'error'); });
     }
     if (pet) {
-      Object.assign(pet, { district: c.district, division: c.division, courtWebsite: c.website || '', _courtId: c.id });
+      Object.assign(pet, { district: c.district, division: c.division, courtWebsite: c.ecfUrl || c.website || '', _courtId: c.id });
       S.log.push({ op: 'APPLY', target: 'court', payload: c.id, frame: { t: now(), petition: pet.id } });
       syncPetitionToMatrix(pet, 'Court');
     }
@@ -4520,7 +4650,7 @@ document.addEventListener('change', function(e) {
   if (action === 'apply-court') {
     var c = S.courts[val];
     if (c) {
-      Object.assign(pet, { district: c.district, division: c.division, courtWebsite: c.website || '', _courtId: val });
+      Object.assign(pet, { district: c.district, division: c.division, courtWebsite: c.ecfUrl || c.website || '', _courtId: val });
       S.log.push({ op: 'APPLY', target: 'court', payload: val, frame: { t: now(), petition: pet.id } });
       syncPetitionToMatrix(pet, 'Court');
       render();
