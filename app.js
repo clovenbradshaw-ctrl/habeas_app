@@ -614,10 +614,12 @@ var matrix = {
     }
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
-        if (timeoutId) clearTimeout(timeoutId);
+        // Don't clear timeout yet — keep it active to cover body reads (r.json/r.text).
+        // If the body stream stalls, the AbortController will cancel after 15s.
         if (!r.ok) {
           var httpStatus = r.status;
           return r.text().then(function(text) {
+            if (timeoutId) clearTimeout(timeoutId);
             try {
               var parsed = JSON.parse(text);
               // Always include HTTP status on error objects
@@ -631,7 +633,10 @@ var matrix = {
             }
           });
         }
-        return r.json();
+        return r.json().then(function(data) {
+          if (timeoutId) clearTimeout(timeoutId);
+          return data;
+        });
       })
       .catch(function(e) {
         if (timeoutId) clearTimeout(timeoutId);
@@ -659,9 +664,9 @@ var matrix = {
       signal: controller.signal,
     })
     .then(function(r) {
-      clearTimeout(timeoutId);
       if (!r.ok) {
         return r.text().then(function(text) {
+          clearTimeout(timeoutId);
           try {
             throw JSON.parse(text);
           } catch(e) {
@@ -676,6 +681,7 @@ var matrix = {
       return r.json();
     })
     .then(function(data) {
+      clearTimeout(timeoutId);
       matrix.accessToken = data.access_token;
       matrix.userId = data.user_id;
       matrix.deviceId = data.device_id;
@@ -3431,14 +3437,26 @@ function handleLogin() {
   errEl.style.display = 'none';
 
   matrix.login(CONFIG.MATRIX_SERVER_URL, username, password)
-    .then(function() { return matrix.initialSync(); })
     .then(function() {
+      // Login succeeded — show "Connecting..." while we sync and hydrate.
+      // This prevents the "Signing in..." button from appearing stuck.
       S.authenticated = true;
-      S.loading = false;
+      S.loading = true;
+      render();
+      return matrix.initialSync();
+    })
+    .then(function() {
       return hydrateFromMatrix();
     })
-    .then(function() { render(); matrix.startLongPoll(); })
+    .then(function() {
+      S.loading = false;
+      render();
+      matrix.startLongPoll();
+    })
     .catch(function(err) {
+      // Reset auth state so the login form re-appears
+      S.authenticated = false;
+      S.loading = false;
       var status = (err && err.status) || 0;
       var msg;
       if (status === 502 || status === 503 || status === 504) {
@@ -3448,10 +3466,15 @@ function handleLogin() {
       } else {
         msg = (err && err.error) || (err && err.message) || 'Login failed. Check your credentials.';
       }
-      errEl.textContent = msg;
-      errEl.style.display = 'block';
-      btnEl.disabled = false;
-      btnEl.textContent = 'Sign In';
+      render();
+      // Show error on the freshly rendered login form
+      setTimeout(function() {
+        var newErrEl = document.getElementById('login-error');
+        if (newErrEl) {
+          newErrEl.textContent = msg;
+          newErrEl.style.display = 'block';
+        }
+      }, 0);
     });
 }
 
