@@ -271,8 +271,13 @@ var matrix = {
   _api: function(method, path, body) {
     var opts = { method: method, headers: this._headers() };
     if (body) opts.body = JSON.stringify(body);
+    // Abort fetch after 15 seconds to avoid hanging on unreachable servers
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+    opts.signal = controller.signal;
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
+        clearTimeout(timeoutId);
         if (!r.ok) {
           return r.text().then(function(text) {
             try {
@@ -288,13 +293,19 @@ var matrix = {
         return r.json();
       })
       .catch(function(e) {
+        clearTimeout(timeoutId);
         if (e && e.errcode) throw e;
+        if (e && e.name === 'AbortError') {
+          throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+        }
         throw { errcode: 'M_NETWORK', error: e.message || 'Network error', status: 0 };
       });
   },
 
   login: function(baseUrl, username, password) {
     this.baseUrl = baseUrl;
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
     return fetch(baseUrl + '/_matrix/client/v3/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -304,8 +315,10 @@ var matrix = {
         password: password,
         initial_device_display_name: 'Amino Habeas App',
       }),
+      signal: controller.signal,
     })
     .then(function(r) {
+      clearTimeout(timeoutId);
       if (!r.ok) {
         return r.text().then(function(text) {
           try {
@@ -327,6 +340,13 @@ var matrix = {
       matrix.deviceId = data.device_id;
       matrix.saveSession();
       return data;
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      if (e && e.name === 'AbortError') {
+        throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+      }
+      throw e;
     });
   },
 
@@ -1724,6 +1744,7 @@ document.addEventListener('change', function(e) {
 
 // ── Initialization ───────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+  render(); // Show loading state immediately
   if (matrix.loadSession()) {
     matrix.initialSync()
       .then(function() {
