@@ -5292,8 +5292,12 @@ function handleAdminSaveUser() {
     }, mxid);
   }
 
+  // Track results from independent operations
+  var stateUpdateError = null;
+  var passwordResetDone = false;
+
   // Update EVT_USER state event, auto-promoting room permissions if needed
-  var chain = setUserRole().catch(function(e) {
+  var roleChain = setUserRole().catch(function(e) {
     if (e && e.status === 403 && S.isSynapseAdmin) {
       return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
         return setUserRole();
@@ -5303,7 +5307,7 @@ function handleAdminSaveUser() {
   });
 
   // Update power levels in both rooms
-  chain = chain.then(function() {
+  roleChain = roleChain.then(function() {
     return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
       console.warn('Set org PL failed:', e);
     });
@@ -5314,30 +5318,70 @@ function handleAdminSaveUser() {
         console.warn('Set templates PL failed:', e);
       });
     }
+  })
+  .catch(function(e) {
+    stateUpdateError = e;
+    console.warn('State/PL update failed:', e);
   });
 
-  // Optionally reset password
+  // Password reset runs independently via Synapse admin API — not chained to state events
+  var passwordChain = Promise.resolve();
   if (d.password && d.password.trim()) {
-    chain = chain.then(function() {
-      return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
-        password: d.password,
-      });
+    passwordChain = matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+      password: d.password,
+    }).then(function() {
+      passwordResetDone = true;
     });
   }
 
-  chain.then(function() {
-    S.users[mxid] = Object.assign({}, S.users[mxid], {
-      displayName: displayName,
-      role: role,
-      updatedAt: now(),
+  // Wait for both operations to settle
+  Promise.all([roleChain, passwordChain.catch(function(e) { return e; })])
+    .then(function(results) {
+      var pwErr = (d.password && d.password.trim() && !passwordResetDone) ? results[1] : null;
+
+      // Both failed
+      if (stateUpdateError && pwErr) {
+        var msg = 'Password reset failed: ' + ((pwErr && pwErr.error) || 'unknown error') +
+          '. Role update also failed: ' + ((stateUpdateError && stateUpdateError.error) || 'unknown error');
+        showAdminError('admin-edit-error', msg);
+        return;
+      }
+
+      // Only password reset failed
+      if (pwErr) {
+        var msg = 'Password reset failed: ' + ((pwErr && pwErr.error) || 'unknown error') +
+          '. Other changes were saved.';
+        showAdminError('admin-edit-error', msg);
+      }
+
+      // Update local state for successful role/display changes
+      if (!stateUpdateError) {
+        S.users[mxid] = Object.assign({}, S.users[mxid], {
+          displayName: displayName,
+          role: role,
+          updatedAt: now(),
+        });
+        S.log.push({ op: 'UPDATE', target: mxid, payload: role, frame: { t: now(), entity: 'user' } });
+      }
+
+      // If password reset succeeded (or wasn't requested), and state update may have failed
+      if (stateUpdateError && !pwErr) {
+        // Password was reset successfully but state update failed
+        if (passwordResetDone) {
+          toast('Password reset successfully. Role/display update failed — try refreshing.', 'warning');
+        } else {
+          var msg = (stateUpdateError && stateUpdateError.error) || 'Failed to update user.';
+          showAdminError('admin-edit-error', msg);
+          return;
+        }
+      }
+
+      if (passwordResetDone && !stateUpdateError) {
+        toast('User updated and password reset successfully.', 'success');
+      }
+
+      setState({ adminEditUserId: null, adminDraft: {} });
     });
-    S.log.push({ op: 'UPDATE', target: mxid, payload: role, frame: { t: now(), entity: 'user' } });
-    setState({ adminEditUserId: null, adminDraft: {} });
-  })
-  .catch(function(err) {
-    var msg = (err && err.error) || 'Failed to update user.';
-    showAdminError('admin-edit-error', msg);
-  });
 }
 
 function handleAdminDeactivateUser(mxid) {
@@ -5388,8 +5432,11 @@ function handleAdminAdoptUser(mxid) {
     }, mxid);
   }
 
-  // Step 1: Store role in !org room as EVT_USER state event, auto-promote if needed
-  setUserRole().catch(function(e) {
+  var stateUpdateError = null;
+  var passwordResetDone = false;
+
+  // Role/invite/PL chain — errors are captured, not thrown
+  var roleChain = setUserRole().catch(function(e) {
     if (e && e.status === 403 && S.isSynapseAdmin) {
       return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
         return setUserRole();
@@ -5398,14 +5445,12 @@ function handleAdminAdoptUser(mxid) {
     throw e;
   })
   .then(function() {
-    // Step 2: Invite to !org room (may already be a member)
     return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
       if (e.errcode === 'M_FORBIDDEN') return;
       console.warn('Invite to org room failed:', e);
     });
   })
   .then(function() {
-    // Step 3: Invite to !templates room
     if (matrix.templatesRoomId) {
       return matrix.inviteUser(matrix.templatesRoomId, mxid).catch(function(e) {
         if (e.errcode === 'M_FORBIDDEN') return;
@@ -5414,44 +5459,74 @@ function handleAdminAdoptUser(mxid) {
     }
   })
   .then(function() {
-    // Step 4: Set power levels in !org room
     return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
       console.warn('Set org PL failed:', e);
     });
   })
   .then(function() {
-    // Step 5: Set power levels in !templates room
     if (matrix.templatesRoomId) {
       return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
         console.warn('Set templates PL failed:', e);
       });
     }
   })
-  .then(function() {
-    // Step 6: Reset password if provided
-    if (d.password && d.password.trim()) {
-      return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
-        password: d.password,
-      });
-    }
-  })
-  .then(function() {
-    S.users[mxid] = Object.assign({}, S.users[mxid], {
-      displayName: displayName,
-      role: role,
-      active: true,
-      managed: true,
-      createdBy: S.currentUser,
-      updatedAt: now(),
-    });
-    S.log.push({ op: 'ADOPT', target: mxid, payload: displayName, frame: { t: now(), entity: 'user' } });
-    setState({ adminEditUserId: null, adminDraft: {} });
-    toast('User ' + displayName + ' adopted successfully', 'success');
-  })
-  .catch(function(err) {
-    var msg = (err && err.error) || 'Failed to adopt user.';
-    showAdminError('admin-adopt-error', msg);
+  .catch(function(e) {
+    stateUpdateError = e;
+    console.warn('Adopt state/PL update failed:', e);
   });
+
+  // Password reset runs independently via Synapse admin API
+  var passwordChain = Promise.resolve();
+  if (d.password && d.password.trim()) {
+    passwordChain = matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+      password: d.password,
+    }).then(function() {
+      passwordResetDone = true;
+    });
+  }
+
+  Promise.all([roleChain, passwordChain.catch(function(e) { return e; })])
+    .then(function(results) {
+      var pwErr = (d.password && d.password.trim() && !passwordResetDone) ? results[1] : null;
+
+      if (stateUpdateError && pwErr) {
+        var msg = 'Adopt failed. Password: ' + ((pwErr && pwErr.error) || 'unknown error') +
+          '. Role: ' + ((stateUpdateError && stateUpdateError.error) || 'unknown error');
+        showAdminError('admin-adopt-error', msg);
+        return;
+      }
+
+      if (pwErr) {
+        showAdminError('admin-adopt-error', 'Password reset failed: ' + ((pwErr && pwErr.error) || 'unknown error') + '. Other changes were saved.');
+      }
+
+      if (!stateUpdateError) {
+        S.users[mxid] = Object.assign({}, S.users[mxid], {
+          displayName: displayName,
+          role: role,
+          active: true,
+          managed: true,
+          createdBy: S.currentUser,
+          updatedAt: now(),
+        });
+        S.log.push({ op: 'ADOPT', target: mxid, payload: displayName, frame: { t: now(), entity: 'user' } });
+      }
+
+      if (stateUpdateError && !pwErr) {
+        if (passwordResetDone) {
+          toast('Password reset successfully. Role setup failed — try refreshing.', 'warning');
+        } else {
+          showAdminError('admin-adopt-error', (stateUpdateError && stateUpdateError.error) || 'Failed to adopt user.');
+          return;
+        }
+      }
+
+      if (!stateUpdateError) {
+        toast('User ' + displayName + ' adopted successfully', 'success');
+      }
+
+      setState({ adminEditUserId: null, adminDraft: {} });
+    });
 }
 
 // ── Flush pending syncs on visibility change / page unload ──────
