@@ -48,6 +48,33 @@ function esc(s) {
   return d.innerHTML;
 }
 
+// ── Toast Notifications ─────────────────────────────────────────
+function toast(message, type) {
+  type = type || 'info';
+  var container = document.getElementById('toast-container');
+  if (!container) return;
+  var el = document.createElement('div');
+  el.className = 'toast toast-' + type;
+  el.textContent = message;
+  container.appendChild(el);
+  el.offsetHeight; // force reflow before adding .show
+  el.classList.add('show');
+  var duration = type === 'error' ? 6000 : 3000;
+  var timer = setTimeout(function() { dismissToast(el); }, duration);
+  el.addEventListener('click', function() {
+    clearTimeout(timer);
+    dismissToast(el);
+  });
+}
+function dismissToast(el) {
+  if (!el || !el.parentNode) return;
+  el.classList.remove('show');
+  el.classList.add('hide');
+  setTimeout(function() {
+    if (el.parentNode) el.parentNode.removeChild(el);
+  }, 300);
+}
+
 var STAGES = ['drafted', 'reviewed', 'submitted'];
 var SM = {
   drafted:   { color: '#c9a040', bg: '#faf5e4', label: 'Drafted' },
@@ -915,7 +942,7 @@ function syncClientToMatrix(client) {
     apprehensionDate: client.apprehensionDate,
     criminalHistory: client.criminalHistory,
     communityTies: client.communityTies,
-  }, '').catch(function(e) { console.error('Client sync failed:', e); });
+  }, '').catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
 }
 
 // Create a Matrix room for a client and sync initial data
@@ -977,7 +1004,7 @@ function createClientRoom(clientId) {
         syncPetitionToMatrix(p);
         if (p.blocks && p.blocks.length > 0) {
           matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
-            .catch(function(e) { console.error('Block sync failed:', e); });
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
         }
       }
     });
@@ -987,11 +1014,12 @@ function createClientRoom(clientId) {
   }).catch(function(e) {
     console.error('Failed to create client room:', e);
     delete _pendingRoomCreations[clientId];
+    toast('INS \u2295 client room failed', 'error');
   });
   return _pendingRoomCreations[clientId];
 }
 
-function syncPetitionToMatrix(pet) {
+function syncPetitionToMatrix(pet, label) {
   if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
   return matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
     clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
@@ -1004,7 +1032,13 @@ function syncPetitionToMatrix(pet) {
     _facilityId: pet._facilityId, _courtId: pet._courtId,
     _att1Id: pet._att1Id, _att2Id: pet._att2Id,
     templateId: pet.templateId,
-  }, pet.id).catch(function(e) { console.error('Petition sync failed:', e); });
+  }, pet.id).then(function(data) {
+    if (label) toast('CON \u22C8 ' + label, 'success');
+    return data;
+  }).catch(function(e) {
+    console.error('Petition sync failed:', e);
+    toast(label ? 'CON \u22C8 ' + label + ' failed' : 'ALT \u21CC petition sync failed', 'error');
+  });
 }
 
 // ── Block / Variable HTML helpers ────────────────────────────────
@@ -1777,7 +1811,7 @@ function attachBlockListeners() {
         S.log.push({ op: 'REVISE', target: bid, payload: nc, frame: { t: now(), prior: block.content, petition: pet.id } });
         // Sync to matrix
         if (matrix.isReady() && pet.roomId) {
-          matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: newBlocks }, pet.id).catch(function(e) { console.error('Block sync failed:', e); });
+          matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: newBlocks }, pet.id).catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
         }
       }
       // Re-render the HTML with vars
@@ -1904,7 +1938,10 @@ document.addEventListener('click', function(e) {
     S.log.push({ op: 'STAGE', target: btn.dataset.id, payload: next, frame: { t: t, prior: pet.stage } });
     S.petitions[pet.id] = Object.assign({}, pet, { stage: next, stageHistory: pet.stageHistory.concat([{ stage: next, at: t }]) });
     if (matrix.isReady() && pet.roomId) {
-      matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: next, stageHistory: S.petitions[pet.id].stageHistory }), pet.id).catch(function(e) { console.error(e); });
+      var stageLabel = SM[next] ? SM[next].label : next;
+      matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: next, stageHistory: S.petitions[pet.id].stageHistory }), pet.id)
+        .then(function() { toast('ALT \u21CC stage \u2192 ' + stageLabel, 'success'); })
+        .catch(function(e) { console.error(e); toast('ALT \u21CC stage change failed', 'error'); });
     }
     render();
     return;
@@ -1941,7 +1978,7 @@ document.addEventListener('click', function(e) {
     if (pet.roomId && matrix.isReady()) {
       syncPetitionToMatrix(pet);
       matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
-        .catch(function(e) { console.error('Block sync failed:', e); });
+        .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
     }
     return;
   }
@@ -2008,7 +2045,9 @@ document.addEventListener('click', function(e) {
     S.facilities[f.id] = f;
     S.log.push({ op: 'UPDATE', target: f.id, payload: f.name, frame: { t: now(), entity: 'facility' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, f.id).catch(function(e) { console.error(e); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, f.id)
+        .then(function() { toast('ALT \u21CC facility', 'success'); })
+        .catch(function(e) { console.error(e); toast('ALT \u21CC facility failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -2019,7 +2058,9 @@ document.addEventListener('click', function(e) {
     delete S.facilities[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'facility' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { deleted: true }, id).catch(function(e) { console.error(e); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { deleted: true }, id)
+        .then(function() { toast('NUL \u2205 facility', 'success'); })
+        .catch(function(e) { console.error(e); toast('NUL \u2205 facility failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -2039,7 +2080,9 @@ document.addEventListener('click', function(e) {
     S.courts[c.id] = c;
     S.log.push({ op: 'UPDATE', target: c.id, payload: c.district, frame: { t: now(), entity: 'court' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division }, c.id).catch(function(e) { console.error(e); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division }, c.id)
+        .then(function() { toast('ALT \u21CC court', 'success'); })
+        .catch(function(e) { console.error(e); toast('ALT \u21CC court failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -2050,7 +2093,9 @@ document.addEventListener('click', function(e) {
     delete S.courts[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { deleted: true }, id).catch(function(e) { console.error(e); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { deleted: true }, id)
+        .then(function() { toast('NUL \u2205 court', 'success'); })
+        .catch(function(e) { console.error(e); toast('NUL \u2205 court failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -2070,7 +2115,9 @@ document.addEventListener('click', function(e) {
     S.attProfiles[a.id] = a;
     S.log.push({ op: 'UPDATE', target: a.id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice }, a.id).catch(function(e) { console.error(e); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice }, a.id)
+        .then(function() { toast('ALT \u21CC attorney', 'success'); })
+        .catch(function(e) { console.error(e); toast('ALT \u21CC attorney failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -2081,7 +2128,9 @@ document.addEventListener('click', function(e) {
     delete S.attProfiles[id];
     S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'attorney_profile' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { deleted: true }, id).catch(function(e) { console.error(e); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { deleted: true }, id)
+        .then(function() { toast('NUL \u2205 attorney', 'success'); })
+        .catch(function(e) { console.error(e); toast('NUL \u2205 attorney failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -2155,10 +2204,10 @@ document.addEventListener('input', function(e) {
     S.national.updatedAt = now();
     S.log.push({ op: 'UPDATE', target: 'national', payload: val, frame: { t: now(), field: key } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      var data = {};
-      data[key] = val;
-      var full = { iceDirector: S.national.iceDirector, iceDirectorTitle: S.national.iceDirectorTitle, dhsSecretary: S.national.dhsSecretary, attorneyGeneral: S.national.attorneyGeneral };
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); });
+      debouncedSync('national', function() {
+        var full = { iceDirector: S.national.iceDirector, iceDirectorTitle: S.national.iceDirectorTitle, dhsSecretary: S.national.dhsSecretary, attorneyGeneral: S.national.attorneyGeneral };
+        matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); toast('ALT \u21CC national defaults sync failed', 'error'); });
+      });
     }
     return;
   }
@@ -2231,7 +2280,7 @@ document.addEventListener('change', function(e) {
     if (c) {
       Object.assign(pet, { district: c.district, division: c.division, _courtId: val });
       S.log.push({ op: 'APPLY', target: 'court', payload: val, frame: { t: now(), petition: pet.id } });
-      syncPetitionToMatrix(pet);
+      syncPetitionToMatrix(pet, 'Court');
       render();
     }
     return;
@@ -2241,7 +2290,7 @@ document.addEventListener('change', function(e) {
     if (f) {
       Object.assign(pet, { facilityName: f.name, facilityCity: f.city, facilityState: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, _facilityId: val });
       S.log.push({ op: 'APPLY', target: 'facility', payload: val, frame: { t: now(), petition: pet.id } });
-      syncPetitionToMatrix(pet);
+      syncPetitionToMatrix(pet, 'Facility');
       render();
     }
     return;
@@ -2249,14 +2298,14 @@ document.addEventListener('change', function(e) {
   if (action === 'apply-att1') {
     pet._att1Id = val;
     S.log.push({ op: 'APPLY', target: 'att1', payload: val, frame: { t: now(), petition: pet.id } });
-    syncPetitionToMatrix(pet);
+    syncPetitionToMatrix(pet, 'Attorney 1');
     render();
     return;
   }
   if (action === 'apply-att2') {
     pet._att2Id = val;
     S.log.push({ op: 'APPLY', target: 'att2', payload: val, frame: { t: now(), petition: pet.id } });
-    syncPetitionToMatrix(pet);
+    syncPetitionToMatrix(pet, 'Attorney 2');
     render();
     return;
   }
