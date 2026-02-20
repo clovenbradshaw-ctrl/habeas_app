@@ -1891,6 +1891,7 @@ function updateFieldLocally(action, key, val) {
     S.national[key] = val;
     S.national.updatedBy = S.currentUser;
     S.national.updatedAt = now();
+    refreshVariableSpans();
     return;
   }
   if (action === 'client-field') {
@@ -1903,6 +1904,7 @@ function updateFieldLocally(action, key, val) {
       if (!hasOwnership) return;
     }
     client[key] = val;
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-client-field') {
@@ -1912,6 +1914,7 @@ function updateFieldLocally(action, key, val) {
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-pet-field') {
@@ -1919,6 +1922,7 @@ function updateFieldLocally(action, key, val) {
     if (!pet) return;
     if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     pet[key] = val;
+    refreshVariableSpans();
     return;
   }
 }
@@ -2066,6 +2070,32 @@ function extractBlockContent(el) {
     s.replaceWith('{{' + s.dataset.var + '}}');
   });
   return c.textContent || '';
+}
+
+// Update all variable spans in the document in-place (no full re-render).
+// Called on every keystroke while editing sidebar fields so the document
+// preview instantly reflects the new values.
+function refreshVariableSpans() {
+  if (S.currentView !== 'editor') return;
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) return;
+  var client = S.clients[pet.clientId] || {};
+  var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : {};
+  var att2 = pet._att2Id ? S.attProfiles[pet._att2Id] : {};
+  var vars = buildVarMap(client, pet, att1, att2, S.national);
+  var spans = document.querySelectorAll('[data-var]');
+  for (var i = 0; i < spans.length; i++) {
+    var span = spans[i];
+    var k = span.dataset.var;
+    var v = vars[k] ? vars[k].trim() : '';
+    if (v) {
+      span.textContent = v;
+      span.className = 'vf';
+    } else {
+      span.textContent = '\u27E8' + k + '\u27E9';
+      span.className = 've';
+    }
+  }
 }
 
 // ── Component Renderers ──────────────────────────────────────────
@@ -3795,6 +3825,7 @@ function dispatchFieldChange(action, key, val) {
         matrix.sendStateEvent(matrix.orgRoomId, EVT_NATIONAL, full, '').catch(function(e) { console.error(e); toast('ALT \u21CC national defaults sync failed', 'error'); });
       });
     }
+    refreshVariableSpans();
     return;
   }
   if (action === 'client-field') {
@@ -3819,6 +3850,7 @@ function dispatchFieldChange(action, key, val) {
         createClientRoom(client.id);
       }
     });
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-client-field') {
@@ -3840,6 +3872,7 @@ function dispatchFieldChange(action, key, val) {
         createClientRoom(client.id);
       }
     });
+    refreshVariableSpans();
     return;
   }
   if (action === 'editor-pet-field') {
@@ -3849,6 +3882,7 @@ function dispatchFieldChange(action, key, val) {
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
+    refreshVariableSpans();
     return;
   }
   if (action === 'page-settings') {
