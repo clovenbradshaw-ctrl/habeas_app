@@ -1058,6 +1058,26 @@ function hydrateFromMatrix() {
         }
       });
 
+      // Seed all ICE facilities so they are available in the directory for all users.
+      // Only adds seeds that haven't already been saved (or deleted) in Matrix.
+      ICE_FACILITY_SEEDS.forEach(function(seed) {
+        var seedId = 'seed-' + seed.n.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+        // Skip if this facility already exists in Matrix (active or deleted)
+        if (facEvents[seedId]) return;
+        facilities[seedId] = {
+          id: seedId,
+          name: seed.n,
+          city: seed.c,
+          state: stateAbbrToName(seed.s),
+          warden: '',
+          fieldOfficeName: seed.fo,
+          fieldOfficeDirector: '',
+          createdBy: 'system',
+          updatedAt: new Date().toISOString(),
+          seeded: true
+        };
+      });
+
       // Courts
       var crtEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_COURT);
       var courts = {};
