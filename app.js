@@ -1034,6 +1034,30 @@ function ensureRoom(alias, name) {
     });
 }
 
+// ── Admin Auto-Invite Helpers ────────────────────────────────────
+function getAdminMxids() {
+  var admins = [];
+  Object.keys(S.users).forEach(function(mxid) {
+    if (S.users[mxid].role === 'admin' && S.users[mxid].active !== false && mxid !== matrix.userId) {
+      admins.push(mxid);
+    }
+  });
+  return admins;
+}
+
+function inviteAdminsToRoom(roomId) {
+  var admins = getAdminMxids();
+  admins.forEach(function(mxid) {
+    matrix.inviteUser(roomId, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(roomId, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite/set PL for admin', mxid, 'in room', roomId, e);
+      });
+  });
+}
+
 // ── Hydration from Matrix ────────────────────────────────────────
 function hydrateFromMatrix() {
   // Discover or auto-create org and templates rooms
@@ -1513,6 +1537,9 @@ function createClientRoom(clientId) {
       }
     });
     console.log('Created Matrix room for client', clientId, '→', roomId);
+    if (matrix.isReady()) {
+      inviteAdminsToRoom(roomId);
+    }
     delete _pendingRoomCreations[clientId];
     return roomId;
   }).catch(function(e) {
@@ -1783,6 +1810,13 @@ function renderBoard() {
 
   // Add Matter button / inline client picker
   var clientList = Object.values(S.clients);
+  if (S.role !== 'admin') {
+    var myBoardClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.createdBy === S.currentUser) myBoardClientIds[p.clientId] = true;
+    });
+    clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
+  }
   if (S.boardAddingMatter && clientList.length > 0) {
     h += '<div class="board-add-matter">';
     h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
@@ -2434,6 +2468,7 @@ function attachBlockListeners() {
       var bid = el.dataset.blockId;
       var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
       if (!pet) return;
+      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
       var block = pet.blocks.find(function(b) { return b.id === bid; });
       if (!block) return;
       var nc = extractBlockContent(el);
@@ -2653,6 +2688,7 @@ document.addEventListener('click', function(e) {
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     var idx = STAGES.indexOf(pet.stage);
     var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
     if (ni < 0 || ni >= STAGES.length) return;
@@ -2938,6 +2974,12 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
@@ -2953,6 +2995,7 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
@@ -2969,6 +3012,7 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
