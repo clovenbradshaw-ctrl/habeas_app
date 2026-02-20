@@ -557,6 +557,7 @@ var matrix = {
   _syncToken: null,
   _polling: false,
   _pollAbort: null,
+  _flushing: false,
 
   _headers: function() {
     return {
@@ -568,13 +569,19 @@ var matrix = {
   _api: function(method, path, body) {
     var opts = { method: method, headers: this._headers() };
     if (body) opts.body = JSON.stringify(body);
-    // Abort fetch after 15 seconds to avoid hanging on unreachable servers
-    var controller = new AbortController();
-    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
-    opts.signal = controller.signal;
+    var controller, timeoutId;
+    if (this._flushing) {
+      // During page unload flush: use keepalive so browser doesn't cancel the request
+      opts.keepalive = true;
+    } else {
+      // Normal operation: abort fetch after 15 seconds to avoid hanging
+      controller = new AbortController();
+      timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+      opts.signal = controller.signal;
+    }
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (!r.ok) {
           var httpStatus = r.status;
           return r.text().then(function(text) {
@@ -594,7 +601,7 @@ var matrix = {
         return r.json();
       })
       .catch(function(e) {
-        clearTimeout(timeoutId);
+        if (timeoutId) clearTimeout(timeoutId);
         if (e && e.errcode) throw e;
         if (e && e.name === 'AbortError') {
           throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
@@ -918,16 +925,19 @@ var matrix = {
       }
 
       events.forEach(function(evt) {
-        if (evt.sender === self.userId) return;
         if (!self.rooms[roomId].stateEvents[evt.type]) {
           self.rooms[roomId].stateEvents[evt.type] = {};
         }
+        var existing = self.rooms[roomId].stateEvents[evt.type][evt.state_key];
         self.rooms[roomId].stateEvents[evt.type][evt.state_key] = {
           content: evt.content,
           sender: evt.sender,
           origin_server_ts: evt.origin_server_ts,
         };
-        changed = true;
+        // Trigger hydrateFromMatrix for non-self events or newly appearing state keys
+        if (evt.sender !== self.userId || !existing) {
+          changed = true;
+        }
       });
     });
 
@@ -1100,6 +1110,30 @@ function mergeServerUsers(serverUsers) {
   });
 
   return merged;
+}
+
+// ── Admin Auto-Invite Helpers ────────────────────────────────────
+function getAdminMxids() {
+  var admins = [];
+  Object.keys(S.users).forEach(function(mxid) {
+    if (S.users[mxid].role === 'admin' && S.users[mxid].active !== false && mxid !== matrix.userId) {
+      admins.push(mxid);
+    }
+  });
+  return admins;
+}
+
+function inviteAdminsToRoom(roomId) {
+  var admins = getAdminMxids();
+  admins.forEach(function(mxid) {
+    matrix.inviteUser(roomId, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(roomId, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite/set PL for admin', mxid, 'in room', roomId, e);
+      });
+  });
 }
 
 // ── Hydration from Matrix ────────────────────────────────────────
@@ -1537,11 +1571,14 @@ function buildExportFromTemplate(vars, forWord) {
 // ── Matrix sync helpers ─────────────────────────────────────────
 var _syncTimers = {};
 function debouncedSync(key, fn) {
-  if (_syncTimers[key]) clearTimeout(_syncTimers[key]);
-  _syncTimers[key] = setTimeout(fn, 1000);
+  if (_syncTimers[key]) clearTimeout(_syncTimers[key].timer);
+  _syncTimers[key] = {
+    timer: setTimeout(function() { delete _syncTimers[key]; fn(); }, 1000),
+    fn: fn
+  };
 }
 
-function syncClientToMatrix(client) {
+function syncClientToMatrix(client, label) {
   if (!matrix.isReady() || !client.roomId) return Promise.resolve();
   return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
     id: client.id, name: client.name, country: client.country,
@@ -1551,7 +1588,10 @@ function syncClientToMatrix(client) {
     apprehensionDate: client.apprehensionDate,
     criminalHistory: client.criminalHistory,
     communityTies: client.communityTies,
-  }, '').catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
+  }, '').then(function(data) {
+    if (label) toast('CON \u22C8 ' + label, 'success');
+    return data;
+  }).catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
 }
 
 // Create a Matrix room for a client and sync initial data
@@ -1610,7 +1650,7 @@ function createClientRoom(clientId) {
       if (p.clientId === clientId && !p.roomId) {
         p.roomId = roomId;
         // Sync any pending petitions now that we have a roomId
-        syncPetitionToMatrix(p);
+        syncPetitionToMatrix(p, 'petition');
         if (p.blocks && p.blocks.length > 0) {
           matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
             .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
@@ -1618,6 +1658,9 @@ function createClientRoom(clientId) {
       }
     });
     console.log('Created Matrix room for client', clientId, '→', roomId);
+    if (matrix.isReady()) {
+      inviteAdminsToRoom(roomId);
+    }
     delete _pendingRoomCreations[clientId];
     return roomId;
   }).catch(function(e) {
@@ -1888,6 +1931,13 @@ function renderBoard() {
 
   // Add Matter button / inline client picker
   var clientList = Object.values(S.clients);
+  if (S.role !== 'admin') {
+    var myBoardClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.createdBy === S.currentUser) myBoardClientIds[p.clientId] = true;
+    });
+    clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
+  }
   if (S.boardAddingMatter && clientList.length > 0) {
     h += '<div class="board-add-matter">';
     h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
@@ -2611,6 +2661,7 @@ function attachBlockListeners() {
       var bid = el.dataset.blockId;
       var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
       if (!pet) return;
+      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
       var block = pet.blocks.find(function(b) { return b.id === bid; });
       if (!block) return;
       var nc = extractBlockContent(el);
@@ -2830,6 +2881,7 @@ document.addEventListener('click', function(e) {
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     var idx = STAGES.indexOf(pet.stage);
     var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
     if (ni < 0 || ni >= STAGES.length) return;
@@ -2855,7 +2907,9 @@ document.addEventListener('click', function(e) {
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
     setState({ selectedClientId: id });
     // Create a Matrix room for the client in the background
-    createClientRoom(id);
+    createClientRoom(id).then(function(roomId) {
+      if (roomId) toast('INS \u2295 client', 'success');
+    });
     return;
   }
   if (action === 'create-petition') {
@@ -2873,12 +2927,23 @@ document.addEventListener('click', function(e) {
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
-    // Sync petition to Matrix (will be picked up by createClientRoom if roomId is empty)
+    // Sync petition to Matrix
     var pet = S.petitions[pid];
     if (pet.roomId && matrix.isReady()) {
-      syncPetitionToMatrix(pet);
+      // Room already exists — sync immediately
+      syncPetitionToMatrix(pet, 'petition');
       matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
         .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+    } else if (_pendingRoomCreations[cid]) {
+      // Room creation in flight — wait for it, then sync
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
@@ -3136,13 +3201,22 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
       if (client.roomId) {
-        syncClientToMatrix(client);
+        syncClientToMatrix(client, 'client');
+      } else if (_pendingRoomCreations[client.id]) {
+        _pendingRoomCreations[client.id].then(function(roomId) {
+          if (roomId) syncClientToMatrix(client, 'client');
+        });
       } else if (matrix.isReady()) {
-        // Room hasn't been created yet — create it now (includes initial sync)
         createClientRoom(client.id);
       }
     });
@@ -3151,13 +3225,18 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
       if (client.roomId) {
-        syncClientToMatrix(client);
+        syncClientToMatrix(client, 'client');
+      } else if (_pendingRoomCreations[client.id]) {
+        _pendingRoomCreations[client.id].then(function(roomId) {
+          if (roomId) syncClientToMatrix(client, 'client');
+        });
       } else if (matrix.isReady()) {
         createClientRoom(client.id);
       }
@@ -3167,9 +3246,10 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
-    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
     return;
   }
 }
@@ -3243,9 +3323,18 @@ document.addEventListener('change', function(e) {
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
     var newPet = S.petitions[pid];
     if (newPet.roomId && matrix.isReady()) {
-      syncPetitionToMatrix(newPet);
+      syncPetitionToMatrix(newPet, 'petition');
       matrix.sendStateEvent(newPet.roomId, EVT_PETITION_BLOCKS, { blocks: newPet.blocks }, newPet.id)
-        .catch(function(e) { console.error('Block sync failed:', e); });
+        .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+    } else if (_pendingRoomCreations[cid]) {
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
@@ -3525,19 +3614,14 @@ function handleAdminAdoptUser(mxid) {
 function flushPendingSyncs() {
   var keys = Object.keys(_syncTimers);
   if (keys.length === 0) return;
+  matrix._flushing = true;
   keys.forEach(function(key) {
-    // clearTimeout returns undefined; we need to re-invoke the sync
-    clearTimeout(_syncTimers[key]);
-    delete _syncTimers[key];
+    var entry = _syncTimers[key];
+    clearTimeout(entry.timer);
+    entry.fn();
   });
-  // Re-sync all clients and petitions that have room IDs
-  if (!matrix.isReady()) return;
-  Object.values(S.clients).forEach(function(client) {
-    if (client.roomId) syncClientToMatrix(client);
-  });
-  Object.values(S.petitions).forEach(function(pet) {
-    if (pet.roomId) syncPetitionToMatrix(pet);
-  });
+  _syncTimers = {};
+  matrix._flushing = false;
 }
 
 document.addEventListener('visibilitychange', function() {
@@ -3562,7 +3646,7 @@ document.addEventListener('DOMContentLoaded', function() {
         S.loading = false;
         return hydrateFromMatrix();
       })
-      .then(function() { render(); matrix.startLongPoll(); })
+      .then(function() { render(); matrix.startLongPoll(); toast('Session restored', 'info'); })
       .catch(function(err) {
         console.error('Session restore failed:', err);
         var status = (err && err.status) || 0;
