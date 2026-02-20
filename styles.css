@@ -864,6 +864,20 @@ body,
   font-size: 12px;
   color: var(--muted);
 }
+.dir-card-link {
+  font-size: 11px;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dir-card-link a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.dir-card-link a:hover {
+  text-decoration: underline;
+}
 .dir-card-detail {
   font-size: 11px;
   color: var(--muted);
