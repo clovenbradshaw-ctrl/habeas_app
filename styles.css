@@ -1067,6 +1067,17 @@ body,
   line-height: 1.35;
   color: #000;
 }
+.page-head {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: flex-end;
+  font-size: 9pt;
+  color: #888;
+  font-family: "Times New Roman", Times, serif;
+}
 .page-foot {
   position: absolute;
   bottom: 0;
@@ -1074,9 +1085,20 @@ body,
   right: 0;
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   font-size: 9pt;
   color: #888;
+}
+.page-head > span,
+.page-foot > span {
+  flex: 1;
+}
+.page-head > span:nth-child(2),
+.page-foot > span:nth-child(2) {
+  text-align: center;
+}
+.page-head > span:last-child,
+.page-foot > span:last-child {
+  text-align: right;
 }
 
 /* ── Block styles ─────────────────────────────────── */
