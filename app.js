@@ -1853,6 +1853,50 @@ function debouncedSync(key, fn) {
   };
 }
 
+// Actions that should only save on blur (field exit), not every keystroke
+var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1 };
+
+// Update only the in-memory state for a field (no log entry, no Matrix sync).
+// Called on every keystroke to keep the UI responsive; the actual save
+// (log + sync) happens via dispatchFieldChange on the 'change' event (blur).
+function updateFieldLocally(action, key, val) {
+  if (action === 'national-field') {
+    if (S.role !== 'admin') return;
+    S.national[key] = val;
+    S.national.updatedBy = S.currentUser;
+    S.national.updatedAt = now();
+    return;
+  }
+  if (action === 'client-field') {
+    var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+    if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
+    client[key] = val;
+    return;
+  }
+  if (action === 'editor-client-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    var client = S.clients[pet.clientId];
+    if (!client) return;
+    client[key] = val;
+    return;
+  }
+  if (action === 'editor-pet-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    pet[key] = val;
+    return;
+  }
+}
+
 function syncClientToMatrix(client, label) {
   if (!matrix.isReady() || !client.roomId) return Promise.resolve();
   return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
@@ -3782,7 +3826,12 @@ document.addEventListener('input', function(e) {
   var key = el.dataset.fieldKey;
   var val = el.value;
   if (action.match(/-custom$/)) {
-    dispatchFieldChange(action.replace(/-custom$/, ''), key, val);
+    action = action.replace(/-custom$/, '');
+  }
+  // For text fields with blur-save actions, only update local state on input;
+  // the full save (log + sync) happens on the 'change' event (fires on blur).
+  if (BLUR_SAVE_ACTIONS[action]) {
+    updateFieldLocally(action, key, val);
     return;
   }
   dispatchFieldChange(action, key, val);
@@ -3813,6 +3862,13 @@ document.addEventListener('change', function(e) {
   // Pure enum selects (type: 'enum') and date pickers fire 'change'
   if (el.tagName === 'SELECT' && el.dataset.fieldKey && !action.match(/^apply-/)) {
     dispatchFieldChange(action, el.dataset.fieldKey, val);
+    return;
+  }
+
+  // Text inputs with blur-save actions: full save on blur (change fires when field loses focus)
+  var blurAction = action.match(/-custom$/) ? action.replace(/-custom$/, '') : action;
+  if (el.dataset.fieldKey && BLUR_SAVE_ACTIONS[blurAction]) {
+    dispatchFieldChange(blurAction, el.dataset.fieldKey, val);
     return;
   }
 
@@ -4134,6 +4190,10 @@ function handleAdminAdoptUser(mxid) {
 // When the user switches tabs or is about to leave, immediately fire
 // any pending debounced syncs (best-effort — fetch may be cancelled)
 function flushPendingSyncs() {
+  // Blur active field to trigger its change event (saves pending edits)
+  if (document.activeElement && document.activeElement !== document.body) {
+    document.activeElement.blur();
+  }
   var keys = Object.keys(_syncTimers);
   if (keys.length === 0) return;
   matrix._flushing = true;
