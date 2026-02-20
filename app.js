@@ -381,6 +381,13 @@ var RESPONDENT_FIELDS = [
   { key: 'fieldOfficeName', label: 'Field Office', ph: '' },
 ];
 
+var DEFAULT_PAGE_SETTINGS = {
+  headerLeft: '', headerCenter: '', headerRight: '',
+  footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '{{PAGE}}',
+  showHeaderOnFirstPage: false,
+  showFooterOnFirstPage: true
+};
+
 function buildVarMap(c, p, a1, a2, nat) {
   c = c || {}; p = p || {}; a1 = a1 || {}; a2 = a2 || {}; nat = nat || {};
   return {
@@ -1208,6 +1215,7 @@ function hydrateFromMatrix() {
             templateId: pc.templateId, att1Id: pc.att1Id, att2Id: pc.att2Id,
             _facilityId: pc._facilityId, _courtId: pc._courtId,
             _att1Id: pc._att1Id, _att2Id: pc._att2Id,
+            pageSettings: pc.pageSettings || Object.assign({}, DEFAULT_PAGE_SETTINGS),
             createdAt: new Date(pe.origin_server_ts).toISOString(),
             roomId: roomId,
           };
@@ -1255,7 +1263,17 @@ function capSub(s, vars) {
   return subVars(s, vars).replace(/\n/g, '<br>');
 }
 
-function buildDocHTML(blocks, vars) {
+function buildDocHTML(blocks, vars, pageSettings) {
+  var ps = pageSettings || DEFAULT_PAGE_SETTINGS;
+  var caseNo = (vars.CASE_NUMBER && vars.CASE_NUMBER.trim()) ? 'C/A No. ' + vars.CASE_NUMBER : '';
+  function resolveExportVar(text) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, '')  // Page numbers not available in single-flow HTML export
+      .replace(/\{\{PAGE_NUM\}\}/g, '')
+      .replace(/\{\{TOTAL_PAGES\}\}/g, '')
+      .replace(/\{\{CASE_NUMBER\}\}/g, caseNo);
+  }
   var titles = blocks.filter(function(b) { return TITLE_IDS[b.id]; })
     .map(function(b) { return '<div class="title">' + capSub(b.content, vars) + '</div>'; }).join('');
   var capLeft = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; })
@@ -1275,15 +1293,20 @@ function buildDocHTML(blocks, vars) {
       return '<div class="' + cls + '">' + text + '</div>';
     }).join('');
   var parens = Array(24).fill(')').join('<br>');
+  var hasHeader = ps.headerLeft || ps.headerCenter || ps.headerRight;
+  var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
+  var hfCss = '.doc-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666}.doc-hf span{flex:1}.doc-hf span:nth-child(2){text-align:center}.doc-hf span:last-child{text-align:right}.doc-hdr{margin-bottom:12pt}.doc-ftr{margin-top:24pt}';
+  var headerHtml = hasHeader ? '<div class="doc-hf doc-hdr"><span>' + resolveExportVar(ps.headerLeft) + '</span><span>' + resolveExportVar(ps.headerCenter) + '</span><span>' + resolveExportVar(ps.headerRight) + '</span></div>' : '';
+  var footerHtml = hasFooter ? '<div class="doc-hf doc-ftr"><span>' + resolveExportVar(ps.footerLeft) + '</span><span>' + resolveExportVar(ps.footerCenter) + '</span><span>' + resolveExportVar(ps.footerRight) + '</span></div>' : '';
   return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head>' +
     '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
     '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
     '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
-    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body><div class="WordSection1">' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</div></body></html>';
+    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
 }
 
-function doExportDoc(blocks, vars, name) {
-  var html = buildDocHTML(blocks, vars);
+function doExportDoc(blocks, vars, name, pageSettings) {
+  var html = buildDocHTML(blocks, vars, pageSettings);
   var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
@@ -1294,10 +1317,10 @@ function doExportDoc(blocks, vars, name) {
   setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 }
 
-function doExportPDF(blocks, vars) {
+function doExportPDF(blocks, vars, pageSettings) {
   var w = window.open('', '_blank', 'width=850,height=1100');
   if (!w) { alert('Allow popups for PDF export'); return; }
-  w.document.write(buildDocHTML(blocks, vars));
+  w.document.write(buildDocHTML(blocks, vars, pageSettings));
   w.document.close();
   setTimeout(function() { w.focus(); w.print(); }, 500);
 }
@@ -1440,7 +1463,17 @@ function exportAttorneyProfilesCSV() {
 }
 
 // ── Template-based export (uses template.html) ─────────────────
-function buildExportFromTemplate(vars, forWord) {
+function buildExportFromTemplate(vars, forWord, pageSettings) {
+  var ps = pageSettings || DEFAULT_PAGE_SETTINGS;
+  var caseNo = (vars.CASE_NUMBER && vars.CASE_NUMBER.trim()) ? 'C/A No. ' + vars.CASE_NUMBER : '';
+  function resolveExpVar(text, pgNum, pgTotal) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + pgNum + ' of ' + pgTotal)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(pgNum))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(pgTotal))
+      .replace(/\{\{CASE_NUMBER\}\}/g, caseNo);
+  }
   return fetch('template.html')
     .then(function(r) {
       if (!r.ok) throw new Error('Template fetch failed: ' + r.status);
@@ -1457,6 +1490,39 @@ function buildExportFromTemplate(vars, forWord) {
       });
       // Override .ph styling for export (no red color)
       html = html.replace('.ph {', '.ph-disabled {');
+
+      // Inject header/footer into template pages
+      var hasHeader = ps.headerLeft || ps.headerCenter || ps.headerRight;
+      var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
+      if (hasHeader || hasFooter) {
+        var pageMatches = html.match(/<section class="page">/g) || [];
+        var totalPages = pageMatches.length;
+        var hfCss = '.page-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666;font-family:"Times New Roman",serif}.page-hf span{flex:1}.page-hf span:nth-child(2){text-align:center}.page-hf span:last-child{text-align:right}.page-hdr{margin-bottom:12pt}.page-ftr{margin-top:24pt}';
+        html = html.replace('</style>', hfCss + '\n</style>');
+
+        var pgIdx = 0;
+        html = html.replace(/<section class="page">/g, function() {
+          pgIdx++;
+          var isFirst = pgIdx === 1;
+          var hdrHtml = '';
+          if (hasHeader && (!isFirst || ps.showHeaderOnFirstPage)) {
+            hdrHtml = '<div class="page-hf page-hdr"><span>' + resolveExpVar(ps.headerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerRight, pgIdx, totalPages) + '</span></div>';
+          }
+          return '<section class="page">' + hdrHtml;
+        });
+
+        pgIdx = 0;
+        html = html.replace(/<\/section>/g, function() {
+          pgIdx++;
+          var isFirst = pgIdx === 1;
+          var ftrHtml = '';
+          if (hasFooter && (!isFirst || ps.showFooterOnFirstPage)) {
+            ftrHtml = '<div class="page-hf page-ftr"><span>' + resolveExpVar(ps.footerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerRight, pgIdx, totalPages) + '</span></div>';
+          }
+          return ftrHtml + '</section>';
+        });
+      }
+
       if (forWord) {
         // Add Word XML namespaces for .doc compatibility
         html = html.replace('<!doctype html>', '');
@@ -1600,6 +1666,7 @@ function syncPetitionToMatrix(pet, label) {
     _facilityId: pet._facilityId, _courtId: pet._courtId,
     _att1Id: pet._att1Id, _att2Id: pet._att2Id,
     templateId: pet.templateId,
+    pageSettings: pet.pageSettings,
   }, pet.id).then(function(data) {
     if (label) toast('CON \u22C8 ' + label, 'success');
     return data;
@@ -2357,7 +2424,7 @@ function renderEditor() {
   var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
 
   var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
-  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['filing','Filing'],['page','Page'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div><div class="ed-fields">';
@@ -2388,6 +2455,37 @@ function renderEditor() {
     h += htmlFieldGroup('Filing', FILING_FIELDS, pet, 'editor-pet-field');
   }
 
+  if (S.editorTab === 'page') {
+    var ps = pet.pageSettings || DEFAULT_PAGE_SETTINGS;
+    h += '<div class="fg"><div class="fg-title">Header</div>';
+    h += '<div class="frow"><label class="flbl">Left</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.headerLeft) + '" data-field-key="headerLeft" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Center</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.headerCenter) + '" data-field-key="headerCenter" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Right</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.headerRight) + '" data-field-key="headerRight" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">First Page</label>';
+    h += '<select class="finp" data-field-key="showHeaderOnFirstPage" data-change="page-settings">';
+    h += '<option value="false"' + (!ps.showHeaderOnFirstPage ? ' selected' : '') + '>Hide on first page</option>';
+    h += '<option value="true"' + (ps.showHeaderOnFirstPage ? ' selected' : '') + '>Show on first page</option>';
+    h += '</select></div></div>';
+
+    h += '<div class="fg"><div class="fg-title">Footer</div>';
+    h += '<div class="frow"><label class="flbl">Left</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.footerLeft) + '" data-field-key="footerLeft" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Center</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.footerCenter) + '" data-field-key="footerCenter" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">Right</label>';
+    h += '<input type="text" class="finp" value="' + esc(ps.footerRight) + '" data-field-key="footerRight" data-change="page-settings"></div>';
+    h += '<div class="frow"><label class="flbl">First Page</label>';
+    h += '<select class="finp" data-field-key="showFooterOnFirstPage" data-change="page-settings">';
+    h += '<option value="true"' + (ps.showFooterOnFirstPage ? ' selected' : '') + '>Show on first page</option>';
+    h += '<option value="false"' + (!ps.showFooterOnFirstPage ? ' selected' : '') + '>Hide on first page</option>';
+    h += '</select></div></div>';
+
+    h += '<p style="font-size:10px;color:#aaa;margin-top:8px">Variables: <code>{{CASE_NUMBER}}</code> for case no., <code>{{PAGE}}</code> for "Page X of Y", <code>{{PAGE_NUM}}</code> for number only.</p>';
+  }
+
   if (S.editorTab === 'log') {
     h += '<div class="lscroll">';
     if (S.log.length === 0) h += '<div class="lempty">No operations yet.</div>';
@@ -2409,13 +2507,13 @@ function renderEditor() {
 
   // Document area
   h += '<div class="doc-scroll" id="doc-scroll">';
-  h += renderPaginatedDoc(pet.blocks, vars, caseNo);
+  h += renderPaginatedDoc(pet.blocks, vars, caseNo, pet.pageSettings);
   h += '<div style="height:60px;flex-shrink:0"></div>';
   h += '</div></div>';
   return h;
 }
 
-function renderPaginatedDoc(blocks, vars, caseNo) {
+function renderPaginatedDoc(blocks, vars, caseNo, pageSettings) {
   var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
   var capBlocks = blocks.filter(function(b) { return TITLE_IDS[b.id]; });
   var capLBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
@@ -2453,12 +2551,16 @@ function renderPaginatedDoc(blocks, vars, caseNo) {
   h += '</div></div>';
 
   // Initial single page - will be repaginated by initPagination()
+  var ips = pageSettings || DEFAULT_PAGE_SETTINGS;
   h += '<div id="pages-container">';
   h += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
   h += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
   h += renderCaption(true);
   body.forEach(function(b) { h += renderBlock(b, true); });
-  h += '</div><div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span>Page 1 of 1</span></div>';
+  h += '</div>';
+  if (ips.footerLeft || ips.footerCenter || ips.footerRight) {
+    h += '<div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span></span><span>Page 1 of 1</span></div>';
+  }
   h += '</div></div>';
   h += '</div>';
 
@@ -2486,22 +2588,39 @@ function initPagination() {
   var capEl = mb.querySelector('[data-mr="cap"]');
   var capH = capEl ? capEl.offsetHeight : 0;
   var blockEls = Array.from(mb.querySelectorAll('[data-mr="body"]>[data-block-id]'));
-  var hs = blockEls.map(function(e) { return { id: e.dataset.blockId, h: e.offsetHeight }; });
+  var hs = blockEls.map(function(e) {
+    var cs = window.getComputedStyle(e);
+    var mt = parseFloat(cs.marginTop) || 0;
+    var mbot = parseFloat(cs.marginBottom) || 0;
+    return {
+      id: e.dataset.blockId,
+      h: e.offsetHeight + mt + mbot,
+      isHeading: e.className.indexOf('blk-heading') >= 0
+    };
+  });
 
   var pages = [];
   var cur = [];
   var rem = USABLE_H - capH;
   var pi = 0;
-  hs.forEach(function(item) {
+  for (var i = 0; i < hs.length; i++) {
+    var item = hs[i];
     if (item.h > rem && cur.length > 0) {
       pages.push({ ids: cur, first: pi === 0 });
-      cur = [];
-      rem = USABLE_H;
-      pi++;
+      cur = []; rem = USABLE_H; pi++;
+    }
+    // Heading orphan prevention: if heading fits but heading + next block doesn't,
+    // push heading to next page so it stays with its content
+    if (item.isHeading && cur.length > 0 && i + 1 < hs.length) {
+      var nextH = hs[i + 1].h;
+      if (item.h <= rem && item.h + nextH > rem) {
+        pages.push({ ids: cur, first: pi === 0 });
+        cur = []; rem = USABLE_H; pi++;
+      }
     }
     cur.push(item.id);
     rem -= item.h;
-  });
+  }
   if (cur.length > 0 || pages.length === 0) {
     pages.push({ ids: cur, first: pi === 0 });
   }
@@ -2532,16 +2651,53 @@ function initPagination() {
     return c;
   }
 
+  var ps = pet.pageSettings || DEFAULT_PAGE_SETTINGS;
+
+  function resolvePageVar(text, pageNum, totalPages, cn) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + pageNum + ' of ' + totalPages)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(pageNum))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(totalPages))
+      .replace(/\{\{CASE_NUMBER\}\}/g, cn);
+  }
+
   var html = '';
   pages.forEach(function(pg, idx) {
+    var pageNum = idx + 1;
+    var isFirst = idx === 0;
+
+    var hasHeaderContent = ps.headerLeft || ps.headerCenter || ps.headerRight;
+    var hasFooterContent = ps.footerLeft || ps.footerCenter || ps.footerRight;
+    var showHeader = hasHeaderContent && (!isFirst || ps.showHeaderOnFirstPage);
+    var showFooter = hasFooterContent && (!isFirst || ps.showFooterOnFirstPage);
+
     html += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
+
+    if (showHeader) {
+      html += '<div class="page-head" style="height:' + MG + 'px;padding:0 ' + MG + 'px 12px">';
+      html += '<span>' + esc(resolvePageVar(ps.headerLeft, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.headerCenter, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.headerRight, pageNum, total, caseNo)) + '</span>';
+      html += '</div>';
+    }
+
     html += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
     if (pg.first) html += renderCaption(true);
     pg.ids.forEach(function(id) {
       var b = bm[id];
       if (b) html += renderBlock(b, true);
     });
-    html += '</div><div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span>Page ' + (idx + 1) + ' of ' + total + '</span></div>';
+    html += '</div>';
+
+    if (showFooter) {
+      html += '<div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0">';
+      html += '<span>' + esc(resolvePageVar(ps.footerLeft, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.footerCenter, pageNum, total, caseNo)) + '</span>';
+      html += '<span>' + esc(resolvePageVar(ps.footerRight, pageNum, total, caseNo)) + '</span>';
+      html += '</div>';
+    }
+
     html += '</div></div>';
   });
 
@@ -2897,6 +3053,7 @@ document.addEventListener('click', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
@@ -2931,7 +3088,7 @@ document.addEventListener('click', function(e) {
     var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
     var vars = buildVarMap(cl, pet, a1 || {}, a2 || {}, S.national);
     var isWord = action === 'export-word';
-    buildExportFromTemplate(vars, isWord)
+    buildExportFromTemplate(vars, isWord, pet.pageSettings)
       .then(function(html) {
         if (isWord) {
           var blob = new Blob(['\ufeff' + html], { type: 'application/msword' });
@@ -2952,8 +3109,8 @@ document.addEventListener('click', function(e) {
       })
       .catch(function(err) {
         console.error('Template export failed, falling back to block export:', err);
-        if (isWord) doExportDoc(pet.blocks, vars, cl.name);
-        else doExportPDF(pet.blocks, vars);
+        if (isWord) doExportDoc(pet.blocks, vars, cl.name, pet.pageSettings);
+        else doExportPDF(pet.blocks, vars, pet.pageSettings);
       });
     return;
   }
@@ -3205,6 +3362,20 @@ function dispatchFieldChange(action, key, val) {
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
     return;
   }
+  if (action === 'page-settings') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (!pet.pageSettings) pet.pageSettings = Object.assign({}, DEFAULT_PAGE_SETTINGS);
+    if (key === 'showHeaderOnFirstPage' || key === 'showFooterOnFirstPage') {
+      pet.pageSettings[key] = (val === 'true');
+    } else {
+      pet.pageSettings[key] = val;
+    }
+    S.log.push({ op: 'FILL', target: 'petition.pageSettings.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+    setState({});
+    return;
+  }
 }
 
 document.addEventListener('input', function(e) {
@@ -3270,6 +3441,7 @@ document.addEventListener('change', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
