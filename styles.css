@@ -441,10 +441,11 @@ body,
 }
 .kanban {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 20px;
-  max-width: 1200px;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 14px;
+  max-width: 1600px;
   margin: 0 auto;
+  overflow-x: auto;
 }
 .kb-col {
   background: var(--panel);
@@ -452,6 +453,7 @@ body,
   border-radius: 6px;
   overflow: hidden;
   min-height: 300px;
+  min-width: 200px;
 }
 .kb-col-head {
   display: flex;
@@ -490,7 +492,7 @@ body,
   border: 1px solid var(--border);
   border-left: 4px solid var(--accent);
   border-radius: var(--radius);
-  padding: 12px 14px;
+  padding: 10px 12px;
   cursor: pointer;
   transition: border-color 0.12s, box-shadow 0.12s;
 }
@@ -1398,3 +1400,175 @@ body,
 .board-table-row.archived { opacity: 0.5; }
 
 .cv-item.archived { opacity: 0.5; font-style: italic; }
+
+/* ── Progress Bar (kanban cards) ─────────────────── */
+.kb-progress {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.kb-progress-bar {
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, var(--accent), var(--green));
+  transition: width 0.3s;
+}
+
+/* ── Filing Panel ────────────────────────────────── */
+.filing-not-ready {
+  padding: 16px;
+  background: var(--bg);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.filing-not-ready strong {
+  color: var(--ink);
+}
+.filing-check-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+.filing-check-ok {
+  color: var(--green);
+  font-weight: 700;
+  font-size: 14px;
+}
+.filing-check-miss {
+  color: var(--accent2);
+  font-weight: 700;
+  font-size: 14px;
+}
+.filing-progress-wrap {
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.filing-progress-label {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 4px;
+}
+.filing-progress {
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+.filing-progress-bar {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--green));
+  transition: width 0.3s;
+}
+.filing-progress-pct {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.filing-section {
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 12px;
+  margin-top: 12px;
+}
+.filing-section .fg-title {
+  margin-bottom: 8px;
+}
+.filing-export-btns {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.filing-court-name {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.filing-portal-btn {
+  display: inline-block;
+  margin-right: 8px;
+  margin-bottom: 4px;
+  text-decoration: none;
+  font-size: 12px;
+}
+.filing-no-court {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+.filing-confirm {
+  border: 2px solid var(--green);
+}
+.filing-mark-btn {
+  margin-top: 8px;
+  width: 100%;
+}
+.filing-mark-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.filing-note {
+  font-size: 11px;
+  color: var(--accent2);
+  margin-top: 4px;
+}
+
+/* ── Audit Table: Timeline Dots ──────────────────── */
+.bt-timeline {
+  white-space: nowrap;
+}
+.tl-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.tl-dot.empty {
+  background: var(--border);
+}
+.tl-dot.active {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px currentColor;
+}
+.tl-seg {
+  display: inline-block;
+  width: 10px;
+  height: 2px;
+  background: var(--border);
+  vertical-align: middle;
+}
+
+/* ── Audit Table: Readiness ──────────────────────── */
+.bt-readiness {
+  white-space: nowrap;
+}
+.readiness-bar {
+  display: inline-block;
+  width: 48px;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  vertical-align: middle;
+  overflow: hidden;
+}
+.readiness-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--green);
+}
+.readiness-pct {
+  font-size: 10px;
+  color: var(--muted);
+  margin-left: 4px;
+  vertical-align: middle;
+}
