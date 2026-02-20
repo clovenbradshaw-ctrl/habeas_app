@@ -746,6 +746,24 @@ var matrix = {
       });
   },
 
+  listUsers: function() {
+    var self = this;
+    var allUsers = [];
+    function fetchPage(from) {
+      var path = '/v2/users?from=' + from + '&limit=100&guests=false';
+      return self.adminApi('GET', path).then(function(data) {
+        if (data.users && data.users.length) {
+          allUsers = allUsers.concat(data.users);
+        }
+        if (data.next_token) {
+          return fetchPage(parseInt(data.next_token, 10));
+        }
+        return allUsers;
+      });
+    }
+    return fetchPage(0);
+  },
+
   inviteUser: function(roomId, userId) {
     return this._api('POST', '/rooms/' + encodeURIComponent(roomId) + '/invite', { user_id: userId });
   },
@@ -931,6 +949,8 @@ var S = {
   clients: {},
   petitions: {},
   users: {},
+  serverUsersLoaded: false,
+  serverUsersError: '',
   log: [],
   role: null,
   adminEditUserId: null,
@@ -1032,6 +1052,54 @@ function ensureRoom(alias, name) {
         return null;
       });
     });
+}
+
+// ── Merge server users with managed users ────────────────────────
+function mergeServerUsers(serverUsers) {
+  var userEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_USER);
+  var merged = {};
+
+  // EVT_USER managed users first
+  Object.keys(userEvents).forEach(function(k) {
+    var e = userEvents[k];
+    if (k && e.content && !e.content.deleted) {
+      merged[k] = {
+        mxid: k,
+        displayName: e.content.displayName || k.replace(/@(.+):.*/, '$1'),
+        role: e.content.role || 'attorney',
+        active: e.content.active !== false,
+        managed: true,
+        createdBy: e.sender,
+        updatedAt: new Date(e.origin_server_ts).toISOString(),
+      };
+    }
+  });
+
+  // Overlay server user data
+  serverUsers.forEach(function(su) {
+    var mxid = su.name;
+    if (merged[mxid]) {
+      merged[mxid].synapseAdmin = !!su.admin;
+      merged[mxid].deactivated = !!su.deactivated;
+      merged[mxid].creationTs = su.creation_ts;
+      if (su.deactivated) merged[mxid].active = false;
+    } else {
+      merged[mxid] = {
+        mxid: mxid,
+        displayName: su.displayname || mxid.replace(/@(.+):.*/, '$1'),
+        role: null,
+        active: !su.deactivated,
+        managed: false,
+        synapseAdmin: !!su.admin,
+        deactivated: !!su.deactivated,
+        creationTs: su.creation_ts,
+        createdBy: null,
+        updatedAt: su.creation_ts ? new Date(su.creation_ts * 1000).toISOString() : null,
+      };
+    }
+  });
+
+  return merged;
 }
 
 // ── Hydration from Matrix ────────────────────────────────────────
@@ -1199,6 +1267,23 @@ function hydrateFromMatrix() {
         national: national, clients: clients, petitions: petitions,
         users: users, role: role, currentUser: matrix.userId, syncError: syncError,
       });
+
+      // For admins, fetch all server users and merge with managed users
+      if (role === 'admin') {
+        matrix.listUsers()
+          .then(function(serverUsers) {
+            setState({ users: mergeServerUsers(serverUsers), serverUsersLoaded: true, serverUsersError: '' });
+          })
+          .catch(function(err) {
+            var msg = '';
+            if (err && err.status === 403) {
+              msg = 'Cannot list server users: your account lacks Synapse server admin privileges.';
+            } else {
+              msg = 'Could not fetch server user list: ' + ((err && err.error) || 'unknown error');
+            }
+            setState({ serverUsersLoaded: true, serverUsersError: msg });
+          });
+      }
     });
 }
 
@@ -2164,10 +2249,20 @@ function renderAdmin() {
   h += '<button class="dir-tab on">User Management</button>';
   h += '</div><div class="dir-body"><div class="dir-section">';
 
-  // Header with create button
-  h += '<div class="dir-head"><h3>Users</h3>';
-  h += '<button class="hbtn accent" data-action="admin-show-create">+ Create User</button></div>';
+  // Header with create + refresh buttons
+  h += '<div class="dir-head"><h3>Users</h3><div>';
+  h += '<button class="hbtn accent" data-action="admin-show-create">+ Create User</button>';
+  h += '<button class="hbtn" data-action="admin-refresh-users" style="margin-left:8px">Refresh</button>';
+  h += '</div></div>';
   h += '<p class="dir-desc">Manage user accounts. Creating a user registers them on the Matrix server, sets their role, and invites them to the required rooms.</p>';
+
+  // Server users loading/error status
+  if (!S.serverUsersLoaded) {
+    h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Loading server user list...</div>';
+  }
+  if (S.serverUsersError) {
+    h += '<div class="dir-desc" style="color:#b91c1c">' + esc(S.serverUsersError) + '</div>';
+  }
 
   // Inline create form
   if (S.adminEditUserId === 'new') {
@@ -2191,13 +2286,26 @@ function renderAdmin() {
     h += '</div>';
   }
 
-  // User list
-  h += '<div class="dir-list">';
+  // Split users into managed and unmanaged
   var userList = Object.values(S.users);
-  if (userList.length === 0) {
-    h += '<div class="dir-empty">No managed users yet. Users created through this panel will appear here.</div>';
+  var managedUsers = userList.filter(function(u) { return u.managed !== false; });
+  var unmanagedUsers = userList.filter(function(u) { return u.managed === false; });
+
+  managedUsers.sort(function(a, b) {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return (a.displayName || '').localeCompare(b.displayName || '');
+  });
+  unmanagedUsers.sort(function(a, b) {
+    if (a.active !== b.active) return a.active ? -1 : 1;
+    return (a.displayName || '').localeCompare(b.displayName || '');
+  });
+
+  // Managed users section
+  h += '<div class="dir-list">';
+  if (managedUsers.length === 0 && unmanagedUsers.length === 0) {
+    h += '<div class="dir-empty">No users found.</div>';
   }
-  userList.forEach(function(u) {
+  managedUsers.forEach(function(u) {
     var isEditing = S.adminEditUserId === u.mxid;
     h += '<div class="dir-card' + (isEditing ? ' editing' : '') + '">';
     if (isEditing) {
@@ -2223,7 +2331,11 @@ function renderAdmin() {
       var roleBadgeColor = u.role === 'admin' ? '#a08540' : '#8a8a9a';
       h += '<div class="dir-card-head" data-action="admin-edit-user" data-mxid="' + esc(u.mxid) + '">';
       h += '<strong>' + esc(u.displayName) + '</strong>';
-      h += '<span class="dir-card-sub" style="color:' + roleBadgeColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + esc(u.role) + '</span></div>';
+      h += '<span class="dir-card-sub" style="color:' + roleBadgeColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + esc(u.role) + '</span>';
+      if (u.synapseAdmin) {
+        h += '<span class="dir-card-sub" style="color:#a08540;font-size:9px;margin-left:6px">SERVER ADMIN</span>';
+      }
+      h += '</div>';
       h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
       if (!u.active) {
         h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
@@ -2232,7 +2344,52 @@ function renderAdmin() {
     }
     h += '</div>';
   });
-  h += '</div></div></div></div>';
+  h += '</div>';
+
+  // Unmanaged server users section
+  if (unmanagedUsers.length > 0) {
+    h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
+    h += '<div class="dir-head"><h3>Unmanaged Server Users</h3></div>';
+    h += '<p class="dir-desc">These users exist on the Matrix server but have not been assigned a role in this application. Click to adopt them.</p>';
+    h += '<div class="dir-list">';
+    unmanagedUsers.forEach(function(u) {
+      var isEditing = S.adminEditUserId === u.mxid;
+      h += '<div class="dir-card' + (isEditing ? ' editing' : '') + '">';
+      if (isEditing) {
+        h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Adopt User</div>';
+        h += '<div class="frow"><label class="flbl">Display Name</label>';
+        h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
+        h += '<div class="frow"><label class="flbl">Role</label>';
+        h += '<select class="finp" data-change="admin-draft-role">';
+        h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
+        h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
+        h += '</select></div>';
+        h += '<div id="admin-adopt-error" class="login-error" style="display:none;margin-top:8px"></div>';
+        h += '<div class="dir-card-actions">';
+        h += '<button class="hbtn accent" data-action="admin-adopt-user" data-mxid="' + esc(u.mxid) + '">Adopt User</button>';
+        h += '<button class="hbtn" data-action="admin-cancel-edit">Cancel</button></div>';
+      } else {
+        h += '<div class="dir-card-head" data-action="admin-edit-user" data-mxid="' + esc(u.mxid) + '">';
+        h += '<strong>' + esc(u.displayName) + '</strong>';
+        h += '<span class="dir-card-sub" style="color:#b45309;font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">UNMANAGED</span>';
+        if (u.synapseAdmin) {
+          h += '<span class="dir-card-sub" style="color:#a08540;font-size:9px;margin-left:6px">SERVER ADMIN</span>';
+        }
+        h += '</div>';
+        h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
+        if (!u.active) {
+          h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
+        }
+        if (u.creationTs) {
+          h += '<div class="prov"><span class="prov-item">Created ' + ts(new Date(u.creationTs * 1000).toISOString()) + '</span></div>';
+        }
+      }
+      h += '</div>';
+    });
+    h += '</div></div>';
+  }
+
+  h += '</div></div></div>';
   return h;
 }
 
@@ -2892,6 +3049,21 @@ document.addEventListener('click', function(e) {
     setState({ adminEditUserId: 'new', adminDraft: { username: '', displayName: '', password: '', role: 'attorney' } });
     return;
   }
+  if (action === 'admin-refresh-users') {
+    if (S.role !== 'admin') return;
+    setState({ serverUsersLoaded: false, serverUsersError: '' });
+    matrix.listUsers()
+      .then(function(serverUsers) {
+        setState({ users: mergeServerUsers(serverUsers), serverUsersLoaded: true, serverUsersError: '' });
+      })
+      .catch(function(err) {
+        var msg = (err && err.status === 403)
+          ? 'Cannot list server users: lacks Synapse admin privileges.'
+          : 'Could not fetch server users: ' + ((err && err.error) || 'unknown error');
+        setState({ serverUsersLoaded: true, serverUsersError: msg });
+      });
+    return;
+  }
   if (action === 'admin-cancel-create' || action === 'admin-cancel-edit') {
     setState({ adminEditUserId: null, adminDraft: {} });
     return;
@@ -2901,7 +3073,7 @@ document.addEventListener('click', function(e) {
     var mxid = btn.dataset.mxid;
     var user = S.users[mxid];
     if (user) {
-      setState({ adminEditUserId: mxid, adminDraft: { displayName: user.displayName, role: user.role, password: '' } });
+      setState({ adminEditUserId: mxid, adminDraft: { displayName: user.displayName, role: user.role || 'attorney', password: '' } });
     }
     return;
   }
@@ -2913,6 +3085,12 @@ document.addEventListener('click', function(e) {
   if (action === 'admin-save-user') {
     if (S.role !== 'admin') return;
     handleAdminSaveUser();
+    return;
+  }
+  if (action === 'admin-adopt-user') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    if (mxid) handleAdminAdoptUser(mxid);
     return;
   }
   if (action === 'admin-deactivate-user') {
@@ -3127,7 +3305,9 @@ function handleAdminCreateUser() {
     return;
   }
 
-  var mxid = '@' + d.username.trim() + ':' + CONFIG.MATRIX_SERVER_NAME;
+  // Extract server name from logged-in user's MXID to match Synapse's actual server_name
+  var serverName = matrix.userId ? matrix.userId.split(':').slice(1).join(':') : CONFIG.MATRIX_SERVER_NAME;
+  var mxid = '@' + d.username.trim() + ':' + serverName;
   var displayName = d.displayName || d.username;
   var role = d.role || 'attorney';
   var powerLevel = role === 'admin' ? 50 : 0;
@@ -3276,6 +3456,67 @@ function handleAdminDeactivateUser(mxid) {
     .catch(function(err) {
       alert('Deactivation failed: ' + ((err && err.error) || 'unknown error'));
     });
+}
+
+function handleAdminAdoptUser(mxid) {
+  var d = S.adminDraft;
+  var displayName = d.displayName || mxid.replace(/@(.+):.*/, '$1');
+  var role = d.role || 'attorney';
+  var powerLevel = role === 'admin' ? 50 : 0;
+
+  // Step 1: Store role in !org room as EVT_USER state event
+  matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    displayName: displayName,
+    role: role,
+    active: true,
+  }, mxid)
+  .then(function() {
+    // Step 2: Invite to !org room (may already be a member)
+    return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
+      if (e.errcode === 'M_FORBIDDEN') return;
+      console.warn('Invite to org room failed:', e);
+    });
+  })
+  .then(function() {
+    // Step 3: Invite to !templates room
+    if (matrix.templatesRoomId) {
+      return matrix.inviteUser(matrix.templatesRoomId, mxid).catch(function(e) {
+        if (e.errcode === 'M_FORBIDDEN') return;
+        console.warn('Invite to templates room failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Step 4: Set power levels in !org room
+    return matrix.setPowerLevel(matrix.orgRoomId, mxid, powerLevel).catch(function(e) {
+      console.warn('Set org PL failed:', e);
+    });
+  })
+  .then(function() {
+    // Step 5: Set power levels in !templates room
+    if (matrix.templatesRoomId) {
+      return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
+        console.warn('Set templates PL failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    S.users[mxid] = Object.assign({}, S.users[mxid], {
+      displayName: displayName,
+      role: role,
+      active: true,
+      managed: true,
+      createdBy: S.currentUser,
+      updatedAt: now(),
+    });
+    S.log.push({ op: 'ADOPT', target: mxid, payload: displayName, frame: { t: now(), entity: 'user' } });
+    setState({ adminEditUserId: null, adminDraft: {} });
+    toast('User ' + displayName + ' adopted successfully', 'success');
+  })
+  .catch(function(err) {
+    var msg = (err && err.error) || 'Failed to adopt user.';
+    showAdminError('admin-adopt-error', msg);
+  });
 }
 
 // ── Flush pending syncs on visibility change / page unload ──────
