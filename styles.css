@@ -870,6 +870,36 @@ body,
   margin-top: 4px;
   line-height: 1.5;
 }
+.dir-card-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--blue);
+  background: rgba(74, 122, 181, 0.08);
+  border: 1px solid rgba(74, 122, 181, 0.18);
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+}
+.dir-card-links {
+  display: flex;
+  gap: 12px;
+  margin-top: 4px;
+}
+.dir-link {
+  font-size: 11px;
+  color: var(--blue);
+  text-decoration: none;
+  font-weight: 500;
+}
+.dir-link:hover {
+  text-decoration: underline;
+}
+.ed-court-links {
+  display: flex;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
 .dir-card-actions {
   display: flex;
   gap: 8px;
