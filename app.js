@@ -47,6 +47,32 @@ function esc(s) {
   d.textContent = s;
   return d.innerHTML;
 }
+function generateSecurePassword(length) {
+  length = length || 16;
+  var upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  var lower = 'abcdefghijkmnpqrstuvwxyz';
+  var digits = '23456789';
+  var symbols = '#$%&*+-=?@^_';
+  var all = upper + lower + digits + symbols;
+  var arr = new Uint8Array(length);
+  crypto.getRandomValues(arr);
+  var pw = [
+    upper[arr[0] % upper.length],
+    lower[arr[1] % lower.length],
+    digits[arr[2] % digits.length],
+    symbols[arr[3] % symbols.length],
+  ];
+  for (var i = 4; i < length; i++) {
+    pw.push(all[arr[i] % all.length]);
+  }
+  var shuffle = new Uint8Array(pw.length);
+  crypto.getRandomValues(shuffle);
+  for (var i = pw.length - 1; i > 0; i--) {
+    var j = shuffle[i] % (i + 1);
+    var tmp = pw[i]; pw[i] = pw[j]; pw[j] = tmp;
+  }
+  return pw.join('');
+}
 
 // ── Toast Notifications ─────────────────────────────────────────
 function toast(message, type) {
@@ -2657,7 +2683,14 @@ function renderAdmin() {
     h += '<div class="frow"><label class="flbl">Display Name</label>';
     h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" placeholder="Jane Smith" data-field-key="displayName" data-change="admin-draft-field"></div>';
     h += '<div class="frow"><label class="flbl">Password</label>';
-    h += '<input class="finp" type="password" value="' + esc(S.adminDraft.password || '') + '" placeholder="Temporary password" data-field-key="password" data-change="admin-draft-field"></div>';
+    h += '<div style="display:flex;gap:8px;align-items:flex-start">';
+    h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Temporary password" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+    h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
+    h += '</div>';
+    if (S.adminDraft.passwordVisible && S.adminDraft.password) {
+      h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
+    }
+    h += '</div>';
     h += '<div class="frow"><label class="flbl">Role</label>';
     h += '<select class="finp" data-change="admin-draft-role">';
     h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
@@ -2702,7 +2735,14 @@ function renderAdmin() {
       h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
       h += '</select></div>';
       h += '<div class="frow"><label class="flbl">Reset Password</label>';
-      h += '<input class="finp" type="password" value="' + esc(S.adminDraft.password || '') + '" placeholder="Leave blank to keep current" data-field-key="password" data-change="admin-draft-field"></div>';
+      h += '<div style="display:flex;gap:8px;align-items:flex-start">';
+      h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Leave blank to keep current" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+      h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
+      h += '</div>';
+      if (S.adminDraft.passwordVisible && S.adminDraft.password) {
+        h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
+      }
+      h += '</div>';
       h += '<div id="admin-edit-error" class="login-error" style="display:none;margin-top:8px"></div>';
       h += '<div class="dir-card-actions">';
       h += '<button class="hbtn accent" data-action="admin-save-user">Save Changes</button>';
@@ -3638,6 +3678,14 @@ document.addEventListener('click', function(e) {
   }
   if (action === 'admin-cancel-create' || action === 'admin-cancel-edit') {
     setState({ adminEditUserId: null, adminDraft: {} });
+    return;
+  }
+  if (action === 'admin-generate-password') {
+    if (S.role !== 'admin') return;
+    var pw = generateSecurePassword(16);
+    S.adminDraft.password = pw;
+    S.adminDraft.passwordVisible = true;
+    setState({});
     return;
   }
   if (action === 'admin-edit-user') {
