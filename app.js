@@ -82,11 +82,258 @@ var SM = {
   submitted: { color: '#4a7ab5', bg: '#e8f0fa', label: 'Submitted' },
 };
 
+// ── Enumeration Option Arrays ───────────────────────────────────
+var US_STATES = {
+  AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',
+  CO:'Colorado',CT:'Connecticut',DE:'Delaware',DC:'District of Columbia',FL:'Florida',
+  GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',
+  IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',
+  MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',
+  MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',
+  NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',
+  OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',
+  SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',
+  VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',
+  WY:'Wyoming',PR:'Puerto Rico',VI:'U.S. Virgin Islands',GU:'Guam',
+  AS:'American Samoa',MP:'Northern Mariana Islands'
+};
+var US_STATE_NAMES = Object.values(US_STATES).sort();
+
+var COUNTRIES = [
+  'Mexico','Guatemala','Honduras','El Salvador','Colombia','Venezuela',
+  'Ecuador','Brazil','Cuba','Haiti','Dominican Republic','Nicaragua',
+  'Peru','India','China','Philippines',
+  '---',
+  'Afghanistan','Albania','Algeria','Andorra','Angola','Antigua and Barbuda',
+  'Argentina','Armenia','Australia','Austria','Azerbaijan','Bahamas','Bahrain',
+  'Bangladesh','Barbados','Belarus','Belgium','Belize','Benin','Bhutan','Bolivia',
+  'Bosnia and Herzegovina','Botswana','Brunei','Bulgaria','Burkina Faso','Burundi',
+  'Cabo Verde','Cambodia','Cameroon','Canada','Central African Republic','Chad',
+  'Chile','Comoros','Congo (Brazzaville)','Congo (DRC)','Costa Rica',
+  "Cote d'Ivoire",'Croatia','Cyprus','Czech Republic','Denmark','Djibouti',
+  'Dominica','East Timor','Egypt','Equatorial Guinea','Eritrea','Estonia',
+  'Eswatini','Ethiopia','Fiji','Finland','France','Gabon','Gambia','Georgia',
+  'Germany','Ghana','Greece','Grenada','Guinea','Guinea-Bissau','Guyana',
+  'Hungary','Iceland','Indonesia','Iran','Iraq','Ireland','Israel','Italy',
+  'Jamaica','Japan','Jordan','Kazakhstan','Kenya','Kiribati','Kosovo','Kuwait',
+  'Kyrgyzstan','Laos','Latvia','Lebanon','Lesotho','Liberia','Libya',
+  'Liechtenstein','Lithuania','Luxembourg','Madagascar','Malawi','Malaysia',
+  'Maldives','Mali','Malta','Marshall Islands','Mauritania','Mauritius',
+  'Micronesia','Moldova','Monaco','Mongolia','Montenegro','Morocco','Mozambique',
+  'Myanmar','Namibia','Nauru','Nepal','Netherlands','New Zealand','Niger',
+  'Nigeria','North Korea','North Macedonia','Norway','Oman','Pakistan','Palau',
+  'Palestine','Panama','Papua New Guinea','Paraguay','Poland','Portugal','Qatar',
+  'Romania','Russia','Rwanda','Saint Kitts and Nevis','Saint Lucia',
+  'Saint Vincent and the Grenadines','Samoa','San Marino','Sao Tome and Principe',
+  'Saudi Arabia','Senegal','Serbia','Seychelles','Sierra Leone','Singapore',
+  'Slovakia','Slovenia','Solomon Islands','Somalia','South Africa','South Korea',
+  'South Sudan','Spain','Sri Lanka','Sudan','Suriname','Sweden','Switzerland',
+  'Syria','Taiwan','Tajikistan','Tanzania','Thailand','Togo','Tonga',
+  'Trinidad and Tobago','Tunisia','Turkey','Turkmenistan','Tuvalu','Uganda',
+  'Ukraine','United Arab Emirates','United Kingdom','Uruguay','Uzbekistan',
+  'Vanuatu','Vatican City','Vietnam','Yemen','Zambia','Zimbabwe'
+];
+
+var ENTRY_METHOD_OPTIONS = [
+  'without inspection',
+  'with inspection at a port of entry',
+  'with a valid visa that has since expired',
+  'through the visa waiver program'
+];
+
+var CRIMINAL_HISTORY_OPTIONS = [
+  'has no criminal record',
+  'has a minor criminal record',
+  'has a criminal record'
+];
+
+var COMMUNITY_TIES_OPTIONS = [
+  'has strong family and community ties in the United States',
+  'has family in the United States',
+  'has community and employment ties in the United States'
+];
+
+var ICE_TITLE_OPTIONS = ['Director', 'Acting Director', 'Deputy Director'];
+
+var ICE_FACILITY_SEEDS = [
+  {n:'Adams County Correctional Center',c:'Natchez',s:'MS',fo:'New Orleans Field Office'},
+  {n:'Adelanto ICE Processing Center',c:'Adelanto',s:'CA',fo:'Los Angeles Field Office'},
+  {n:'Alamance County Detention Center',c:'Graham',s:'NC',fo:'Atlanta Field Office'},
+  {n:'Allen Parish Public Safety Complex',c:'Oberlin',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Anchorage Correctional Complex',c:'Anchorage',s:'AK',fo:'Seattle Field Office'},
+  {n:'Baker County Detention Center',c:'MacClenny',s:'FL',fo:'Miami Field Office'},
+  {n:'Bluebonnet Detention Facility',c:'Anson',s:'TX',fo:'Dallas Field Office'},
+  {n:'Boone County Jail',c:'Burlington',s:'KY',fo:'Chicago Field Office'},
+  {n:'Broome County Correctional Facility',c:'Binghamton',s:'NY',fo:'Buffalo Field Office'},
+  {n:'Broward Transitional Center',c:'Pompano Beach',s:'FL',fo:'Miami Field Office'},
+  {n:'Buffalo (Batavia) Service Processing Center',c:'Batavia',s:'NY',fo:'Buffalo Field Office'},
+  {n:'Burleigh County Detention Center',c:'Bismarck',s:'ND',fo:'St. Paul Field Office'},
+  {n:'Butler County Sheriff\'s Office',c:'Hamilton',s:'OH',fo:'Detroit Field Office'},
+  {n:'Calhoun County Correctional Center',c:'Battle Creek',s:'MI',fo:'Detroit Field Office'},
+  {n:'California City Detention Facility',c:'California City',s:'CA',fo:'San Francisco Field Office'},
+  {n:'Campbell County Detention Center',c:'Newport',s:'KY',fo:'Chicago Field Office'},
+  {n:'Caroline Detention Facility',c:'Bowling Green',s:'VA',fo:'Washington Field Office'},
+  {n:'Central Arizona Florence Correctional Center',c:'Florence',s:'AZ',fo:'Phoenix Field Office'},
+  {n:'Central Louisiana ICE Processing Center',c:'Jena',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Chase County Jail',c:'Cottonwood Falls',s:'KS',fo:'Chicago Field Office'},
+  {n:'Chippewa County Correctional Facility',c:'Sault Ste. Marie',s:'MI',fo:'Detroit Field Office'},
+  {n:'Christian County Jail',c:'Hopkinsville',s:'KY',fo:'Chicago Field Office'},
+  {n:'Cibola County Correctional Center',c:'Milan',s:'NM',fo:'El Paso Field Office'},
+  {n:'Cimarron Correctional Facility',c:'Cushing',s:'OK',fo:'Dallas Field Office'},
+  {n:'Clark County Jail',c:'Jeffersonville',s:'IN',fo:'Chicago Field Office'},
+  {n:'Clay County Jail',c:'Brazil',s:'IN',fo:'Chicago Field Office'},
+  {n:'Clinton County Correctional Facility',c:'McElhattan',s:'PA',fo:'Philadelphia Field Office'},
+  {n:'Clinton County Jail',c:'Plattsburgh',s:'NY',fo:'Buffalo Field Office'},
+  {n:'Clinton County Sheriff\'s Office',c:'Frankfort',s:'IN',fo:'Chicago Field Office'},
+  {n:'CNMI Department of Corrections',c:'Susupe, Saipan',s:'MP',fo:'San Francisco Field Office'},
+  {n:'Coastal Bend Detention Center',c:'Robstown',s:'TX',fo:'Harlingen Field Office'},
+  {n:'CoreCivic Laredo Processing Center',c:'Laredo',s:'TX',fo:'Harlingen Field Office'},
+  {n:'CoreCivic Webb County Detention Center',c:'Laredo',s:'TX',fo:'Harlingen Field Office'},
+  {n:'Corrections Center of Northwest Ohio (CCNO)',c:'Stryker',s:'OH',fo:'Detroit Field Office'},
+  {n:'Crow Wing County Jail',c:'Brainerd',s:'MN',fo:'St. Paul Field Office'},
+  {n:'Cumberland County Jail',c:'Portland',s:'ME',fo:'Boston Field Office'},
+  {n:'Daviess County Detention Center',c:'Owensboro',s:'KY',fo:'Chicago Field Office'},
+  {n:'Delaney Hall Detention Facility',c:'Newark',s:'NJ',fo:'Newark Field Office'},
+  {n:'Denver Contract Detention Facility (Aurora)',c:'Aurora',s:'CO',fo:'Denver Field Office'},
+  {n:'Desert View Annex',c:'Adelanto',s:'CA',fo:'Los Angeles Field Office'},
+  {n:'Diamondback Correctional Facility',c:'Watonga',s:'OK',fo:'Dallas Field Office'},
+  {n:'Dilley Immigration Processing Center',c:'Dilley',s:'TX',fo:'San Antonio Field Office'},
+  {n:'Dodge Detention Facility',c:'Juneau',s:'WI',fo:'Chicago Field Office'},
+  {n:'East Hidalgo Detention Center',c:'La Villa',s:'TX',fo:'Harlingen Field Office'},
+  {n:'Eden Detention Center',c:'Eden',s:'TX',fo:'Dallas Field Office'},
+  {n:'El Paso Service Processing Center',c:'El Paso',s:'TX',fo:'El Paso Field Office'},
+  {n:'El Valle Detention Facility',c:'Raymondville',s:'TX',fo:'Harlingen Field Office'},
+  {n:'Elizabeth Contract Detention Facility',c:'Elizabeth',s:'NJ',fo:'Newark Field Office'},
+  {n:'Elmore County Detention Center (Elmore County Jail)',c:'Mountain Home',s:'ID',fo:'Salt Lake City Field Office'},
+  {n:'Eloy Detention Center',c:'Eloy',s:'AZ',fo:'Phoenix Field Office'},
+  {n:'ERO El Paso Camp East Montana',c:'El Paso',s:'TX',fo:'El Paso Field Office'},
+  {n:'Farmville Detention Center',c:'Farmville',s:'VA',fo:'Washington Field Office'},
+  {n:'FCI Atlanta',c:'Atlanta',s:'GA',fo:'Atlanta Field Office'},
+  {n:'FCI Leavenworth',c:'Leavenworth',s:'KS',fo:'Chicago Field Office'},
+  {n:'FCI Lewisburg',c:'Lewisburg',s:'PA',fo:'Philadelphia Field Office'},
+  {n:'FDC Miami',c:'Miami',s:'FL',fo:'Miami Field Office'},
+  {n:'FDC Philadelphia',c:'Philadelphia',s:'PA',fo:'Philadelphia Field Office'},
+  {n:'Federal Correctional Institution - Berlin, NH',c:'Berlin',s:'NH',fo:'Boston Field Office'},
+  {n:'Federal Detention Center, Honolulu (FDC Honolulu)',c:'Honolulu',s:'HI',fo:'San Francisco Field Office'},
+  {n:'Florence Service Processing Center',c:'Florence',s:'AZ',fo:'Phoenix Field Office'},
+  {n:'Folkston D Ray ICE Processing Center',c:'Folkston',s:'GA',fo:'Atlanta Field Office'},
+  {n:'Folkston ICE Processing Center (Annex)',c:'Folkston',s:'GA',fo:'Atlanta Field Office'},
+  {n:'Folkston ICE Processing Center (Main)',c:'Folkston',s:'GA',fo:'Atlanta Field Office'},
+  {n:'Freeborn County Jail Services',c:'Albert Lea',s:'MN',fo:'St. Paul Field Office'},
+  {n:'Geauga County Safety Center',c:'Chardon',s:'OH',fo:'Detroit Field Office'},
+  {n:'Glades County Detention Center',c:'Moore Haven',s:'FL',fo:'Miami Field Office'},
+  {n:'Golden State Annex',c:'McFarland',s:'CA',fo:'San Francisco Field Office'},
+  {n:'Grand Forks County Correctional Center',c:'Grand Forks',s:'ND',fo:'St. Paul Field Office'},
+  {n:'Grayson County Detention Center',c:'Leachfield',s:'KY',fo:'Chicago Field Office'},
+  {n:'Greene County Jail',c:'Springfield',s:'MO',fo:'Chicago Field Office'},
+  {n:'Guam Department of Corrections, Hagatna Detention Facility',c:'Hagatna',s:'GU',fo:'San Francisco Field Office'},
+  {n:'Henderson Detention Center',c:'Henderson',s:'NV',fo:'Salt Lake City Field Office'},
+  {n:'Hopkins County Jail',c:'Madisonville',s:'KY',fo:'Chicago Field Office'},
+  {n:'Houston Contract Detention Facility',c:'Houston',s:'TX',fo:'Houston Field Office'},
+  {n:'IAH Polk Adult Detention Facility',c:'Livingston',s:'TX',fo:'Houston Field Office'},
+  {n:'Imperial Regional Detention Facility',c:'Calexico',s:'CA',fo:'San Diego Field Office'},
+  {n:'Irwin County Detention Center',c:'Ocilla',s:'GA',fo:'Atlanta Field Office'},
+  {n:'Jackson Parish Correctional Center',c:'Jonesboro',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Joe Corley Processing Center',c:'Conroe',s:'TX',fo:'Houston Field Office'},
+  {n:'Kandiyohi County Jail',c:'Willmar',s:'MN',fo:'St. Paul Field Office'},
+  {n:'Karnes County Immigration Processing Center',c:'Karnes City',s:'TX',fo:'San Antonio Field Office'},
+  {n:'Kay County Detention Center',c:'Newkirk',s:'OK',fo:'Chicago Field Office'},
+  {n:'Kenton County Detention Center',c:'Covington',s:'KY',fo:'Chicago Field Office'},
+  {n:'Krome North Service Processing Center',c:'Miami',s:'FL',fo:'Miami Field Office'},
+  {n:'La Salle County Regional Detention Center',c:'Encinal',s:'TX',fo:'San Antonio Field Office'},
+  {n:'Limestone County Detention Center',c:'Groesbeck',s:'TX',fo:'Houston Field Office'},
+  {n:'Lincoln County Detention Center',c:'North Platte',s:'NE',fo:'St. Paul Field Office'},
+  {n:'Louisiana ICE Processing Center',c:'Angola',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Mahoning County Justice Center',c:'Youngstown',s:'OH',fo:'Detroit Field Office'},
+  {n:'McCook Detention Center',c:'McCook',s:'NE',fo:'St. Paul Field Office'},
+  {n:'MDC Brooklyn',c:'Brooklyn',s:'NY',fo:'New York City Field Office'},
+  {n:'Mesa Verde ICE Processing Center',c:'Bakersfield',s:'CA',fo:'San Francisco Field Office'},
+  {n:'Miami Correctional Facility (MCF)',c:'Bunker Hill',s:'IN',fo:'Chicago Field Office'},
+  {n:'Monroe County Jail',c:'Monroe',s:'MI',fo:'Detroit Field Office'},
+  {n:'Montgomery Processing Center',c:'Conroe',s:'TX',fo:'Houston Field Office'},
+  {n:'Moshannon Valley Processing Center',c:'Philipsburg',s:'PA',fo:'Philadelphia Field Office'},
+  {n:'Muscatine County Jail',c:'Muscatine',s:'IA',fo:'St. Paul Field Office'},
+  {n:'Natrona County Detention Center',c:'Casper',s:'WY',fo:'Denver Field Office'},
+  {n:'Naval Station Guantanamo Bay (JTF Camp Six and Migrant Ops Center Main A)',c:'',s:'',fo:'Miami Field Office'},
+  {n:'Nevada Southern Detention Center',c:'Pahrump',s:'NV',fo:'Salt Lake City Field Office'},
+  {n:'North Lake Processing Center',c:'Baldwin',s:'MI',fo:'Detroit Field Office'},
+  {n:'Northeast Ohio Correctional Center',c:'Youngstown',s:'OH',fo:'Detroit Field Office'},
+  {n:'Northwest ICE Processing Center (NWIPC)',c:'Tacoma',s:'WA',fo:'Seattle Field Office'},
+  {n:'Northwest State Correctional Facility',c:'Swanton',s:'VT',fo:'Boston Field Office'},
+  {n:'Oldham County Detention Center',c:'LaGrange',s:'KY',fo:'Chicago Field Office'},
+  {n:'Orange County Jail',c:'Goshen',s:'NY',fo:'New York City Field Office'},
+  {n:'Otay Mesa Detention Center',c:'San Diego',s:'CA',fo:'San Diego Field Office'},
+  {n:'Otero County Processing Center',c:'Chaparral',s:'NM',fo:'El Paso Field Office'},
+  {n:'Ozark County Jail',c:'Gainesville',s:'MO',fo:'Chicago Field Office'},
+  {n:'Pennington County Jail',c:'Rapid City',s:'SD',fo:'St. Paul Field Office'},
+  {n:'Phelps County Jail',c:'Holdrege',s:'NE',fo:'St. Paul Field Office'},
+  {n:'Phelps County Jail',c:'Rolla',s:'MO',fo:'Chicago Field Office'},
+  {n:'Pike County Correctional Facility',c:'Lords Valley',s:'PA',fo:'Philadelphia Field Office'},
+  {n:'Pine Prairie ICE Processing Center',c:'Pine Prairie',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Plymouth County Correctional Facility',c:'Plymouth',s:'MA',fo:'Boston Field Office'},
+  {n:'Polk County Jail',c:'Des Moines',s:'IA',fo:'St. Paul Field Office'},
+  {n:'Port Isabel Service Processing Center',c:'Los Fresnos',s:'TX',fo:'Harlingen Field Office'},
+  {n:'Pottawattamie County Jail',c:'Council Bluffs',s:'IA',fo:'St. Paul Field Office'},
+  {n:'Prairieland Detention Facility',c:'Alvarado',s:'TX',fo:'Dallas Field Office'},
+  {n:'Richwood Correctional Center',c:'Monroe',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Rio Grande Processing Center',c:'Laredo',s:'TX',fo:'Harlingen Field Office'},
+  {n:'River Correctional Center',c:'Ferriday',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Rolling Plains Detention Center',c:'Haskell',s:'TX',fo:'Dallas Field Office'},
+  {n:'San Luis Regional Detention Center',c:'San Luis',s:'AZ',fo:'San Diego Field Office'},
+  {n:'Sarpy County Department of Corrections',c:'Papillion',s:'NE',fo:'St. Paul Field Office'},
+  {n:'Seneca County Jail',c:'Tiffin',s:'OH',fo:'Detroit Field Office'},
+  {n:'Sherburne County Jail Services',c:'Elk River',s:'MN',fo:'St. Paul Field Office'},
+  {n:'Sioux County Jail',c:'Orange City',s:'IA',fo:'St. Paul Field Office'},
+  {n:'South Louisiana ICE Processing Center',c:'Basile',s:'LA',fo:'New Orleans Field Office'},
+  {n:'South Texas ICE Processing Center',c:'Pearsall',s:'TX',fo:'San Antonio Field Office'},
+  {n:'St. Clair County Jail',c:'Port Huron',s:'MI',fo:'Detroit Field Office'},
+  {n:'Ste. Genevieve County Detention Center',c:'Ste. Genevieve',s:'MO',fo:'Chicago Field Office'},
+  {n:'Stewart Detention Center',c:'Lumpkin',s:'GA',fo:'Atlanta Field Office'},
+  {n:'Strafford County Corrections',c:'Dover',s:'NH',fo:'Boston Field Office'},
+  {n:'Sweetwater County Detention Center',c:'Rock Springs',s:'WY',fo:'Denver Field Office'},
+  {n:'T. Don Hutto Detention Center',c:'Taylor',s:'TX',fo:'San Antonio Field Office'},
+  {n:'Torrance County Detention Facility',c:'Estancia',s:'NM',fo:'El Paso Field Office'},
+  {n:'Two Bridges Regional Jail',c:'Wiscasset',s:'ME',fo:'Boston Field Office'},
+  {n:'Uinta County Detention Center',c:'Evanston',s:'WY',fo:'Salt Lake City Field Office'},
+  {n:'Washoe County Jail',c:'Reno',s:'NV',fo:'Salt Lake City Field Office'},
+  {n:'West Tennessee Detention Facility',c:'Mason',s:'TN',fo:'New Orleans Field Office'},
+  {n:'Winn Correctional Center',c:'Winnfield',s:'LA',fo:'New Orleans Field Office'},
+  {n:'Wyatt Detention Facility',c:'Central Falls',s:'RI',fo:'Boston Field Office'}
+];
+
+// ── Validators ──────────────────────────────────────────────────
+var VALIDATORS = {
+  email: function(v) {
+    if (!v || !v.trim()) return null;
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? null : 'Invalid email format';
+  },
+  phone: function(v) {
+    if (!v || !v.trim()) return null;
+    var digits = v.replace(/[^0-9]/g, '');
+    return (digits.length >= 7 && digits.length <= 15) ? null : 'Enter a valid phone number';
+  },
+  numeric: function(v) {
+    if (!v || !v.trim()) return null;
+    var n = Number(v);
+    return (!isNaN(n) && n >= 0 && n <= 99 && n === Math.floor(n)) ? null : 'Enter a whole number (0\u201399)';
+  }
+};
+
+function toOrdinal(n) {
+  var s = ['th','st','nd','rd'];
+  var v = n % 100;
+  return n + (s[(v - 20) % 10] || s[v] || s[0]);
+}
+
+function stateAbbrToName(abbr) {
+  return US_STATES[abbr] || abbr;
+}
+
 // ── Field Definitions ────────────────────────────────────────────
 var FACILITY_FIELDS = [
   { key: 'name', label: 'Facility Name', ph: 'South Louisiana ICE Processing Center' },
   { key: 'city', label: 'City', ph: 'Basile' },
-  { key: 'state', label: 'State', ph: 'Louisiana' },
+  { key: 'state', label: 'State', ph: 'Louisiana', type: 'enum', options: US_STATE_NAMES },
   { key: 'warden', label: 'Warden', ph: 'John Smith' },
   { key: 'fieldOfficeName', label: 'Field Office', ph: 'New Orleans Field Office' },
   { key: 'fieldOfficeDirector', label: 'Field Office Director', ph: 'Jane Doe' },
@@ -97,7 +344,7 @@ var COURT_FIELDS = [
 ];
 var NATIONAL_FIELDS = [
   { key: 'iceDirector', label: 'ICE Director', ph: 'Tom Homan' },
-  { key: 'iceDirectorTitle', label: 'ICE Title', ph: 'Director' },
+  { key: 'iceDirectorTitle', label: 'ICE Title', ph: 'Director', type: 'enum', options: ICE_TITLE_OPTIONS },
   { key: 'dhsSecretary', label: 'DHS Secretary', ph: 'Kristi Noem' },
   { key: 'attorneyGeneral', label: 'Attorney General', ph: 'Pam Bondi' },
 ];
@@ -107,24 +354,24 @@ var ATT_PROFILE_FIELDS = [
   { key: 'firm', label: 'Firm', ph: '' },
   { key: 'address', label: 'Address', ph: '' },
   { key: 'cityStateZip', label: 'City/St/Zip', ph: '' },
-  { key: 'phone', label: 'Phone', ph: '' },
-  { key: 'fax', label: 'Fax', ph: '' },
-  { key: 'email', label: 'Email', ph: '' },
+  { key: 'phone', label: 'Phone', ph: '', validate: VALIDATORS.phone },
+  { key: 'fax', label: 'Fax', ph: '', validate: VALIDATORS.phone },
+  { key: 'email', label: 'Email', ph: '', validate: VALIDATORS.email },
   { key: 'proHacVice', label: 'Pro Hac Vice', ph: '*Pro hac vice pending' },
 ];
 var CLIENT_FIELDS = [
   { key: 'name', label: 'Full Name', ph: 'Juan Carlos Rivera' },
-  { key: 'country', label: 'Country', ph: 'Honduras' },
-  { key: 'yearsInUS', label: 'Years in U.S.', ph: '12' },
-  { key: 'entryDate', label: 'Entry Date', ph: 'approximately 2013' },
-  { key: 'entryMethod', label: 'Entry Method', ph: 'without inspection' },
+  { key: 'country', label: 'Country', ph: 'Honduras', type: 'enum', options: COUNTRIES },
+  { key: 'yearsInUS', label: 'Years in U.S.', ph: '12', validate: VALIDATORS.numeric },
+  { key: 'entryDate', label: 'Entry Date', ph: 'approximately 2013', type: 'date' },
+  { key: 'entryMethod', label: 'Entry Method', ph: 'without inspection', type: 'enum-or-custom', options: ENTRY_METHOD_OPTIONS },
   { key: 'apprehensionLocation', label: 'Arrest Location', ph: 'Nashville, Tennessee' },
-  { key: 'apprehensionDate', label: 'Arrest Date', ph: 'January 15, 2026' },
-  { key: 'criminalHistory', label: 'Criminal History', ph: 'has no criminal record' },
-  { key: 'communityTies', label: 'Community Ties', ph: 'has strong family and community ties' },
+  { key: 'apprehensionDate', label: 'Arrest Date', ph: 'January 15, 2026', type: 'date' },
+  { key: 'criminalHistory', label: 'Criminal History', ph: 'has no criminal record', type: 'enum-or-custom', options: CRIMINAL_HISTORY_OPTIONS },
+  { key: 'communityTies', label: 'Community Ties', ph: 'has strong family and community ties', type: 'enum-or-custom', options: COMMUNITY_TIES_OPTIONS },
 ];
 var FILING_FIELDS = [
-  { key: 'filingDate', label: 'Filing Date', ph: 'February 19, 2026' },
+  { key: 'filingDate', label: 'Filing Date', ph: 'February 19, 2026', type: 'date-group' },
   { key: 'filingDay', label: 'Filing Day', ph: '19th' },
   { key: 'filingMonthYear', label: 'Month & Year', ph: 'February, 2026' },
 ];
@@ -307,6 +554,9 @@ var matrix = {
   orgRoomId: null,
   templatesRoomId: null,
   _txnId: 0,
+  _syncToken: null,
+  _polling: false,
+  _pollAbort: null,
 
   _headers: function() {
     return {
@@ -425,6 +675,7 @@ var matrix = {
           });
           matrix.rooms[roomId] = { stateEvents: stateEvents };
         });
+        matrix._syncToken = data.next_batch || null;
         return data;
       });
   },
@@ -550,6 +801,121 @@ var matrix = {
     this.rooms = {};
     this.orgRoomId = null;
     this.templatesRoomId = null;
+    this._syncToken = null;
+    this._polling = false;
+    this._pollAbort = null;
+  },
+
+  startLongPoll: function() {
+    if (this._polling) return;
+    if (!this._syncToken) {
+      console.warn('Cannot start long-poll: no sync token');
+      return;
+    }
+    this._polling = true;
+    this._doPoll();
+  },
+
+  stopLongPoll: function() {
+    this._polling = false;
+    if (this._pollAbort) {
+      try { this._pollAbort.abort(); } catch(e) {}
+      this._pollAbort = null;
+    }
+  },
+
+  _doPoll: function() {
+    if (!this._polling) return;
+    var self = this;
+    var filter = JSON.stringify({
+      room: {
+        state: { lazy_load_members: true },
+        timeline: { limit: 50 },
+      }
+    });
+    var url = this.baseUrl + '/_matrix/client/v3/sync?timeout=30000&since='
+      + encodeURIComponent(this._syncToken)
+      + '&filter=' + encodeURIComponent(filter);
+
+    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    this._pollAbort = controller;
+
+    var fetchOpts = { method: 'GET', headers: this._headers() };
+    if (controller) fetchOpts.signal = controller.signal;
+
+    fetch(url, fetchOpts)
+      .then(function(r) {
+        if (!r.ok) {
+          return r.text().then(function(text) {
+            var err;
+            try { err = JSON.parse(text); } catch(e) {
+              err = { errcode: 'M_UNKNOWN', error: 'HTTP ' + r.status, status: r.status };
+            }
+            err.status = r.status;
+            throw err;
+          });
+        }
+        return r.json();
+      })
+      .then(function(data) {
+        if (!self._polling) return;
+        self._syncToken = data.next_batch || self._syncToken;
+        self._processIncrementalSync(data);
+        self._doPoll();
+      })
+      .catch(function(err) {
+        if (!self._polling) return;
+        if (err && (err.status === 401 || err.status === 403)) {
+          console.error('Sync auth failed, stopping poll');
+          self._polling = false;
+          return;
+        }
+        console.warn('Long-poll error, retrying in 5s:', err && err.error || err);
+        setTimeout(function() { self._doPoll(); }, 5000);
+      });
+  },
+
+  _processIncrementalSync: function(data) {
+    var joinedRooms = data.rooms && data.rooms.join ? data.rooms.join : {};
+    var changed = false;
+    var self = this;
+
+    Object.keys(joinedRooms).forEach(function(roomId) {
+      var room = joinedRooms[roomId];
+      var events = [];
+      if (room.state && room.state.events) {
+        events = events.concat(room.state.events);
+      }
+      if (room.timeline && room.timeline.events) {
+        room.timeline.events.forEach(function(evt) {
+          if (evt.state_key !== undefined && evt.state_key !== null) {
+            events.push(evt);
+          }
+        });
+      }
+      if (events.length === 0) return;
+
+      if (!self.rooms[roomId]) {
+        self.rooms[roomId] = { stateEvents: {} };
+      }
+
+      events.forEach(function(evt) {
+        if (evt.sender === self.userId) return;
+        if (!self.rooms[roomId].stateEvents[evt.type]) {
+          self.rooms[roomId].stateEvents[evt.type] = {};
+        }
+        self.rooms[roomId].stateEvents[evt.type][evt.state_key] = {
+          content: evt.content,
+          sender: evt.sender,
+          origin_server_ts: evt.origin_server_ts,
+        };
+        changed = true;
+      });
+    });
+
+    if (changed) {
+      hydrateFromMatrix();
+    }
   },
 };
 
@@ -579,6 +945,7 @@ var S = {
   draft: {},
   boardMode: 'kanban',
   boardTableGroup: 'stage',
+  boardAddingMatter: false,
   _rendering: false,
 };
 
@@ -866,7 +1233,7 @@ function doExportDoc(blocks, vars, name) {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
-  a.download = 'habeas-' + (name || 'petition').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+  a.download = 'habeas-' + (name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
   document.body.appendChild(a);
   a.click();
   setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
@@ -1072,15 +1439,106 @@ function extractBlockContent(el) {
 
 // ── Component Renderers ──────────────────────────────────────────
 function htmlFieldGroup(title, fields, data, onChangePrefix) {
-  var h = '<div class="fg"><div class="fg-title">' + esc(title) + '</div>';
+  var h = '<div class="fg">';
+  if (title) h += '<div class="fg-title">' + esc(title) + '</div>';
   fields.forEach(function(f) {
+    if (f.type === 'date-group' && f.key === 'filingDate') {
+      h += htmlDateGroupField(fields, data, onChangePrefix);
+      return;
+    }
+    if (f.key === 'filingDay' || f.key === 'filingMonthYear') return; // rendered by date-group
     var val = (data && data[f.key]) || '';
     var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+    var vErr = '';
+    if (f.validate && val && val.trim()) {
+      var err = f.validate(val);
+      if (err) {
+        vErr = '<span class="fval-err">' + esc(err) + '</span>';
+        chk = '<span class="fval-warn">&#9888;</span>';
+      }
+    }
     h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
-    h += '<input type="text" class="finp" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="' + onChangePrefix + '"></div>';
+    h += htmlFieldInput(f, val, onChangePrefix);
+    h += vErr + '</div>';
   });
   h += '</div>';
   return h;
+}
+
+function htmlFieldInput(f, val, onChangePrefix) {
+  if (f.type === 'enum') return htmlEnumSelect(f, val, onChangePrefix);
+  if (f.type === 'enum-or-custom') return htmlEnumOrCustom(f, val, onChangePrefix);
+  if (f.type === 'date') return htmlDateField(f, val, onChangePrefix);
+  return '<input type="text" class="finp" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="' + onChangePrefix + '">';
+}
+
+function htmlEnumSelect(f, val, onChangePrefix) {
+  var h = '<select class="finp" data-field-key="' + f.key + '" data-change="' + onChangePrefix + '">';
+  h += '<option value="">\u2014 Select \u2014</option>';
+  var foundVal = false;
+  for (var i = 0; i < f.options.length; i++) {
+    var opt = f.options[i];
+    if (opt === '---') {
+      h += '<option disabled>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</option>';
+      continue;
+    }
+    var sel = (opt === val) ? ' selected' : '';
+    if (opt === val) foundVal = true;
+    h += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+  }
+  if (val && val.trim() && !foundVal) {
+    h += '<option value="' + esc(val) + '" selected>' + esc(val) + ' (custom)</option>';
+  }
+  h += '</select>';
+  return h;
+}
+
+function htmlEnumOrCustom(f, val, onChangePrefix) {
+  var isPreset = false;
+  for (var i = 0; i < f.options.length; i++) {
+    if (f.options[i] === val) { isPreset = true; break; }
+  }
+  var isEmpty = !val || !val.trim();
+  var isCustom = !isEmpty && !isPreset;
+
+  var h = '<select class="finp enum-custom-sel" data-field-key="' + f.key + '" data-change="' + onChangePrefix + '-enum">';
+  for (var i = 0; i < f.options.length; i++) {
+    var opt = f.options[i];
+    var sel = (opt === val) ? ' selected' : '';
+    h += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+  }
+  h += '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Other (custom)</option>';
+  h += '</select>';
+  var display = isCustom ? '' : ' style="display:none"';
+  h += '<input type="text" class="finp enum-custom-inp" value="' + (isCustom ? esc(val) : '') + '"' +
+       ' placeholder="Enter custom value..." data-field-key="' + f.key + '" data-change="' + onChangePrefix + '-custom"' + display + '>';
+  return h;
+}
+
+function htmlDateField(f, val, onChangePrefix) {
+  return '<input type="text" class="finp date-pick" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="' + onChangePrefix + '" data-flatpickr="1">';
+}
+
+function htmlDateGroupField(fields, data, onChangePrefix) {
+  var filingDate = (data && data.filingDate) || '';
+  var filingDay = (data && data.filingDay) || '';
+  var filingMonthYear = (data && data.filingMonthYear) || '';
+  var chk = filingDate && filingDate.trim() ? '<span class="fchk">&#10003;</span>' : '';
+  var h = '<div class="frow"><label class="flbl">Filing Date' + chk + '</label>';
+  h += '<input type="text" class="finp date-pick" value="' + esc(filingDate) + '" placeholder="February 19, 2026" data-field-key="filingDate" data-change="' + onChangePrefix + '" data-flatpickr="filing-group">';
+  if (filingDate && filingDate.trim()) {
+    h += '<div class="date-group-preview">';
+    h += 'Day: <strong>' + esc(filingDay) + '</strong> &nbsp; Month/Year: <strong>' + esc(filingMonthYear) + '</strong>';
+    h += '</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+function htmlFacilityAutocomplete() {
+  return '<div class="fac-ac-wrap"><label class="flbl">Search ICE Facilities</label>' +
+    '<input type="text" class="finp" id="fac-ac-input" placeholder="Type facility name or city..." data-change="fac-ac">' +
+    '<div class="fac-ac-list" id="fac-ac-list" style="display:none"></div></div>';
 }
 
 function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction) {
@@ -1181,6 +1639,22 @@ function renderBoard() {
     h += '</div>';
   }
 
+  // Add Matter button / inline client picker
+  var clientList = Object.values(S.clients);
+  if (S.boardAddingMatter && clientList.length > 0) {
+    h += '<div class="board-add-matter">';
+    h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
+    h += '<option value="">Select client\u2026</option>';
+    clientList.forEach(function(c) {
+      h += '<option value="' + c.id + '">' + esc(c.name || 'Unnamed') + '</option>';
+    });
+    h += '</select>';
+    h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
+    h += '</div>';
+  } else {
+    h += '<button class="hbtn accent" data-action="board-add-matter">+ Add Matter</button>';
+  }
+
   h += '</div>';
 
   if (S.boardMode === 'table') {
@@ -1190,7 +1664,7 @@ function renderBoard() {
   }
 
   if (vis.length === 0) {
-    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+    h += '<div class="board-empty"><p>No matters yet. Click <strong>+ Add Matter</strong> above, or go to <strong>Clients</strong> to get started.</p></div>';
   }
 
   h += '</div>';
@@ -1337,7 +1811,7 @@ function renderClients() {
     var pets = Object.values(S.petitions).filter(function(p) { return p.clientId === c.id; });
     h += '<div class="cv-item' + (S.selectedClientId === c.id ? ' on' : '') + '" data-action="select-client" data-id="' + c.id + '">';
     h += '<div class="cv-item-name">' + esc(c.name || 'Unnamed') + '</div>';
-    h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' pet.' : '') + '</div>';
+    h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' matter' + (pets.length !== 1 ? 's' : '') : '') + '</div>';
     pets.forEach(function(p) {
       var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
       h += '<span class="stage-badge sm" style="background:' + sc + '">' + p.stage + '</span>';
@@ -1348,10 +1822,10 @@ function renderClients() {
   h += '<div class="cv-detail">';
   if (client) {
     h += '<div class="cv-detail-head"><h2>' + esc(client.name || 'New Client') + '</h2>';
-    h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Petition</button></div>';
+    h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Matter</button></div>';
     h += htmlFieldGroup('Client Information', CLIENT_FIELDS, client, 'client-field');
     if (clientPets.length > 0) {
-      h += '<div class="fg"><div class="fg-title">Petitions</div>';
+      h += '<div class="fg"><div class="fg-title">Matters</div>';
       clientPets.forEach(function(p) {
         var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
         h += '<div class="pet-row" data-action="open-petition" data-id="' + p.id + '">';
@@ -1385,14 +1859,20 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
     h += '</div>';
-    h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
+    h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a matter auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.facilities).forEach(function(f) {
       h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
       if (S.editId === f.id && isAdmin) {
+        h += htmlFacilityAutocomplete();
         FACILITY_FIELDS.forEach(function(ff) {
-          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
-          h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
+          var val = (S.draft[ff.key]) || '';
+          var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+          var vErr = '';
+          if (ff.validate && val && val.trim()) { var err = ff.validate(val); if (err) { vErr = '<span class="fval-err">' + esc(err) + '</span>'; chk = '<span class="fval-warn">&#9888;</span>'; } }
+          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + chk + '</label>';
+          h += htmlFieldInput(ff, val, 'draft-field');
+          h += vErr + '</div>';
         });
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-facility">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
@@ -1418,14 +1898,17 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
     h += '</div>';
-    h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
+    h += '<p class="dir-desc">District + division combos. Selecting a court on a matter fills both fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.courts).forEach(function(c) {
       h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
       if (S.editId === c.id && isAdmin) {
         COURT_FIELDS.forEach(function(ff) {
-          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
-          h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
+          var val = (S.draft[ff.key]) || '';
+          var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + chk + '</label>';
+          h += htmlFieldInput(ff, val, 'draft-field');
+          h += '</div>';
         });
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-court">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
@@ -1450,14 +1933,19 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
     h += '</div>';
-    h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
+    h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any matter.</p>';
     h += '<div class="dir-list">';
     Object.values(S.attProfiles).forEach(function(a) {
       h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
       if (S.editId === a.id && isAdmin) {
         ATT_PROFILE_FIELDS.forEach(function(ff) {
-          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + '</label>';
-          h += '<input class="finp" value="' + esc((S.draft[ff.key]) || '') + '" placeholder="' + esc(ff.ph || '') + '" data-field-key="' + ff.key + '" data-change="draft-field"></div>';
+          var val = (S.draft[ff.key]) || '';
+          var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+          var vErr = '';
+          if (ff.validate && val && val.trim()) { var err = ff.validate(val); if (err) { vErr = '<span class="fval-err">' + esc(err) + '</span>'; chk = '<span class="fval-warn">&#9888;</span>'; } }
+          h += '<div class="frow"><label class="flbl">' + esc(ff.label) + chk + '</label>';
+          h += htmlFieldInput(ff, val, 'draft-field');
+          h += vErr + '</div>';
         });
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-attorney">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
@@ -1481,14 +1969,16 @@ function renderDirectory() {
 
   if (tab === 'national') {
     h += '<div class="dir-section"><div class="dir-head"><h3>National Defaults</h3></div>';
-    h += '<p class="dir-desc">These auto-fill on every petition.' + (isAdmin ? ' Update when officials change.' : '') + '</p>';
+    h += '<p class="dir-desc">These auto-fill on every matter.' + (isAdmin ? ' Update when officials change.' : '') + '</p>';
     h += '<div class="dir-card editing">';
     NATIONAL_FIELDS.forEach(function(f) {
-      h += '<div class="frow"><label class="flbl">' + esc(f.label) + '</label>';
+      var val = (S.national[f.key]) || '';
+      var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+      h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
       if (isAdmin) {
-        h += '<input class="finp" value="' + esc((S.national[f.key]) || '') + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" data-change="national-field">';
+        h += htmlFieldInput(f, val, 'national-field');
       } else {
-        h += '<input class="finp" value="' + esc((S.national[f.key]) || '') + '" disabled style="background:#f5f2ec;color:var(--muted)">';
+        h += '<input class="finp" value="' + esc(val) + '" disabled style="background:#f5f2ec;color:var(--muted)">';
       }
       h += '</div>';
     });
@@ -1584,7 +2074,7 @@ function renderAdmin() {
 function renderEditor() {
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) {
-    return '<div class="editor-view"><div style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa">No petition selected.</div></div>';
+    return '<div class="editor-view"><div style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa">No matter selected.</div></div>';
   }
   var client = S.clients[pet.clientId] || null;
   var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
@@ -1864,6 +2354,84 @@ function render() {
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
   }
+  // Post-render: initialize flatpickr date pickers and facility autocomplete
+  requestAnimationFrame(function() { initDatePickers(); initFacilityAC(); });
+}
+
+// ── Post-render Initializers ────────────────────────────────────
+function initDatePickers() {
+  if (typeof flatpickr === 'undefined') return;
+  document.querySelectorAll('[data-flatpickr]').forEach(function(el) {
+    if (el._flatpickr) return;
+    var isFilingGroup = el.dataset.flatpickr === 'filing-group';
+    flatpickr(el, {
+      dateFormat: 'F j, Y',
+      allowInput: true,
+      onChange: function(dates, dateStr) {
+        if (!dates.length) return;
+        var d = dates[0];
+        var formatted = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        el.value = formatted;
+        var key = el.dataset.fieldKey;
+        var action = el.dataset.change;
+        dispatchFieldChange(action, key, formatted);
+        if (isFilingGroup) {
+          var day = d.getDate();
+          var ordDay = toOrdinal(day);
+          var monthYear = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long' });
+          dispatchFieldChange(action, 'filingDay', ordDay);
+          dispatchFieldChange(action, 'filingMonthYear', monthYear);
+          render();
+        }
+      }
+    });
+  });
+}
+
+function initFacilityAC() {
+  var input = document.getElementById('fac-ac-input');
+  var list = document.getElementById('fac-ac-list');
+  if (!input || !list) return;
+  if (input._acBound) return;
+  input._acBound = true;
+
+  input.addEventListener('input', function() {
+    var q = input.value.trim().toLowerCase();
+    if (q.length < 2) { list.style.display = 'none'; return; }
+    var matches = ICE_FACILITY_SEEDS.filter(function(f) {
+      return f.n.toLowerCase().indexOf(q) !== -1 ||
+             f.c.toLowerCase().indexOf(q) !== -1 ||
+             (stateAbbrToName(f.s)).toLowerCase().indexOf(q) !== -1;
+    }).slice(0, 10);
+    if (matches.length === 0) { list.style.display = 'none'; return; }
+    var h = '';
+    matches.forEach(function(f, i) {
+      h += '<div class="fac-ac-item" data-fac-idx="' + i + '" data-fac-n="' + esc(f.n) + '" data-fac-c="' + esc(f.c) + '" data-fac-s="' + esc(f.s) + '" data-fac-fo="' + esc(f.fo) + '">';
+      h += '<div>' + esc(f.n) + '</div>';
+      h += '<div class="fac-ac-sub">' + esc(f.c) + ', ' + esc(stateAbbrToName(f.s)) + ' \u00b7 ' + esc(f.fo) + '</div>';
+      h += '</div>';
+    });
+    list.innerHTML = h;
+    list.style.display = '';
+  });
+
+  list.addEventListener('click', function(e) {
+    var item = e.target.closest('.fac-ac-item');
+    if (!item) return;
+    S.draft.name = item.dataset.facN;
+    S.draft.city = item.dataset.facC;
+    S.draft.state = stateAbbrToName(item.dataset.facS);
+    S.draft.fieldOfficeName = item.dataset.facFo;
+    list.style.display = 'none';
+    input.value = '';
+    render();
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!input.contains(e.target) && !list.contains(e.target)) {
+      list.style.display = 'none';
+    }
+  });
 }
 
 // ── Event Handling (delegation) ──────────────────────────────────
@@ -1888,7 +2456,7 @@ function handleLogin() {
       S.loading = false;
       return hydrateFromMatrix();
     })
-    .then(function() { render(); })
+    .then(function() { render(); matrix.startLongPoll(); })
     .catch(function(err) {
       var status = (err && err.status) || 0;
       var msg;
@@ -1911,12 +2479,22 @@ document.addEventListener('click', function(e) {
   if (!btn) return;
   var action = btn.dataset.action;
 
-  if (action === 'nav') { setState({ currentView: btn.dataset.view }); return; }
-  if (action === 'logout') { matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
+  if (action === 'nav') { setState({ currentView: btn.dataset.view, boardAddingMatter: false }); return; }
+  if (action === 'logout') { matrix.stopLongPoll(); matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'board-add-matter') {
+    var clientList = Object.values(S.clients);
+    if (clientList.length === 0) {
+      setState({ currentView: 'clients' });
+    } else {
+      setState({ boardAddingMatter: true });
+    }
+    return;
+  }
+  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
   if (action === 'toggle-group') {
     var gKey = btn.dataset.group || (btn.closest('[data-group]') && btn.closest('[data-group]').dataset.group);
     if (gKey) { _collapsedGroups[gKey] = !_collapsedGroups[gKey]; render(); }
@@ -1999,7 +2577,7 @@ document.addEventListener('click', function(e) {
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url;
-          a.download = 'habeas-' + (cl.name || 'petition').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+          a.download = 'habeas-' + (cl.name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
           document.body.appendChild(a);
           a.click();
           setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
@@ -2180,13 +2758,7 @@ document.addEventListener('click', function(e) {
 });
 
 // ── Input/Change Event Handling ──────────────────────────────────
-document.addEventListener('input', function(e) {
-  var el = e.target;
-  if (!el.dataset || !el.dataset.change) return;
-  var action = el.dataset.change;
-  var key = el.dataset.fieldKey;
-  var val = el.value;
-
+function dispatchFieldChange(action, key, val) {
   if (action === 'draft-field') {
     S.draft[key] = val;
     return;
@@ -2211,7 +2783,6 @@ document.addEventListener('input', function(e) {
     }
     return;
   }
-
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
@@ -2227,7 +2798,6 @@ document.addEventListener('input', function(e) {
     });
     return;
   }
-
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
@@ -2244,7 +2814,6 @@ document.addEventListener('input', function(e) {
     });
     return;
   }
-
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
@@ -2253,14 +2822,48 @@ document.addEventListener('input', function(e) {
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
     return;
   }
+}
+
+document.addEventListener('input', function(e) {
+  var el = e.target;
+  if (!el.dataset || !el.dataset.change) return;
+  var action = el.dataset.change;
+  var key = el.dataset.fieldKey;
+  var val = el.value;
+  if (action.match(/-custom$/)) {
+    dispatchFieldChange(action.replace(/-custom$/, ''), key, val);
+    return;
+  }
+  dispatchFieldChange(action, key, val);
 });
 
-// Select/change handler for pickers
 document.addEventListener('change', function(e) {
   var el = e.target;
   if (!el.dataset || !el.dataset.change) return;
   var action = el.dataset.change;
   var val = el.value;
+
+  // Enum-or-custom dropdown changed
+  if (action.match(/-enum$/)) {
+    var baseAction = action.replace(/-enum$/, '');
+    var key = el.dataset.fieldKey;
+    if (val === '__custom__') {
+      var customInp = el.parentNode.querySelector('.enum-custom-inp');
+      if (customInp) { customInp.style.display = ''; customInp.focus(); }
+      return;
+    } else {
+      var customInp = el.parentNode.querySelector('.enum-custom-inp');
+      if (customInp) customInp.style.display = 'none';
+      dispatchFieldChange(baseAction, key, val);
+      return;
+    }
+  }
+
+  // Pure enum selects (type: 'enum') and date pickers fire 'change'
+  if (el.tagName === 'SELECT' && el.dataset.fieldKey && !action.match(/^apply-/)) {
+    dispatchFieldChange(action, el.dataset.fieldKey, val);
+    return;
+  }
 
   if (action === 'admin-draft-role') {
     S.adminDraft.role = val;
@@ -2269,6 +2872,31 @@ document.addEventListener('change', function(e) {
 
   if (action === 'board-table-group') {
     setState({ boardTableGroup: val });
+    return;
+  }
+
+  if (action === 'board-create-matter') {
+    var cid = val;
+    if (!cid) return;
+    var pid = uid();
+    var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
+    S.petitions[pid] = {
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
+      stageHistory: [{ stage: 'drafted', at: now() }],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
+      facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      filingDate: '', filingDay: '', filingMonthYear: '',
+      createdAt: now(), roomId: clientRoomId,
+    };
+    S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
+    var newPet = S.petitions[pid];
+    if (newPet.roomId && matrix.isReady()) {
+      syncPetitionToMatrix(newPet);
+      matrix.sendStateEvent(newPet.roomId, EVT_PETITION_BLOCKS, { blocks: newPet.blocks }, newPet.id)
+        .catch(function(e) { console.error('Block sync failed:', e); });
+    }
     return;
   }
 
@@ -2521,7 +3149,7 @@ document.addEventListener('DOMContentLoaded', function() {
         S.loading = false;
         return hydrateFromMatrix();
       })
-      .then(function() { render(); })
+      .then(function() { render(); matrix.startLongPoll(); })
       .catch(function(err) {
         console.error('Session restore failed:', err);
         var status = (err && err.status) || 0;
