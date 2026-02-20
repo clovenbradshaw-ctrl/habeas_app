@@ -853,6 +853,143 @@ function doExportPDF(blocks, vars) {
   setTimeout(function() { w.focus(); w.print(); }, 500);
 }
 
+// ── CSV Export Functions ────────────────────────────────────────
+function csvEscape(val) {
+  if (val == null) return '';
+  var s = String(val);
+  if (s.indexOf('"') >= 0 || s.indexOf(',') >= 0 || s.indexOf('\n') >= 0 || s.indexOf('\r') >= 0) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function buildCSV(headers, rows) {
+  var lines = [headers.map(csvEscape).join(',')];
+  rows.forEach(function(row) {
+    lines.push(row.map(csvEscape).join(','));
+  });
+  return lines.join('\r\n');
+}
+
+function downloadCSV(csvString, filename) {
+  var blob = new Blob(['\ufeff' + csvString], { type: 'text/csv;charset=utf-8' });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+}
+
+function exportPetitionsCSV() {
+  var all = Object.values(S.petitions);
+  var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  vis.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+
+  var headers = ['Client Name', 'Case Number', 'Stage', 'District', 'Division',
+    'Facility', 'Facility City', 'Facility State', 'Warden',
+    'Field Office', 'Field Office Director', 'Attorney 1', 'Attorney 2',
+    'Filing Date', 'Created By', 'Created At'];
+
+  var rows = vis.map(function(p) {
+    var cl = S.clients[p.clientId];
+    var a1 = p._att1Id ? S.attProfiles[p._att1Id] : null;
+    var a2 = p._att2Id ? S.attProfiles[p._att2Id] : null;
+    var creator = S.users[p.createdBy] ? S.users[p.createdBy].displayName : p.createdBy;
+    return [
+      cl ? cl.name || '' : '',
+      p.caseNumber || '',
+      p.stage || '',
+      p.district || '',
+      p.division || '',
+      p.facilityName || '',
+      p.facilityCity || '',
+      p.facilityState || '',
+      p.warden || '',
+      p.fieldOfficeName || '',
+      p.fieldOfficeDirector || '',
+      a1 ? a1.name || '' : '',
+      a2 ? a2.name || '' : '',
+      p.filingDate || '',
+      creator || '',
+      p.createdAt || ''
+    ];
+  });
+
+  var dateSlice = new Date().toISOString().slice(0, 10);
+  downloadCSV(buildCSV(headers, rows), 'petitions-' + dateSlice + '.csv');
+}
+
+function exportClientsCSV() {
+  var allClients = Object.values(S.clients);
+  var clientList;
+  if (S.role === 'admin') {
+    clientList = allClients;
+  } else {
+    var myClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+    });
+    clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
+  }
+  clientList.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+
+  var headers = ['Name', 'Country', 'Years in US', 'Entry Date', 'Entry Method',
+    'Arrest Location', 'Arrest Date', 'Criminal History', 'Community Ties',
+    'Petition Count', 'Created At'];
+
+  var rows = clientList.map(function(c) {
+    var petCount = Object.values(S.petitions).filter(function(p) { return p.clientId === c.id; }).length;
+    return [
+      c.name || '',
+      c.country || '',
+      c.yearsInUS || '',
+      c.entryDate || '',
+      c.entryMethod || '',
+      c.apprehensionLocation || '',
+      c.apprehensionDate || '',
+      c.criminalHistory || '',
+      c.communityTies || '',
+      petCount,
+      c.createdAt || ''
+    ];
+  });
+
+  var dateSlice = new Date().toISOString().slice(0, 10);
+  downloadCSV(buildCSV(headers, rows), 'clients-' + dateSlice + '.csv');
+}
+
+function exportFacilitiesCSV() {
+  var items = Object.values(S.facilities);
+  items.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+  var headers = ['Name', 'City', 'State', 'Warden', 'Field Office', 'Field Office Director'];
+  var rows = items.map(function(f) {
+    return [f.name || '', f.city || '', f.state || '', f.warden || '', f.fieldOfficeName || '', f.fieldOfficeDirector || ''];
+  });
+  downloadCSV(buildCSV(headers, rows), 'facilities-' + new Date().toISOString().slice(0, 10) + '.csv');
+}
+
+function exportCourtsCSV() {
+  var items = Object.values(S.courts);
+  items.sort(function(a, b) { return (a.district || '').localeCompare(b.district || ''); });
+  var headers = ['District', 'Division'];
+  var rows = items.map(function(c) {
+    return [c.district || '', c.division || ''];
+  });
+  downloadCSV(buildCSV(headers, rows), 'courts-' + new Date().toISOString().slice(0, 10) + '.csv');
+}
+
+function exportAttorneyProfilesCSV() {
+  var items = Object.values(S.attProfiles);
+  items.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+  var headers = ['Name', 'Bar No', 'Firm', 'Address', 'City/State/Zip', 'Phone', 'Fax', 'Email', 'Pro Hac Vice'];
+  var rows = items.map(function(a) {
+    return [a.name || '', a.barNo || '', a.firm || '', a.address || '', a.cityStateZip || '', a.phone || '', a.fax || '', a.email || '', a.proHacVice || ''];
+  });
+  downloadCSV(buildCSV(headers, rows), 'attorney-profiles-' + new Date().toISOString().slice(0, 10) + '.csv');
+}
+
 // ── Template-based export (uses template.html) ─────────────────
 function buildExportFromTemplate(vars, forWord) {
   return fetch('template.html')
@@ -1147,6 +1284,11 @@ function renderBoard() {
     h += '</div>';
   }
 
+  h += '<div class="board-export-btns">';
+  h += '<button class="hbtn sm" data-action="export-petitions-csv">&#8681; Petitions CSV</button>';
+  h += '<button class="hbtn sm" data-action="export-clients-csv">&#8681; Clients CSV</button>';
+  h += '</div>';
+
   h += '</div>';
 
   if (S.boardMode === 'table') {
@@ -1350,6 +1492,7 @@ function renderDirectory() {
   if (tab === 'facilities') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
+    h += '<button class="hbtn sm" data-action="export-facilities-csv">&#8681; CSV</button>';
     h += '</div>';
     h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
@@ -1383,6 +1526,7 @@ function renderDirectory() {
   if (tab === 'courts') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
+    h += '<button class="hbtn sm" data-action="export-courts-csv">&#8681; CSV</button>';
     h += '</div>';
     h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
     h += '<div class="dir-list">';
@@ -1415,6 +1559,7 @@ function renderDirectory() {
   if (tab === 'attorneys') {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
+    h += '<button class="hbtn sm" data-action="export-attorneys-csv">&#8681; CSV</button>';
     h += '</div>';
     h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
     h += '<div class="dir-list">';
@@ -1981,6 +2126,13 @@ document.addEventListener('click', function(e) {
       });
     return;
   }
+
+  // CSV exports
+  if (action === 'export-petitions-csv') { exportPetitionsCSV(); return; }
+  if (action === 'export-clients-csv') { exportClientsCSV(); return; }
+  if (action === 'export-facilities-csv') { exportFacilitiesCSV(); return; }
+  if (action === 'export-courts-csv') { exportCourtsCSV(); return; }
+  if (action === 'export-attorneys-csv') { exportAttorneyProfilesCSV(); return; }
 
   // Directory
   if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
