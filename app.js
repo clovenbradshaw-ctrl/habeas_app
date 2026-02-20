@@ -4709,6 +4709,15 @@ function handleAdminCreateUser() {
   var createBtn = document.getElementById('admin-create-btn');
   if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
 
+  // Helper: send the EVT_USER state event, auto-promoting room permissions if needed
+  function setUserRole() {
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+      displayName: displayName,
+      role: role,
+      active: true,
+    }, mxid);
+  }
+
   // Step 1: Create account via Synapse admin API
   matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
     password: d.password,
@@ -4718,11 +4727,16 @@ function handleAdminCreateUser() {
   })
   .then(function() {
     // Step 2: Store role in !org room as EVT_USER state event
-    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
-      displayName: displayName,
-      role: role,
-      active: true,
-    }, mxid);
+    // If this fails with 403, try to auto-promote via make_room_admin and retry
+    return setUserRole().catch(function(e) {
+      if (e && e.status === 403 && S.isSynapseAdmin) {
+        // Room permissions insufficient — use Synapse admin API to promote ourselves
+        return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
+          return setUserRole();
+        });
+      }
+      throw e;
+    });
   })
   .then(function() {
     // Step 3: Invite user to !org room
@@ -4770,7 +4784,12 @@ function handleAdminCreateUser() {
   .catch(function(err) {
     var msg = (err && err.error) || (err && err.message) || 'Failed to create user.';
     if (err && err.status === 403) {
-      msg = 'Access denied. Your account may not have Synapse server admin privileges. Create users via command line instead.';
+      msg = 'Access denied. Your account may not have sufficient privileges. ';
+      if (!S.isSynapseAdmin) {
+        msg += 'Your account lacks Synapse server admin privileges. Create users via command line instead.';
+      } else {
+        msg += 'The Synapse account was created but room permissions could not be set. Try refreshing the page and re-opening the Admin panel.';
+      }
     }
     showAdminError('admin-create-error', msg);
     if (createBtn) { createBtn.disabled = false; createBtn.textContent = 'Create Account'; }
@@ -4785,12 +4804,24 @@ function handleAdminSaveUser() {
   var role = d.role || 'attorney';
   var powerLevel = role === 'admin' ? 50 : 0;
 
-  // Update EVT_USER state event
-  var chain = matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
-    displayName: displayName,
-    role: role,
-    active: S.users[mxid] ? S.users[mxid].active : true,
-  }, mxid);
+  // Helper: send the EVT_USER state event
+  function setUserRole() {
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+      displayName: displayName,
+      role: role,
+      active: S.users[mxid] ? S.users[mxid].active : true,
+    }, mxid);
+  }
+
+  // Update EVT_USER state event, auto-promoting room permissions if needed
+  var chain = setUserRole().catch(function(e) {
+    if (e && e.status === 403 && S.isSynapseAdmin) {
+      return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
+        return setUserRole();
+      });
+    }
+    throw e;
+  });
 
   // Update power levels in both rooms
   chain = chain.then(function() {
@@ -4831,13 +4862,24 @@ function handleAdminSaveUser() {
 }
 
 function handleAdminDeactivateUser(mxid) {
+  function setUserDeactivated() {
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+      displayName: S.users[mxid] ? S.users[mxid].displayName : mxid,
+      role: S.users[mxid] ? S.users[mxid].role : 'attorney',
+      active: false,
+    }, mxid);
+  }
+
   matrix.adminApi('POST', '/v1/deactivate/' + encodeURIComponent(mxid), { erase: false })
     .then(function() {
-      return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
-        displayName: S.users[mxid] ? S.users[mxid].displayName : mxid,
-        role: S.users[mxid] ? S.users[mxid].role : 'attorney',
-        active: false,
-      }, mxid);
+      return setUserDeactivated().catch(function(e) {
+        if (e && e.status === 403 && S.isSynapseAdmin) {
+          return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
+            return setUserDeactivated();
+          });
+        }
+        throw e;
+      });
     })
     .then(function() {
       if (S.users[mxid]) {
@@ -4858,12 +4900,24 @@ function handleAdminAdoptUser(mxid) {
   var role = d.role || 'attorney';
   var powerLevel = role === 'admin' ? 50 : 0;
 
-  // Step 1: Store role in !org room as EVT_USER state event
-  matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
-    displayName: displayName,
-    role: role,
-    active: true,
-  }, mxid)
+  // Helper: send the EVT_USER state event
+  function setUserRole() {
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+      displayName: displayName,
+      role: role,
+      active: true,
+    }, mxid);
+  }
+
+  // Step 1: Store role in !org room as EVT_USER state event, auto-promote if needed
+  setUserRole().catch(function(e) {
+    if (e && e.status === 403 && S.isSynapseAdmin) {
+      return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
+        return setUserRole();
+      });
+    }
+    throw e;
+  })
   .then(function() {
     // Step 2: Invite to !org room (may already be a member)
     return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
