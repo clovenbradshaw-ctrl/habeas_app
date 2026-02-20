@@ -25,11 +25,18 @@
     width: 8.5in;
     min-height: 11in;
     margin: 0 auto;
-    padding: 1in;
+    padding: 0;
     box-sizing: border-box;
     page-break-after: always;
   }
   .page:last-child { page-break-after: auto; }
+
+  /* Screen-only padding so template preview still looks right in browser */
+  @media screen {
+    .page {
+      padding: 1in;
+    }
+  }
 
   /* Placeholder styling */
   .ph {
