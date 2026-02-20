@@ -22,6 +22,26 @@ function ts(iso) {
     });
   } catch (e) { return iso; }
 }
+function timeAgo(iso) {
+  try {
+    var diff = Date.now() - new Date(iso).getTime();
+    if (diff < 0) return 'just now';
+    var s = Math.floor(diff / 1000);
+    if (s < 60) return 'just now';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + (m === 1 ? ' min ago' : ' mins ago');
+    var hr = Math.floor(m / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    var d = Math.floor(hr / 24);
+    if (d < 7) return d + (d === 1 ? ' day ago' : ' days ago');
+    var w = Math.floor(d / 7);
+    if (w < 5) return w + (w === 1 ? ' week ago' : ' weeks ago');
+    var mo = Math.floor(d / 30);
+    if (mo < 12) return mo + (mo === 1 ? ' month ago' : ' months ago');
+    var y = Math.floor(d / 365);
+    return y + (y === 1 ? ' year ago' : ' years ago');
+  } catch (e) { return ''; }
+}
 function esc(s) {
   var d = document.createElement('div');
   d.textContent = s;
@@ -476,9 +496,12 @@ var S = {
   dirTab: 'facilities',
   editId: null,
   draft: {},
+  boardMode: 'kanban',
+  boardTableGroup: 'stage',
   _rendering: false,
 };
 
+var _collapsedGroups = {};
 var _prevView = null;
 function setState(updates) {
   Object.assign(S, updates);
@@ -876,6 +899,13 @@ function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction)
   return h;
 }
 
+function petAttorneyNames(p) {
+  var names = [];
+  if (p._att1Id && S.attProfiles[p._att1Id]) names.push(S.attProfiles[p._att1Id].name);
+  if (p._att2Id && S.attProfiles[p._att2Id]) names.push(S.attProfiles[p._att2Id].name);
+  return names.length > 0 ? names.join(', ') : '';
+}
+
 function htmlProvenanceBadge(record) {
   if (!record || !record.createdBy) return '';
   var h = '<div class="prov"><span class="prov-item">Created by <strong>' + esc(record.createdBy) + '</strong> ';
@@ -929,7 +959,45 @@ function renderHeader() {
 function renderBoard() {
   var all = Object.values(S.petitions);
   var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
-  var h = '<div class="board-view"><div class="kanban">';
+
+  var h = '<div class="board-view">';
+
+  // Toggle bar
+  h += '<div class="board-toggle-bar">';
+  h += '<div class="board-toggle">';
+  h += '<button class="board-toggle-btn' + (S.boardMode === 'kanban' ? ' on' : '') + '" data-action="board-mode" data-mode="kanban">Kanban</button>';
+  h += '<button class="board-toggle-btn' + (S.boardMode === 'table' ? ' on' : '') + '" data-action="board-mode" data-mode="table">Table</button>';
+  h += '</div>';
+
+  if (S.boardMode === 'table') {
+    h += '<div class="board-group-sel">';
+    h += '<label class="board-group-label">Group by</label>';
+    h += '<select class="finp board-group-input" data-change="board-table-group">';
+    ['stage', 'attorney', 'facility', 'court'].forEach(function(g) {
+      h += '<option value="' + g + '"' + (S.boardTableGroup === g ? ' selected' : '') + '>' + g.charAt(0).toUpperCase() + g.slice(1) + '</option>';
+    });
+    h += '</select>';
+    h += '</div>';
+  }
+
+  h += '</div>';
+
+  if (S.boardMode === 'table') {
+    h += renderBoardTable(vis);
+  } else {
+    h += renderBoardKanban(vis);
+  }
+
+  if (vis.length === 0) {
+    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderBoardKanban(vis) {
+  var h = '<div class="kanban">';
   STAGES.forEach(function(stage) {
     var items = vis.filter(function(p) { return p.stage === stage; })
       .sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
@@ -944,11 +1012,15 @@ function renderBoard() {
     items.forEach(function(p) {
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
-      h += '<div class="kb-card" style="border-left-color:' + m.color + '">';
-      h += '<div class="kb-card-name" data-action="open-petition" data-id="' + p.id + '">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
+      var attNames = petAttorneyNames(p);
+      h += '<div class="kb-card" style="border-left-color:' + m.color + '" data-action="open-petition" data-id="' + p.id + '">';
+      h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
-      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + '</div>';
+      if (attNames) {
+        h += '<div class="kb-card-meta kb-card-att">' + esc(attNames) + '</div>';
+      }
+      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + ' <span class="kb-card-ago">(' + timeAgo(p.createdAt) + ')</span></div>';
       if (p.stageHistory && p.stageHistory.length > 1) {
         h += '<div class="kb-dots">';
         p.stageHistory.forEach(function(sh) {
@@ -965,10 +1037,77 @@ function renderBoard() {
     h += '</div></div>';
   });
   h += '</div>';
-  if (Object.keys(S.petitions).length === 0) {
-    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  return h;
+}
+
+function renderBoardTable(vis) {
+  var groupKey = S.boardTableGroup;
+  var groups = {};
+
+  vis.forEach(function(p) {
+    var key;
+    if (groupKey === 'stage') {
+      key = p.stage || 'drafted';
+    } else if (groupKey === 'attorney') {
+      key = petAttorneyNames(p) || 'Unassigned';
+    } else if (groupKey === 'facility') {
+      key = p.facilityName || 'No Facility';
+    } else if (groupKey === 'court') {
+      key = p.district || 'No Court';
+    } else {
+      key = 'All';
+    }
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  });
+
+  var groupKeys;
+  if (groupKey === 'stage') {
+    groupKeys = STAGES.filter(function(s) { return groups[s]; });
+  } else {
+    groupKeys = Object.keys(groups).sort();
   }
-  h += '</div>';
+
+  var h = '<div class="board-table-wrap"><table class="board-table">';
+  h += '<thead><tr>';
+  h += '<th>Client</th><th>Case No.</th><th>Stage</th><th>District</th>';
+  h += '<th>Facility</th><th>Attorney(s)</th><th>Created</th><th>Age</th>';
+  h += '</tr></thead>';
+  h += '<tbody>';
+
+  groupKeys.forEach(function(gk) {
+    var items = groups[gk];
+    items.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+    var collapsed = _collapsedGroups[groupKey + ':' + gk];
+    var sm = (groupKey === 'stage' && SM[gk]) ? SM[gk] : null;
+    var colorDot = sm ? '<span class="kb-dot" style="background:' + sm.color + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' : '';
+
+    h += '<tr class="board-table-group-hdr" data-action="toggle-group" data-group="' + esc(groupKey + ':' + gk) + '">';
+    h += '<td colspan="8">';
+    h += '<span class="group-arrow">' + (collapsed ? '&#9654;' : '&#9660;') + '</span> ';
+    h += colorDot + '<strong>' + esc(gk) + '</strong> <span class="group-count">(' + items.length + ')</span>';
+    h += '</td></tr>';
+
+    if (!collapsed) {
+      items.forEach(function(p) {
+        var cl = S.clients[p.clientId];
+        var attNames = petAttorneyNames(p);
+        var stm = SM[p.stage] || SM.drafted;
+        h += '<tr class="board-table-row" data-action="open-petition" data-id="' + p.id + '">';
+        h += '<td class="bt-client">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</td>';
+        h += '<td>' + esc(p.caseNumber || '\u2014') + '</td>';
+        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(p.stage) + '</span></td>';
+        h += '<td>' + esc(p.district || '\u2014') + '</td>';
+        h += '<td>' + esc(p.facilityName || '\u2014') + '</td>';
+        h += '<td>' + esc(attNames || '\u2014') + '</td>';
+        h += '<td class="bt-date">' + new Date(p.createdAt).toLocaleDateString() + '</td>';
+        h += '<td class="bt-age">' + timeAgo(p.createdAt) + '</td>';
+        h += '</tr>';
+      });
+    }
+  });
+
+  h += '</tbody></table></div>';
   return h;
 }
 
@@ -1460,7 +1599,17 @@ document.addEventListener('click', function(e) {
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
   // Board
-  if (action === 'open-petition') { setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' }); return; }
+  if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'toggle-group') {
+    var gKey = btn.dataset.group || (btn.closest('[data-group]') && btn.closest('[data-group]').dataset.group);
+    if (gKey) { _collapsedGroups[gKey] = !_collapsedGroups[gKey]; render(); }
+    return;
+  }
+  if (action === 'open-petition') {
+    if (e.target.closest('.kb-card-actions')) return;
+    setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' });
+    return;
+  }
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
@@ -1703,6 +1852,12 @@ document.addEventListener('change', function(e) {
   if (!el.dataset || !el.dataset.change) return;
   var action = el.dataset.change;
   var val = el.value;
+
+  if (action === 'board-table-group') {
+    setState({ boardTableGroup: val });
+    return;
+  }
+
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) return;
 

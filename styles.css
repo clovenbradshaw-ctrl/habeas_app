@@ -409,7 +409,12 @@ body,
   border-left: 4px solid var(--accent);
   border-radius: var(--radius);
   padding: 12px 14px;
-  cursor: default;
+  cursor: pointer;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.kb-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
 }
 .kb-card-name {
   font-weight: 600;
@@ -471,6 +476,156 @@ body,
   text-align: center;
   padding: 60px 20px;
   color: var(--muted);
+}
+
+/* ── Board Toggle Bar ──────────────────────────────── */
+.board-toggle-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}
+.board-toggle {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.board-toggle-btn {
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 6px 16px;
+  border: none;
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.board-toggle-btn:not(:last-child) {
+  border-right: 1px solid var(--border);
+}
+.board-toggle-btn:hover {
+  color: var(--ink);
+  background: #f0ece4;
+}
+.board-toggle-btn.on {
+  background: var(--accent);
+  color: #fff;
+}
+.board-group-sel {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.board-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.3px;
+}
+.board-group-input {
+  width: auto !important;
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  display: inline-block !important;
+}
+
+/* ── Kanban card enhancements ──────────────────────── */
+.kb-card-att {
+  font-style: italic;
+}
+.kb-card-ago {
+  color: #d0c8b8;
+  font-size: 9px;
+}
+
+/* ── Board Table View ──────────────────────────────── */
+.board-table-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  overflow-x: auto;
+}
+.board-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.board-table thead th {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--border);
+  background: var(--bg);
+  white-space: nowrap;
+}
+.board-table-group-hdr td {
+  padding: 10px 12px;
+  background: #f0ece4;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+.board-table-group-hdr:hover td {
+  background: #e8e2d4;
+}
+.group-arrow {
+  display: inline-block;
+  width: 14px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.group-count {
+  color: var(--muted);
+  font-weight: 400;
+  font-size: 12px;
+  margin-left: 4px;
+}
+.board-table-row {
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.board-table-row:hover {
+  background: rgba(160, 133, 64, 0.04);
+}
+.board-table-row td {
+  padding: 8px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+  white-space: nowrap;
+}
+.bt-client {
+  font-weight: 600;
+}
+.bt-date {
+  color: var(--muted);
+  font-size: 11px;
+}
+.bt-age {
+  color: #c0b8a8;
+  font-size: 11px;
+}
+
+@media (max-width: 900px) {
+  .board-table-wrap {
+    overflow-x: scroll;
+  }
+  .board-toggle-bar {
+    flex-direction: column;
+    gap: 10px;
+    align-items: flex-start;
+  }
 }
 
 /* ── Directory View ───────────────────────────────── */
