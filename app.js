@@ -22,6 +22,26 @@ function ts(iso) {
     });
   } catch (e) { return iso; }
 }
+function timeAgo(iso) {
+  try {
+    var diff = Date.now() - new Date(iso).getTime();
+    if (diff < 0) return 'just now';
+    var s = Math.floor(diff / 1000);
+    if (s < 60) return 'just now';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + (m === 1 ? ' min ago' : ' mins ago');
+    var hr = Math.floor(m / 60);
+    if (hr < 24) return hr + (hr === 1 ? ' hour ago' : ' hours ago');
+    var d = Math.floor(hr / 24);
+    if (d < 7) return d + (d === 1 ? ' day ago' : ' days ago');
+    var w = Math.floor(d / 7);
+    if (w < 5) return w + (w === 1 ? ' week ago' : ' weeks ago');
+    var mo = Math.floor(d / 30);
+    if (mo < 12) return mo + (mo === 1 ? ' month ago' : ' months ago');
+    var y = Math.floor(d / 365);
+    return y + (y === 1 ? ' year ago' : ' years ago');
+  } catch (e) { return ''; }
+}
 function esc(s) {
   var d = document.createElement('div');
   d.textContent = s;
@@ -271,15 +291,24 @@ var matrix = {
   _api: function(method, path, body) {
     var opts = { method: method, headers: this._headers() };
     if (body) opts.body = JSON.stringify(body);
+    // Abort fetch after 15 seconds to avoid hanging on unreachable servers
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+    opts.signal = controller.signal;
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
+        clearTimeout(timeoutId);
         if (!r.ok) {
+          var httpStatus = r.status;
           return r.text().then(function(text) {
             try {
-              throw JSON.parse(text);
+              var parsed = JSON.parse(text);
+              // Always include HTTP status on error objects
+              if (!parsed.status) parsed.status = httpStatus;
+              throw parsed;
             } catch(e) {
               if (e instanceof SyntaxError) {
-                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + httpStatus + ' ' + r.statusText, status: httpStatus };
               }
               throw e;
             }
@@ -288,13 +317,19 @@ var matrix = {
         return r.json();
       })
       .catch(function(e) {
+        clearTimeout(timeoutId);
         if (e && e.errcode) throw e;
+        if (e && e.name === 'AbortError') {
+          throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+        }
         throw { errcode: 'M_NETWORK', error: e.message || 'Network error', status: 0 };
       });
   },
 
   login: function(baseUrl, username, password) {
     this.baseUrl = baseUrl;
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
     return fetch(baseUrl + '/_matrix/client/v3/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -304,8 +339,10 @@ var matrix = {
         password: password,
         initial_device_display_name: 'Amino Habeas App',
       }),
+      signal: controller.signal,
     })
     .then(function(r) {
+      clearTimeout(timeoutId);
       if (!r.ok) {
         return r.text().then(function(text) {
           try {
@@ -327,6 +364,13 @@ var matrix = {
       matrix.deviceId = data.device_id;
       matrix.saveSession();
       return data;
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      if (e && e.name === 'AbortError') {
+        throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+      }
+      throw e;
     });
   },
 
@@ -442,6 +486,14 @@ var matrix = {
     return !!this.accessToken;
   },
 
+  // Verify the stored token is still valid by calling /whoami
+  whoami: function() {
+    return this._api('GET', '/account/whoami')
+      .then(function(data) {
+        return data; // { user_id: "@user:server" }
+      });
+  },
+
   saveSession: function() {
     try {
       sessionStorage.setItem('amino_matrix_session', JSON.stringify({
@@ -498,9 +550,12 @@ var S = {
   dirTab: 'facilities',
   editId: null,
   draft: {},
+  boardMode: 'kanban',
+  boardTableGroup: 'stage',
   _rendering: false,
 };
 
+var _collapsedGroups = {};
 var _prevView = null;
 function setState(updates) {
   Object.assign(S, updates);
@@ -771,7 +826,11 @@ function buildDocHTML(blocks, vars) {
       return '<div class="' + cls + '">' + text + '</div>';
     }).join('');
   var parens = Array(24).fill(')').join('<br>');
-  return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="utf-8"><style>@page{size:8.5in 11in;margin:1in}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body>' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</body></html>';
+  return '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head>' +
+    '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
+    '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
+    '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
+    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}</style></head><body><div class="WordSection1">' + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + '</div></body></html>';
 }
 
 function doExportDoc(blocks, vars, name) {
@@ -816,6 +875,24 @@ function buildExportFromTemplate(vars, forWord) {
         // Add Word XML namespaces for .doc compatibility
         html = html.replace('<!doctype html>', '');
         html = html.replace('<html lang="en">', '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">');
+        // Replace HTML5 meta charset with http-equiv form Word understands
+        html = html.replace('<meta charset="utf-8" />', '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">');
+        // Remove viewport meta tag which Word doesn't understand
+        html = html.replace('<meta name="viewport" content="width=device-width, initial-scale=1" />', '');
+        // Inject Word XML document settings after <head>
+        var wordXml = '<!--[if gte mso 9]><xml>' +
+          '<o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings>' +
+          '</xml><xml>' +
+          '<w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument>' +
+          '</xml><![endif]-->';
+        html = html.replace('<head>', '<head>\n' + wordXml);
+        // Add Word-specific page setup CSS
+        var msoCss = '\n  @page WordSection1 { size: 8.5in 11in; margin: 1in; mso-header-margin: 0.5in; mso-footer-margin: 0.5in; mso-paper-source: 0; }' +
+          '\n  div.WordSection1 { page: WordSection1; }';
+        html = html.replace('</style>', msoCss + '\n</style>');
+        // Wrap body content in a WordSection1 div
+        html = html.replace('<body>', '<body><div class="WordSection1">');
+        html = html.replace('</body>', '</div></body>');
       }
       return html;
     });
@@ -829,8 +906,8 @@ function debouncedSync(key, fn) {
 }
 
 function syncClientToMatrix(client) {
-  if (!matrix.isReady() || !client.roomId) return;
-  matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
+  if (!matrix.isReady() || !client.roomId) return Promise.resolve();
+  return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
     id: client.id, name: client.name, country: client.country,
     yearsInUS: client.yearsInUS, entryDate: client.entryDate,
     entryMethod: client.entryMethod,
@@ -841,9 +918,82 @@ function syncClientToMatrix(client) {
   }, '').catch(function(e) { console.error('Client sync failed:', e); });
 }
 
+// Create a Matrix room for a client and sync initial data
+var _pendingRoomCreations = {};
+function createClientRoom(clientId) {
+  if (!matrix.isReady()) return Promise.resolve();
+  var client = S.clients[clientId];
+  if (!client) return Promise.resolve();
+  // Already has a room
+  if (client.roomId) return Promise.resolve(client.roomId);
+  // Room creation already in flight for this client
+  if (_pendingRoomCreations[clientId]) return _pendingRoomCreations[clientId];
+  var roomName = 'client:' + (client.name || client.id);
+  _pendingRoomCreations[clientId] = matrix.createRoom({
+    name: roomName,
+    visibility: 'private',
+    preset: 'private_chat',
+    initial_state: [
+      {
+        type: EVT_CLIENT,
+        state_key: '',
+        content: {
+          id: client.id, name: client.name, country: client.country,
+          yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+          entryMethod: client.entryMethod,
+          apprehensionLocation: client.apprehensionLocation,
+          apprehensionDate: client.apprehensionDate,
+          criminalHistory: client.criminalHistory,
+          communityTies: client.communityTies,
+        },
+      },
+    ],
+  }).then(function(data) {
+    var roomId = data.room_id;
+    // Update local cache
+    if (!matrix.rooms[roomId]) matrix.rooms[roomId] = { stateEvents: {} };
+    if (!matrix.rooms[roomId].stateEvents[EVT_CLIENT]) matrix.rooms[roomId].stateEvents[EVT_CLIENT] = {};
+    matrix.rooms[roomId].stateEvents[EVT_CLIENT][''] = {
+      content: {
+        id: client.id, name: client.name, country: client.country,
+        yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+        entryMethod: client.entryMethod,
+        apprehensionLocation: client.apprehensionLocation,
+        apprehensionDate: client.apprehensionDate,
+        criminalHistory: client.criminalHistory,
+        communityTies: client.communityTies,
+      },
+      sender: matrix.userId,
+      origin_server_ts: Date.now(),
+    };
+    // Update client's roomId in state
+    client.roomId = roomId;
+    S.clients[clientId] = client;
+    // Also update roomId on any petitions for this client
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.clientId === clientId && !p.roomId) {
+        p.roomId = roomId;
+        // Sync any pending petitions now that we have a roomId
+        syncPetitionToMatrix(p);
+        if (p.blocks && p.blocks.length > 0) {
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
+            .catch(function(e) { console.error('Block sync failed:', e); });
+        }
+      }
+    });
+    console.log('Created Matrix room for client', clientId, '→', roomId);
+    delete _pendingRoomCreations[clientId];
+    return roomId;
+  }).catch(function(e) {
+    console.error('Failed to create client room:', e);
+    delete _pendingRoomCreations[clientId];
+  });
+  return _pendingRoomCreations[clientId];
+}
+
 function syncPetitionToMatrix(pet) {
-  if (!matrix.isReady() || !pet.roomId) return;
-  matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
+  if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
+  return matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
     clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
     district: pet.district, division: pet.division, caseNumber: pet.caseNumber,
     facilityName: pet.facilityName, facilityCity: pet.facilityCity,
@@ -915,6 +1065,13 @@ function htmlPicker(label, items, displayFn, value, onChangeAction, onNewAction)
   return h;
 }
 
+function petAttorneyNames(p) {
+  var names = [];
+  if (p._att1Id && S.attProfiles[p._att1Id]) names.push(S.attProfiles[p._att1Id].name);
+  if (p._att2Id && S.attProfiles[p._att2Id]) names.push(S.attProfiles[p._att2Id].name);
+  return names.length > 0 ? names.join(', ') : '';
+}
+
 function htmlProvenanceBadge(record) {
   if (!record || !record.createdBy) return '';
   var h = '<div class="prov"><span class="prov-item">Created by <strong>' + esc(record.createdBy) + '</strong> ';
@@ -969,7 +1126,45 @@ function renderHeader() {
 function renderBoard() {
   var all = Object.values(S.petitions);
   var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
-  var h = '<div class="board-view"><div class="kanban">';
+
+  var h = '<div class="board-view">';
+
+  // Toggle bar
+  h += '<div class="board-toggle-bar">';
+  h += '<div class="board-toggle">';
+  h += '<button class="board-toggle-btn' + (S.boardMode === 'kanban' ? ' on' : '') + '" data-action="board-mode" data-mode="kanban">Kanban</button>';
+  h += '<button class="board-toggle-btn' + (S.boardMode === 'table' ? ' on' : '') + '" data-action="board-mode" data-mode="table">Table</button>';
+  h += '</div>';
+
+  if (S.boardMode === 'table') {
+    h += '<div class="board-group-sel">';
+    h += '<label class="board-group-label">Group by</label>';
+    h += '<select class="finp board-group-input" data-change="board-table-group">';
+    ['stage', 'attorney', 'facility', 'court'].forEach(function(g) {
+      h += '<option value="' + g + '"' + (S.boardTableGroup === g ? ' selected' : '') + '>' + g.charAt(0).toUpperCase() + g.slice(1) + '</option>';
+    });
+    h += '</select>';
+    h += '</div>';
+  }
+
+  h += '</div>';
+
+  if (S.boardMode === 'table') {
+    h += renderBoardTable(vis);
+  } else {
+    h += renderBoardKanban(vis);
+  }
+
+  if (vis.length === 0) {
+    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
+function renderBoardKanban(vis) {
+  var h = '<div class="kanban">';
   STAGES.forEach(function(stage) {
     var items = vis.filter(function(p) { return p.stage === stage; })
       .sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
@@ -984,11 +1179,15 @@ function renderBoard() {
     items.forEach(function(p) {
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
-      h += '<div class="kb-card" style="border-left-color:' + m.color + '">';
-      h += '<div class="kb-card-name" data-action="open-petition" data-id="' + p.id + '">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
+      var attNames = petAttorneyNames(p);
+      h += '<div class="kb-card" style="border-left-color:' + m.color + '" data-action="open-petition" data-id="' + p.id + '">';
+      h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
-      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + '</div>';
+      if (attNames) {
+        h += '<div class="kb-card-meta kb-card-att">' + esc(attNames) + '</div>';
+      }
+      h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + ' <span class="kb-card-ago">(' + timeAgo(p.createdAt) + ')</span></div>';
       if (p.stageHistory && p.stageHistory.length > 1) {
         h += '<div class="kb-dots">';
         p.stageHistory.forEach(function(sh) {
@@ -1005,10 +1204,77 @@ function renderBoard() {
     h += '</div></div>';
   });
   h += '</div>';
-  if (Object.keys(S.petitions).length === 0) {
-    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+  return h;
+}
+
+function renderBoardTable(vis) {
+  var groupKey = S.boardTableGroup;
+  var groups = {};
+
+  vis.forEach(function(p) {
+    var key;
+    if (groupKey === 'stage') {
+      key = p.stage || 'drafted';
+    } else if (groupKey === 'attorney') {
+      key = petAttorneyNames(p) || 'Unassigned';
+    } else if (groupKey === 'facility') {
+      key = p.facilityName || 'No Facility';
+    } else if (groupKey === 'court') {
+      key = p.district || 'No Court';
+    } else {
+      key = 'All';
+    }
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(p);
+  });
+
+  var groupKeys;
+  if (groupKey === 'stage') {
+    groupKeys = STAGES.filter(function(s) { return groups[s]; });
+  } else {
+    groupKeys = Object.keys(groups).sort();
   }
-  h += '</div>';
+
+  var h = '<div class="board-table-wrap"><table class="board-table">';
+  h += '<thead><tr>';
+  h += '<th>Client</th><th>Case No.</th><th>Stage</th><th>District</th>';
+  h += '<th>Facility</th><th>Attorney(s)</th><th>Created</th><th>Age</th>';
+  h += '</tr></thead>';
+  h += '<tbody>';
+
+  groupKeys.forEach(function(gk) {
+    var items = groups[gk];
+    items.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+    var collapsed = _collapsedGroups[groupKey + ':' + gk];
+    var sm = (groupKey === 'stage' && SM[gk]) ? SM[gk] : null;
+    var colorDot = sm ? '<span class="kb-dot" style="background:' + sm.color + ';display:inline-block;vertical-align:middle;margin-right:6px"></span>' : '';
+
+    h += '<tr class="board-table-group-hdr" data-action="toggle-group" data-group="' + esc(groupKey + ':' + gk) + '">';
+    h += '<td colspan="8">';
+    h += '<span class="group-arrow">' + (collapsed ? '&#9654;' : '&#9660;') + '</span> ';
+    h += colorDot + '<strong>' + esc(gk) + '</strong> <span class="group-count">(' + items.length + ')</span>';
+    h += '</td></tr>';
+
+    if (!collapsed) {
+      items.forEach(function(p) {
+        var cl = S.clients[p.clientId];
+        var attNames = petAttorneyNames(p);
+        var stm = SM[p.stage] || SM.drafted;
+        h += '<tr class="board-table-row" data-action="open-petition" data-id="' + p.id + '">';
+        h += '<td class="bt-client">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</td>';
+        h += '<td>' + esc(p.caseNumber || '\u2014') + '</td>';
+        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(p.stage) + '</span></td>';
+        h += '<td>' + esc(p.district || '\u2014') + '</td>';
+        h += '<td>' + esc(p.facilityName || '\u2014') + '</td>';
+        h += '<td>' + esc(attNames || '\u2014') + '</td>';
+        h += '<td class="bt-date">' + new Date(p.createdAt).toLocaleDateString() + '</td>';
+        h += '<td class="bt-age">' + timeAgo(p.createdAt) + '</td>';
+        h += '</tr>';
+      });
+    }
+  });
+
+  h += '</tbody></table></div>';
   return h;
 }
 
@@ -1616,7 +1882,17 @@ document.addEventListener('click', function(e) {
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
   // Board
-  if (action === 'open-petition') { setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' }); return; }
+  if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'toggle-group') {
+    var gKey = btn.dataset.group || (btn.closest('[data-group]') && btn.closest('[data-group]').dataset.group);
+    if (gKey) { _collapsedGroups[gKey] = !_collapsedGroups[gKey]; render(); }
+    return;
+  }
+  if (action === 'open-petition') {
+    if (e.target.closest('.kb-card-actions')) return;
+    setState({ selectedPetitionId: btn.dataset.id, currentView: 'editor' });
+    return;
+  }
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
@@ -1641,11 +1917,14 @@ document.addEventListener('click', function(e) {
     S.clients[id] = { id: id, name: '', country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
     setState({ selectedClientId: id });
+    // Create a Matrix room for the client in the background
+    createClientRoom(id);
     return;
   }
   if (action === 'create-petition') {
     var cid = btn.dataset.clientId;
     var pid = uid();
+    var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
     S.petitions[pid] = {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
       stageHistory: [{ stage: 'drafted', at: now() }],
@@ -1653,10 +1932,17 @@ document.addEventListener('click', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
-      createdAt: now(), roomId: (S.clients[cid] && S.clients[cid].roomId) || '',
+      createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
+    // Sync petition to Matrix (will be picked up by createClientRoom if roomId is empty)
+    var pet = S.petitions[pid];
+    if (pet.roomId && matrix.isReady()) {
+      syncPetitionToMatrix(pet);
+      matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
+        .catch(function(e) { console.error('Block sync failed:', e); });
+    }
     return;
   }
 
@@ -1882,7 +2168,14 @@ document.addEventListener('input', function(e) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
-    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
+    debouncedSync('client-' + client.id, function() {
+      if (client.roomId) {
+        syncClientToMatrix(client);
+      } else if (matrix.isReady()) {
+        // Room hasn't been created yet — create it now (includes initial sync)
+        createClientRoom(client.id);
+      }
+    });
     return;
   }
 
@@ -1893,7 +2186,13 @@ document.addEventListener('input', function(e) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
-    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
+    debouncedSync('client-' + client.id, function() {
+      if (client.roomId) {
+        syncClientToMatrix(client);
+      } else if (matrix.isReady()) {
+        createClientRoom(client.id);
+      }
+    });
     return;
   }
 
@@ -1916,6 +2215,11 @@ document.addEventListener('change', function(e) {
 
   if (action === 'admin-draft-role') {
     S.adminDraft.role = val;
+    return;
+  }
+
+  if (action === 'board-table-group') {
+    setState({ boardTableGroup: val });
     return;
   }
 
@@ -2125,10 +2429,44 @@ function handleAdminDeactivateUser(mxid) {
     });
 }
 
+// ── Flush pending syncs on visibility change / page unload ──────
+// When the user switches tabs or is about to leave, immediately fire
+// any pending debounced syncs (best-effort — fetch may be cancelled)
+function flushPendingSyncs() {
+  var keys = Object.keys(_syncTimers);
+  if (keys.length === 0) return;
+  keys.forEach(function(key) {
+    // clearTimeout returns undefined; we need to re-invoke the sync
+    clearTimeout(_syncTimers[key]);
+    delete _syncTimers[key];
+  });
+  // Re-sync all clients and petitions that have room IDs
+  if (!matrix.isReady()) return;
+  Object.values(S.clients).forEach(function(client) {
+    if (client.roomId) syncClientToMatrix(client);
+  });
+  Object.values(S.petitions).forEach(function(pet) {
+    if (pet.roomId) syncPetitionToMatrix(pet);
+  });
+}
+
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') flushPendingSyncs();
+});
+window.addEventListener('beforeunload', flushPendingSyncs);
+
 // ── Initialization ───────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
+  render(); // Show loading state immediately
   if (matrix.loadSession()) {
-    matrix.initialSync()
+    // First verify the token is still valid with /whoami
+    matrix.whoami()
+      .then(function(whoamiData) {
+        console.log('Session verified for:', whoamiData.user_id);
+        // Ensure userId matches what we have stored
+        if (whoamiData.user_id) matrix.userId = whoamiData.user_id;
+        return matrix.initialSync();
+      })
       .then(function() {
         S.authenticated = true;
         S.loading = false;
@@ -2140,6 +2478,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var status = (err && err.status) || 0;
         // On 401/403 (invalid token), clear session and show login
         if (status === 401 || status === 403) {
+          console.warn('Token invalid or expired, clearing session');
           matrix.clearSession();
           S.loading = false;
           render();
