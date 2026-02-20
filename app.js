@@ -1030,6 +1030,9 @@ var S = {
   boardTableGroup: 'stage',
   boardAddingMatter: false,
   boardShowAllSubmitted: false,
+  boardShowArchived: false,
+  dirShowArchived: false,
+  clientsShowArchived: false,
   _rendering: false,
 };
 
@@ -1302,6 +1305,7 @@ function hydrateFromMatrix() {
           apprehensionDate: cc.apprehensionDate || '',
           criminalHistory: cc.criminalHistory || '',
           communityTies: cc.communityTies || '',
+          archived: !!cc.archived,
           createdAt: new Date(clientEvt.origin_server_ts).toISOString(),
           roomId: roomId,
         };
@@ -1333,6 +1337,7 @@ function hydrateFromMatrix() {
             _facilityId: pc._facilityId, _courtId: pc._courtId,
             _att1Id: pc._att1Id, _att2Id: pc._att2Id,
             pageSettings: pc.pageSettings || Object.assign({}, DEFAULT_PAGE_SETTINGS),
+            archived: !!pc.archived,
             createdAt: new Date(pe.origin_server_ts).toISOString(),
             roomId: roomId,
           };
@@ -1734,7 +1739,7 @@ function downloadCSV(csvString, filename) {
 }
 
 function exportPetitionsCSV() {
-  var all = Object.values(S.petitions);
+  var all = Object.values(S.petitions).filter(function(p) { return !p.archived; });
   var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
   vis.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
 
@@ -1773,7 +1778,7 @@ function exportPetitionsCSV() {
 }
 
 function exportClientsCSV() {
-  var allClients = Object.values(S.clients);
+  var allClients = Object.values(S.clients).filter(function(c) { return !c.archived; });
   var clientList;
   if (S.role === 'admin') {
     clientList = allClients;
@@ -1812,7 +1817,7 @@ function exportClientsCSV() {
 }
 
 function exportFacilitiesCSV() {
-  var items = Object.values(S.facilities);
+  var items = Object.values(S.facilities).filter(function(f) { return !f.archived; });
   items.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
   var headers = ['Name', 'City', 'State', 'Warden', 'Field Office', 'Field Office Director'];
   var rows = items.map(function(f) {
@@ -1822,7 +1827,7 @@ function exportFacilitiesCSV() {
 }
 
 function exportCourtsCSV() {
-  var items = Object.values(S.courts);
+  var items = Object.values(S.courts).filter(function(c) { return !c.archived; });
   items.sort(function(a, b) { return (a.district || '').localeCompare(b.district || ''); });
   var headers = ['District', 'Division'];
   var rows = items.map(function(c) {
@@ -1832,7 +1837,7 @@ function exportCourtsCSV() {
 }
 
 function exportAttorneyProfilesCSV() {
-  var items = Object.values(S.attProfiles);
+  var items = Object.values(S.attProfiles).filter(function(a) { return !a.archived; });
   items.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
   var headers = ['Name', 'Bar No', 'Firm', 'Address', 'City/State/Zip', 'Phone', 'Fax', 'Email', 'Pro Hac Vice'];
   var rows = items.map(function(a) {
@@ -2082,7 +2087,7 @@ function createClientRoom(clientId) {
 
 function syncPetitionToMatrix(pet, label) {
   if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
-  return matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
+  var content = {
     clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
     district: pet.district, division: pet.division, caseNumber: pet.caseNumber,
     facilityName: pet.facilityName, facilityCity: pet.facilityCity,
@@ -2096,7 +2101,9 @@ function syncPetitionToMatrix(pet, label) {
     pageSettings: pet.pageSettings,
     natIceDirector: pet.natIceDirector, natIceDirectorTitle: pet.natIceDirectorTitle,
     natDhsSecretary: pet.natDhsSecretary, natAttorneyGeneral: pet.natAttorneyGeneral,
-  }, pet.id).then(function(data) {
+  };
+  if (pet.archived) content.archived = true;
+  return matrix.sendStateEvent(pet.roomId, EVT_PETITION, content, pet.id).then(function(data) {
     if (label) toast('CON \u22C8 ' + label, 'success');
     return data;
   }).catch(function(e) {
@@ -2398,6 +2405,8 @@ function renderHeader() {
 function renderBoard() {
   var all = Object.values(S.petitions);
   var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  // Filter archived petitions unless toggle is active
+  vis = vis.filter(function(p) { return S.boardShowArchived || !p.archived; });
 
   var h = '<div class="board-view">';
 
@@ -2422,10 +2431,11 @@ function renderBoard() {
   h += '<div class="board-export-btns">';
   h += '<button class="hbtn sm" data-action="export-petitions-csv">&#8681; Petitions CSV</button>';
   h += '<button class="hbtn sm" data-action="export-clients-csv">&#8681; Clients CSV</button>';
+  h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-board-archived"' + (S.boardShowArchived ? ' checked' : '') + '> Archived</label>';
   h += '</div>';
 
   // Add Matter button / inline client picker
-  var clientList = Object.values(S.clients);
+  var clientList = Object.values(S.clients).filter(function(c) { return !c.archived; });
   if (S.role !== 'admin') {
     var myBoardClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
@@ -2517,13 +2527,15 @@ function renderBoardKanban(vis) {
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
       var attNames = petAttorneyNames(p);
-      h += '<div class="kb-card" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
+      var canArchivePet = S.role === 'admin' || p.createdBy === S.currentUser;
+      h += '<div class="kb-card' + (p.archived ? ' archived' : '') + '" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
       h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
       if (attNames) {
         h += '<div class="kb-card-meta kb-card-att">' + esc(attNames) + '</div>';
       }
+      if (p.archived) h += '<span class="archived-badge">Archived</span>';
       h += '<div class="kb-card-date">' + new Date(p.createdAt).toLocaleDateString() + ' <span class="kb-card-ago">(' + timeAgo(p.createdAt) + ')</span></div>';
       if (p.stageHistory && p.stageHistory.length > 1) {
         h += '<div class="kb-dots">';
@@ -2534,8 +2546,13 @@ function renderBoardKanban(vis) {
         h += '</div>';
       }
       h += '<div class="kb-card-actions">';
-      if (si > 0) h += '<button class="kb-btn" data-action="stage-change" data-id="' + p.id + '" data-dir="revert">&larr; ' + STAGES[si - 1] + '</button>';
-      if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + STAGES[si + 1] + ' &rarr;</button>';
+      if (p.archived) {
+        if (canArchivePet) h += '<button class="kb-btn accent" data-action="recover-petition" data-id="' + p.id + '">Recover</button>';
+      } else {
+        if (si > 0) h += '<button class="kb-btn" data-action="stage-change" data-id="' + p.id + '" data-dir="revert">&larr; ' + STAGES[si - 1] + '</button>';
+        if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + STAGES[si + 1] + ' &rarr;</button>';
+        if (canArchivePet) h += '<button class="kb-btn" data-action="archive-petition" data-id="' + p.id + '">Archive</button>';
+      }
       h += '</div></div>';
     });
 
@@ -2618,10 +2635,10 @@ function renderBoardTable(vis) {
         var cl = S.clients[p.clientId];
         var attNames = petAttorneyNames(p);
         var stm = SM[p.stage] || SM.drafted;
-        h += '<tr class="board-table-row" data-action="open-petition" data-id="' + p.id + '">';
+        h += '<tr class="board-table-row' + (p.archived ? ' archived' : '') + '" data-action="open-petition" data-id="' + p.id + '">';
         h += '<td class="bt-client">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</td>';
         h += '<td>' + esc(p.caseNumber || '\u2014') + '</td>';
-        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(p.stage) + '</span></td>';
+        h += '<td><span class="stage-badge sm" style="background:' + stm.color + '">' + esc(p.stage) + '</span>' + (p.archived ? ' <span class="archived-badge">Archived</span>' : '') + '</td>';
         h += '<td>' + esc(p.district || '\u2014') + '</td>';
         h += '<td>' + esc(p.facilityName || '\u2014') + '</td>';
         h += '<td>' + esc(attNames || '\u2014') + '</td>';
@@ -2648,31 +2665,47 @@ function renderClients() {
     });
     clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
   }
+  // Filter archived clients unless toggle is active
+  clientList = clientList.filter(function(c) { return S.clientsShowArchived || !c.archived; });
   var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
   var clientPets = client ? Object.values(S.petitions).filter(function(p) { return p.clientId === client.id; }) : [];
   var h = '<div class="clients-view"><div class="cv-sidebar"><div class="cv-head">';
   h += '<span class="cv-title">Clients</span>';
-  h += '<button class="hbtn accent" data-action="create-client">+ New</button></div>';
+  h += '<button class="hbtn accent" data-action="create-client">+ New</button>';
+  h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-clients-archived"' + (S.clientsShowArchived ? ' checked' : '') + '> Archived</label>';
+  h += '</div>';
   h += '<div class="cv-list">';
   if (clientList.length === 0) {
     h += '<div class="cv-empty">No clients yet.</div>';
   }
   clientList.forEach(function(c) {
-    var pets = Object.values(S.petitions).filter(function(p) { return p.clientId === c.id; });
-    h += '<div class="cv-item' + (S.selectedClientId === c.id ? ' on' : '') + '" data-action="select-client" data-id="' + c.id + '">';
+    var pets = Object.values(S.petitions).filter(function(p) { return p.clientId === c.id && !p.archived; });
+    h += '<div class="cv-item' + (S.selectedClientId === c.id ? ' on' : '') + (c.archived ? ' archived' : '') + '" data-action="select-client" data-id="' + c.id + '">';
     h += '<div class="cv-item-name">' + esc(c.name || 'Unnamed') + '</div>';
-    h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' matter' + (pets.length !== 1 ? 's' : '') : '') + '</div>';
-    pets.forEach(function(p) {
-      var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
-      h += '<span class="stage-badge sm" style="background:' + sc + '">' + p.stage + '</span>';
-    });
+    if (c.archived) {
+      h += '<span class="archived-badge">Archived</span>';
+    } else {
+      h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' matter' + (pets.length !== 1 ? 's' : '') : '') + '</div>';
+      pets.forEach(function(p) {
+        var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
+        h += '<span class="stage-badge sm" style="background:' + sc + '">' + p.stage + '</span>';
+      });
+    }
     h += '</div>';
   });
   h += '</div></div>';
   h += '<div class="cv-detail">';
   if (client) {
+    var canArchiveClient = S.role === 'admin' || clientPets.some(function(p) { return p.createdBy === S.currentUser; });
     h += '<div class="cv-detail-head"><h2>' + esc(client.name || 'New Client') + '</h2>';
-    h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Matter</button></div>';
+    if (client.archived) {
+      h += '<span class="archived-badge">Archived</span>';
+      if (canArchiveClient) h += '<button class="hbtn accent sm" data-action="recover-client" data-id="' + client.id + '">Recover</button>';
+    } else {
+      h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Matter</button>';
+      if (canArchiveClient) h += '<button class="hbtn danger sm" data-action="archive-client" data-id="' + client.id + '">Archive</button>';
+    }
+    h += '</div>';
     h += htmlFieldGroup('Client Information', CLIENT_FIELDS, client, 'client-field');
     if (clientPets.length > 0) {
       h += '<div class="fg"><div class="fg-title">Matters</div>';
@@ -2681,6 +2714,7 @@ function renderClients() {
         h += '<div class="pet-row" data-action="open-petition" data-id="' + p.id + '">';
         h += '<span class="stage-badge" style="background:' + sc + '">' + p.stage + '</span>';
         h += '<span style="flex:1;font-size:12px">' + esc(p.caseNumber || 'No case no.') + '</span>';
+        if (p.archived) h += '<span class="archived-badge">Archived</span>';
         h += '<span style="font-size:11px;color:#aaa">' + new Date(p.createdAt).toLocaleDateString() + '</span>';
         h += '</div>';
       });
@@ -2697,9 +2731,9 @@ function renderDirectory() {
   var tab = S.dirTab;
   var isAdmin = S.role === 'admin';
   var h = '<div class="dir-view"><div class="dir-tabs">';
-  [['facilities', 'Facilities (' + Object.keys(S.facilities).length + ')'],
-   ['courts', 'Courts (' + Object.keys(S.courts).length + ')'],
-   ['attorneys', 'Attorney Profiles (' + Object.keys(S.attProfiles).length + ')'],
+  [['facilities', 'Facilities (' + Object.values(S.facilities).filter(function(f) { return !f.archived; }).length + ')'],
+   ['courts', 'Courts (' + Object.values(S.courts).filter(function(c) { return !c.archived; }).length + ')'],
+   ['attorneys', 'Attorney Profiles (' + Object.values(S.attProfiles).filter(function(a) { return !a.archived; }).length + ')'],
    ['national', 'National Defaults']].forEach(function(t) {
     h += '<button class="dir-tab' + (tab === t[0] ? ' on' : '') + '" data-action="dir-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
@@ -2709,16 +2743,26 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
     if (isAdmin) h += '<button class="hbtn sm" data-action="export-facilities-csv">&#8681; CSV</button>';
+    if (isAdmin) h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-dir-archived"' + (S.dirShowArchived ? ' checked' : '') + '> Show archived</label>';
     h += '</div>';
     h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a matter auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
-    Object.values(S.facilities).forEach(function(f) {
-      if (isAdmin && S.editId !== f.id) {
-        h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
+    var facList = Object.values(S.facilities).filter(function(f) { return S.dirShowArchived || !f.archived; });
+    facList.forEach(function(f) {
+      if (f.archived) {
+        h += '<div class="dir-card archived">';
+        h += '<div class="dir-card-head" style="cursor:default"><strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
+        h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
+        h += '<div class="dir-card-detail">Warden: ' + esc(f.warden || '\u2014') + ' \u00b7 FO: ' + esc(f.fieldOfficeName || '\u2014') + ' \u00b7 FOD: ' + esc(f.fieldOfficeDirector || '\u2014') + '</div>';
+        h += '<div class="dir-card-actions"><span class="archived-badge">Archived</span>';
+        if (isAdmin) h += '<button class="hbtn accent sm" data-action="recover-facility" data-id="' + f.id + '">Recover</button>';
+        h += '</div>';
+      } else if (isAdmin && S.editId !== f.id) {
+        h += '<div class="dir-card" data-action="edit-record" data-id="' + f.id + '" data-type="facility">';
       } else {
         h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
       }
-      if (S.editId === f.id && isAdmin) {
+      if (!f.archived && S.editId === f.id && isAdmin) {
         h += htmlFacilityAutocomplete();
         FACILITY_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
@@ -2731,8 +2775,8 @@ function renderDirectory() {
         });
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-facility">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
-        h += '<button class="hbtn danger" data-action="del-facility" data-id="' + f.id + '">Delete</button></div>';
-      } else {
+        h += '<button class="hbtn danger" data-action="archive-facility" data-id="' + f.id + '">Archive</button></div>';
+      } else if (!f.archived) {
         h += '<div class="dir-card-head">';
         h += '<strong>' + esc(f.name || 'Unnamed Facility') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(f.city || '') + ', ' + esc(f.state || '') + '</span></div>';
@@ -2751,7 +2795,7 @@ function renderDirectory() {
       }
       h += '</div>';
     });
-    if (Object.keys(S.facilities).length === 0) h += '<div class="dir-empty">No facilities yet.' + (isAdmin ? ' Add one to get started.' : '') + '</div>';
+    if (facList.length === 0) h += '<div class="dir-empty">No facilities yet.' + (isAdmin ? ' Add one to get started.' : '') + '</div>';
     h += '</div></div>';
   }
 
@@ -2759,16 +2803,25 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
     if (isAdmin) h += '<button class="hbtn sm" data-action="export-courts-csv">&#8681; CSV</button>';
+    if (isAdmin) h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-dir-archived"' + (S.dirShowArchived ? ' checked' : '') + '> Show archived</label>';
     h += '</div>';
     h += '<p class="dir-desc">District + division combos. Selecting a court on a matter fills both fields.</p>';
     h += '<div class="dir-list">';
-    Object.values(S.courts).forEach(function(c) {
-      if (isAdmin && S.editId !== c.id) {
-        h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
+    var crtList = Object.values(S.courts).filter(function(c) { return S.dirShowArchived || !c.archived; });
+    crtList.forEach(function(c) {
+      if (c.archived) {
+        h += '<div class="dir-card archived">';
+        h += '<div class="dir-card-head" style="cursor:default"><strong>' + esc(c.district || 'Unnamed') + '</strong>';
+        h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
+        h += '<div class="dir-card-actions"><span class="archived-badge">Archived</span>';
+        if (isAdmin) h += '<button class="hbtn accent sm" data-action="recover-court" data-id="' + c.id + '">Recover</button>';
+        h += '</div>';
+      } else if (isAdmin && S.editId !== c.id) {
+        h += '<div class="dir-card" data-action="edit-record" data-id="' + c.id + '" data-type="court">';
       } else {
         h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
       }
-      if (S.editId === c.id && isAdmin) {
+      if (!c.archived && S.editId === c.id && isAdmin) {
         COURT_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
           var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
@@ -2778,8 +2831,8 @@ function renderDirectory() {
         });
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-court">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
-        h += '<button class="hbtn danger" data-action="del-court" data-id="' + c.id + '">Delete</button></div>';
-      } else {
+        h += '<button class="hbtn danger" data-action="archive-court" data-id="' + c.id + '">Archive</button></div>';
+      } else if (!c.archived) {
         h += '<div class="dir-card-head">';
         h += '<strong>' + esc(c.district || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(c.division || '') + '</span></div>';
@@ -2787,7 +2840,7 @@ function renderDirectory() {
       }
       h += '</div>';
     });
-    if (Object.keys(S.courts).length === 0) h += '<div class="dir-empty">No courts yet.</div>';
+    if (crtList.length === 0) h += '<div class="dir-empty">No courts yet.</div>';
     h += '</div></div>';
   }
 
@@ -2795,16 +2848,26 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
     if (isAdmin) h += '<button class="hbtn sm" data-action="export-attorneys-csv">&#8681; CSV</button>';
+    if (isAdmin) h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-dir-archived"' + (S.dirShowArchived ? ' checked' : '') + '> Show archived</label>';
     h += '</div>';
     h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any matter.</p>';
     h += '<div class="dir-list">';
-    Object.values(S.attProfiles).forEach(function(a) {
-      if (isAdmin && S.editId !== a.id) {
-        h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
+    var attList = Object.values(S.attProfiles).filter(function(a) { return S.dirShowArchived || !a.archived; });
+    attList.forEach(function(a) {
+      if (a.archived) {
+        h += '<div class="dir-card archived">';
+        h += '<div class="dir-card-head" style="cursor:default"><strong>' + esc(a.name || 'Unnamed') + '</strong>';
+        h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
+        h += '<div class="dir-card-detail">' + esc(a.email || '') + ' \u00b7 ' + esc(a.phone || '') + '</div>';
+        h += '<div class="dir-card-actions"><span class="archived-badge">Archived</span>';
+        if (isAdmin) h += '<button class="hbtn accent sm" data-action="recover-attorney" data-id="' + a.id + '">Recover</button>';
+        h += '</div>';
+      } else if (isAdmin && S.editId !== a.id) {
+        h += '<div class="dir-card" data-action="edit-record" data-id="' + a.id + '" data-type="attorney">';
       } else {
         h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
       }
-      if (S.editId === a.id && isAdmin) {
+      if (!a.archived && S.editId === a.id && isAdmin) {
         ATT_PROFILE_FIELDS.forEach(function(ff) {
           var val = (S.draft[ff.key]) || '';
           var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
@@ -2816,8 +2879,8 @@ function renderDirectory() {
         });
         h += '<div class="dir-card-actions"><button class="hbtn accent" data-action="save-attorney">Save</button>';
         h += '<button class="hbtn" data-action="cancel-edit">Cancel</button>';
-        h += '<button class="hbtn danger" data-action="del-attorney" data-id="' + a.id + '">Delete</button></div>';
-      } else {
+        h += '<button class="hbtn danger" data-action="archive-attorney" data-id="' + a.id + '">Archive</button></div>';
+      } else if (!a.archived) {
         h += '<div class="dir-card-head">';
         h += '<strong>' + esc(a.name || 'Unnamed') + '</strong>';
         h += '<span class="dir-card-sub">' + esc(a.firm || '') + ' \u00b7 ' + esc(a.barNo || '') + '</span></div>';
@@ -2826,7 +2889,7 @@ function renderDirectory() {
       }
       h += '</div>';
     });
-    if (Object.keys(S.attProfiles).length === 0) h += '<div class="dir-empty">No attorney profiles yet.</div>';
+    if (attList.length === 0) h += '<div class="dir-empty">No attorney profiles yet.</div>';
     h += '</div></div>';
   }
 
@@ -3051,13 +3114,13 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'court') {
-    h += htmlPicker('Select Court', Object.values(S.courts), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'inline-add-court');
+    h += htmlPicker('Select Court', Object.values(S.courts).filter(function(c) { return !c.archived; }), function(c) { return c.district + ' \u2014 ' + c.division; }, pet._courtId || '', 'apply-court', 'inline-add-court');
     if (S.inlineAdd && S.inlineAdd.type === 'court') {
       h += htmlInlineAddForm('court');
     }
     h += htmlFieldGroup('Court (manual override)', COURT_FIELDS, pet, 'editor-pet-field');
     h += '<div style="height:8px"></div>';
-    h += htmlPicker('Select Facility', Object.values(S.facilities), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'inline-add-facility');
+    h += htmlPicker('Select Facility', Object.values(S.facilities).filter(function(f) { return !f.archived; }), function(f) { return f.name + ' \u2014 ' + f.city + ', ' + f.state; }, pet._facilityId || '', 'apply-facility', 'inline-add-facility');
     if (S.inlineAdd && S.inlineAdd.type === 'facility') {
       h += htmlInlineAddForm('facility');
     }
@@ -3067,7 +3130,7 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'atty') {
-    var attList = Object.values(S.attProfiles);
+    var attList = Object.values(S.attProfiles).filter(function(a) { return !a.archived; });
     h += htmlPicker('Attorney 1', attList, function(a) { return a.name + ' \u2014 ' + a.firm; }, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
     if (S.inlineAdd && S.inlineAdd.type === 'att1') {
       h += htmlInlineAddForm('att1');
@@ -3119,7 +3182,7 @@ function renderEditor() {
   if (S.editorTab === 'log') {
     h += '<div class="lscroll">';
     if (S.log.length === 0) h += '<div class="lempty">No operations yet.</div>';
-    var logColors = { FILL:'#5aa06f', REVISE:'#c9a040', CREATE:'#7a70c0', STAGE:'#4a7ab5', APPLY:'#60a0d0', UPDATE:'#a08540', DELETE:'#c05050' };
+    var logColors = { FILL:'#5aa06f', REVISE:'#c9a040', CREATE:'#7a70c0', STAGE:'#4a7ab5', APPLY:'#60a0d0', UPDATE:'#a08540', DELETE:'#c05050', ARCHIVE:'#8b6914', RECOVER:'#5a9e6f' };
     S.log.forEach(function(e, i) {
       h += '<div class="lentry"><span class="lts">' + new Date(e.frame.t).toLocaleTimeString('en-US', {hour12:false}) + '</span> ';
       h += '<span style="color:' + (logColors[e.op] || '#888') + ';font-weight:600">' + e.op + '</span>';
@@ -3130,6 +3193,19 @@ function renderEditor() {
       }
       h += '<span class="ld">)</span></div>';
     });
+    h += '</div>';
+  }
+
+  // Archive/recover button for petition
+  var canArchivePet = S.role === 'admin' || pet.createdBy === S.currentUser;
+  if (canArchivePet) {
+    h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">';
+    if (pet.archived) {
+      h += '<span class="archived-badge">Archived</span> ';
+      h += '<button class="hbtn accent sm" data-action="recover-petition" data-id="' + pet.id + '">Recover Matter</button>';
+    } else {
+      h += '<button class="hbtn danger sm" data-action="archive-petition" data-id="' + pet.id + '">Archive Matter</button>';
+    }
     h += '</div>';
   }
 
@@ -3646,6 +3722,29 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
+  if (action === 'toggle-board-archived') { setState({ boardShowArchived: !S.boardShowArchived }); return; }
+  if (action === 'archive-petition') {
+    var pet = S.petitions[btn.dataset.id];
+    if (!pet) return;
+    var canArchive = S.role === 'admin' || pet.createdBy === S.currentUser;
+    if (!canArchive) return;
+    pet.archived = true;
+    S.log.push({ op: 'ARCHIVE', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
+    syncPetitionToMatrix(pet, 'archive');
+    setState({});
+    return;
+  }
+  if (action === 'recover-petition') {
+    var pet = S.petitions[btn.dataset.id];
+    if (!pet) return;
+    var canRecover = S.role === 'admin' || pet.createdBy === S.currentUser;
+    if (!canRecover) return;
+    delete pet.archived;
+    S.log.push({ op: 'RECOVER', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
+    syncPetitionToMatrix(pet, 'recover');
+    setState({});
+    return;
+  }
   if (action === 'toggle-group') {
     var gKey = btn.dataset.group || (btn.closest('[data-group]') && btn.closest('[data-group]').dataset.group);
     if (gKey) { _collapsedGroups[gKey] = !_collapsedGroups[gKey]; render(); }
@@ -3680,6 +3779,60 @@ document.addEventListener('click', function(e) {
 
   // Clients
   if (action === 'select-client') { setState({ selectedClientId: btn.dataset.id }); return; }
+  if (action === 'toggle-clients-archived') { setState({ clientsShowArchived: !S.clientsShowArchived }); return; }
+  if (action === 'archive-client') {
+    var id = btn.dataset.id;
+    var cl = S.clients[id];
+    if (!cl) return;
+    var canArchive = S.role === 'admin' || Object.values(S.petitions).some(function(p) { return p.clientId === id && p.createdBy === S.currentUser; });
+    if (!canArchive) return;
+    cl.archived = true;
+    S.log.push({ op: 'ARCHIVE', target: id, payload: cl.name, frame: { t: now(), entity: 'client' } });
+    // Cascade: archive all petitions for this client
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.clientId === id && !p.archived) {
+        p.archived = true;
+        S.log.push({ op: 'ARCHIVE', target: p.id, payload: p.caseNumber, frame: { t: now(), entity: 'petition', cascade: true } });
+        syncPetitionToMatrix(p, 'archive');
+      }
+    });
+    if (matrix.isReady() && cl.roomId) {
+      var existing = matrix.getStateEvent(cl.roomId, EVT_CLIENT, '');
+      var content = (existing && existing.content) ? Object.assign({}, existing.content, { archived: true }) : { id: cl.id, name: cl.name, country: cl.country, archived: true };
+      matrix.sendStateEvent(cl.roomId, EVT_CLIENT, content, '')
+        .then(function() { toast('Client archived', 'success'); })
+        .catch(function(e) { console.error(e); toast('Archive client failed', 'error'); });
+    }
+    setState({ selectedClientId: null });
+    return;
+  }
+  if (action === 'recover-client') {
+    var id = btn.dataset.id;
+    var cl = S.clients[id];
+    if (!cl) return;
+    var canRecover = S.role === 'admin' || Object.values(S.petitions).some(function(p) { return p.clientId === id && p.createdBy === S.currentUser; });
+    if (!canRecover) return;
+    delete cl.archived;
+    S.log.push({ op: 'RECOVER', target: id, payload: cl.name, frame: { t: now(), entity: 'client' } });
+    // Cascade: recover all petitions for this client
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.clientId === id && p.archived) {
+        delete p.archived;
+        S.log.push({ op: 'RECOVER', target: p.id, payload: p.caseNumber, frame: { t: now(), entity: 'petition', cascade: true } });
+        syncPetitionToMatrix(p, 'recover');
+      }
+    });
+    if (matrix.isReady() && cl.roomId) {
+      var existing = matrix.getStateEvent(cl.roomId, EVT_CLIENT, '');
+      var content = (existing && existing.content) ? Object.assign({}, existing.content) : { id: cl.id, name: cl.name, country: cl.country };
+      delete content.archived;
+      matrix.sendStateEvent(cl.roomId, EVT_CLIENT, content, '')
+        .then(function() { toast('Client recovered', 'success'); })
+        .catch(function(e) { console.error(e); toast('Recover client failed', 'error'); });
+    }
+    setState({});
+    return;
+  }
   if (action === 'create-client') {
     var id = uid();
     S.clients[id] = { id: id, name: '', country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
@@ -3785,6 +3938,7 @@ document.addEventListener('click', function(e) {
 
   // Directory
   if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
+  if (action === 'toggle-dir-archived') { setState({ dirShowArchived: !S.dirShowArchived }); return; }
   if (action === 'cancel-edit') { setState({ editId: null, draft: {} }); return; }
   if (action === 'edit-record') {
     if (S.role !== 'admin') return;
@@ -3840,15 +3994,32 @@ document.addEventListener('click', function(e) {
     render();
     return;
   }
-  if (action === 'del-facility') {
+  if (action === 'archive-facility') {
     if (S.role !== 'admin') return;
     var id = btn.dataset.id;
-    delete S.facilities[id];
-    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'facility' } });
+    var f = S.facilities[id];
+    if (!f) return;
+    f.archived = true;
+    S.log.push({ op: 'ARCHIVE', target: id, payload: f.name, frame: { t: now(), entity: 'facility' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { deleted: true }, id)
-        .then(function() { toast('NUL \u2205 facility', 'success'); })
-        .catch(function(e) { console.error(e); toast('NUL \u2205 facility failed', 'error'); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector, archived: true }, id)
+        .then(function() { toast('Facility archived', 'success'); })
+        .catch(function(e) { console.error(e); toast('Archive facility failed', 'error'); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'recover-facility') {
+    if (S.role !== 'admin') return;
+    var id = btn.dataset.id;
+    var f = S.facilities[id];
+    if (!f) return;
+    delete f.archived;
+    S.log.push({ op: 'RECOVER', target: id, payload: f.name, frame: { t: now(), entity: 'facility' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, { name: f.name, city: f.city, state: f.state, warden: f.warden, fieldOfficeName: f.fieldOfficeName, fieldOfficeDirector: f.fieldOfficeDirector }, id)
+        .then(function() { toast('Facility recovered', 'success'); })
+        .catch(function(e) { console.error(e); toast('Recover facility failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -3875,15 +4046,32 @@ document.addEventListener('click', function(e) {
     setState({ editId: null, draft: {} });
     return;
   }
-  if (action === 'del-court') {
+  if (action === 'archive-court') {
     if (S.role !== 'admin') return;
     var id = btn.dataset.id;
-    delete S.courts[id];
-    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'court' } });
+    var c = S.courts[id];
+    if (!c) return;
+    c.archived = true;
+    S.log.push({ op: 'ARCHIVE', target: id, payload: c.district, frame: { t: now(), entity: 'court' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { deleted: true }, id)
-        .then(function() { toast('NUL \u2205 court', 'success'); })
-        .catch(function(e) { console.error(e); toast('NUL \u2205 court failed', 'error'); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division, archived: true }, id)
+        .then(function() { toast('Court archived', 'success'); })
+        .catch(function(e) { console.error(e); toast('Archive court failed', 'error'); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'recover-court') {
+    if (S.role !== 'admin') return;
+    var id = btn.dataset.id;
+    var c = S.courts[id];
+    if (!c) return;
+    delete c.archived;
+    S.log.push({ op: 'RECOVER', target: id, payload: c.district, frame: { t: now(), entity: 'court' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, { district: c.district, division: c.division }, id)
+        .then(function() { toast('Court recovered', 'success'); })
+        .catch(function(e) { console.error(e); toast('Recover court failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
@@ -3910,15 +4098,32 @@ document.addEventListener('click', function(e) {
     setState({ editId: null, draft: {} });
     return;
   }
-  if (action === 'del-attorney') {
+  if (action === 'archive-attorney') {
     if (S.role !== 'admin') return;
     var id = btn.dataset.id;
-    delete S.attProfiles[id];
-    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'attorney_profile' } });
+    var a = S.attProfiles[id];
+    if (!a) return;
+    a.archived = true;
+    S.log.push({ op: 'ARCHIVE', target: id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
     if (matrix.isReady() && matrix.orgRoomId) {
-      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { deleted: true }, id)
-        .then(function() { toast('NUL \u2205 attorney', 'success'); })
-        .catch(function(e) { console.error(e); toast('NUL \u2205 attorney failed', 'error'); });
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice, archived: true }, a.id)
+        .then(function() { toast('Attorney archived', 'success'); })
+        .catch(function(e) { console.error(e); toast('Archive attorney failed', 'error'); });
+    }
+    setState({ editId: null, draft: {} });
+    return;
+  }
+  if (action === 'recover-attorney') {
+    if (S.role !== 'admin') return;
+    var id = btn.dataset.id;
+    var a = S.attProfiles[id];
+    if (!a) return;
+    delete a.archived;
+    S.log.push({ op: 'RECOVER', target: id, payload: a.name, frame: { t: now(), entity: 'attorney_profile' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_ATTORNEY, { name: a.name, barNo: a.barNo, firm: a.firm, address: a.address, cityStateZip: a.cityStateZip, phone: a.phone, fax: a.fax, email: a.email, proHacVice: a.proHacVice }, a.id)
+        .then(function() { toast('Attorney recovered', 'success'); })
+        .catch(function(e) { console.error(e); toast('Recover attorney failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
     return;
