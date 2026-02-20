@@ -564,7 +564,7 @@ body,
 .board-toggle-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 20px;
   max-width: 1200px;
   margin-left: auto;
@@ -612,6 +612,24 @@ body,
 }
 .board-group-input {
   width: auto !important;
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  display: inline-block !important;
+}
+
+/* ── Board Add Matter ─────────────────────────────── */
+.board-toggle-bar > .hbtn {
+  margin-left: auto;
+}
+.board-add-matter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+.board-add-matter-sel {
+  width: auto !important;
+  min-width: 180px;
   padding: 5px 10px !important;
   font-size: 11px !important;
   display: inline-block !important;
