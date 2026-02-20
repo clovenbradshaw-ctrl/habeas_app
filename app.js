@@ -830,6 +830,12 @@ var matrix = {
       });
   },
 
+  makeRoomAdmin: function(roomId, userId) {
+    return this.adminApi('POST', '/v1/rooms/' + encodeURIComponent(roomId) + '/make_room_admin', {
+      user_id: userId || this.userId,
+    });
+  },
+
   isReady: function() {
     return !!this.accessToken;
   },
@@ -1008,6 +1014,7 @@ var S = {
   serverUsersError: '',
   log: [],
   role: null,
+  isSynapseAdmin: false,
   adminEditUserId: null,
   adminDraft: {},
   currentUser: '',
@@ -1330,12 +1337,13 @@ function hydrateFromMatrix() {
         });
       });
 
-      // Role
+      // Role — determine from power levels in !org room
       var role = 'attorney';
+      var myPl = 0;
       if (matrix.orgRoomId) {
         var plEvt = matrix.getStateEvent(matrix.orgRoomId, 'm.room.power_levels', '');
         if (plEvt && plEvt.content && plEvt.content.users) {
-          var myPl = plEvt.content.users[matrix.userId] || 0;
+          myPl = plEvt.content.users[matrix.userId] || 0;
           if (myPl >= 50) role = 'admin';
         }
       }
@@ -1351,13 +1359,49 @@ function hydrateFromMatrix() {
         users: users, role: role, currentUser: matrix.userId, syncError: syncError,
       });
 
-      // For admins, fetch all server users and merge with managed users
-      if (role === 'admin') {
-        matrix.listUsers()
-          .then(function(serverUsers) {
+      // Check if current user is a Synapse server admin by trying listUsers.
+      // If they are, auto-promote to PL 100 in org/templates rooms via make_room_admin.
+      matrix.listUsers()
+        .then(function(serverUsers) {
+          // listUsers succeeded — user IS a Synapse server admin
+          setState({ isSynapseAdmin: true });
+
+          // Auto-promote to room admin if PL < 100
+          var promoteChain = Promise.resolve();
+          if (matrix.orgRoomId && myPl < 100) {
+            promoteChain = matrix.makeRoomAdmin(matrix.orgRoomId)
+              .then(function() {
+                console.log('[amino] Auto-promoted to room admin in !org');
+              })
+              .catch(function(e) {
+                console.warn('[amino] make_room_admin failed for org room:', e);
+              });
+          }
+          if (matrix.templatesRoomId) {
+            promoteChain = promoteChain.then(function() {
+              return matrix.makeRoomAdmin(matrix.templatesRoomId)
+                .then(function() {
+                  console.log('[amino] Auto-promoted to room admin in !templates');
+                })
+                .catch(function(e) {
+                  console.warn('[amino] make_room_admin failed for templates room:', e);
+                });
+            });
+          }
+
+          return promoteChain.then(function() {
+            // After promotion, ensure role is admin
+            if (role !== 'admin') {
+              role = 'admin';
+              setState({ role: 'admin' });
+            }
             setState({ users: mergeServerUsers(serverUsers), serverUsersLoaded: true, serverUsersError: '' });
-          })
-          .catch(function(err) {
+          });
+        })
+        .catch(function(err) {
+          // listUsers failed — not a Synapse server admin (or network error)
+          if (role === 'admin') {
+            // User has room PL >= 50 but is not a Synapse admin — show server users error
             var msg = '';
             if (err && err.status === 403) {
               msg = 'Cannot list server users: your account lacks Synapse server admin privileges.';
@@ -1365,8 +1409,8 @@ function hydrateFromMatrix() {
               msg = 'Could not fetch server user list: ' + ((err && err.error) || 'unknown error');
             }
             setState({ serverUsersLoaded: true, serverUsersError: msg });
-          });
-      }
+          }
+        });
     });
 }
 
@@ -2280,7 +2324,7 @@ function renderHeader() {
     h += '<button class="nav-btn' + (S.currentView === t[0] ? ' on' : '') + '" data-action="nav" data-view="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</nav></div><div class="hdr-right">';
-  h += '<span class="role-badge" style="color:' + (S.role === 'admin' ? '#a08540' : '#8a8a9a') + '">' + (S.role === 'admin' ? 'Admin' : 'Attorney') + '</span>';
+  h += '<span class="role-badge" style="color:' + (S.role === 'admin' ? '#a08540' : '#8a8a9a') + '">' + (S.isSynapseAdmin ? 'Super Admin' : S.role === 'admin' ? 'Admin' : 'Attorney') + '</span>';
   if (pet) {
     var sm = SM[pet.stage] || SM.drafted;
     h += '<span class="stage-badge" style="background:' + sm.color + '">' + pet.stage + '</span>';
@@ -2888,6 +2932,15 @@ function renderAdmin() {
         h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
         h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
         h += '</select></div>';
+        h += '<div class="frow"><label class="flbl">Set Password</label>';
+        h += '<div style="display:flex;gap:8px;align-items:flex-start">';
+        h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Optional \u2014 generate or type" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+        h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
+        h += '</div>';
+        if (S.adminDraft.passwordVisible && S.adminDraft.password) {
+          h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
+        }
+        h += '</div>';
         h += '<div id="admin-adopt-error" class="login-error" style="display:none;margin-top:8px"></div>';
         h += '<div class="dir-card-actions">';
         h += '<button class="hbtn accent" data-action="admin-adopt-user" data-mxid="' + esc(u.mxid) + '">Adopt User</button>';
@@ -4316,6 +4369,14 @@ function handleAdminAdoptUser(mxid) {
     if (matrix.templatesRoomId) {
       return matrix.setPowerLevel(matrix.templatesRoomId, mxid, powerLevel).catch(function(e) {
         console.warn('Set templates PL failed:', e);
+      });
+    }
+  })
+  .then(function() {
+    // Step 6: Reset password if provided
+    if (d.password && d.password.trim()) {
+      return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+        password: d.password,
       });
     }
   })
