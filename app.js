@@ -123,55 +123,122 @@ function buildVarMap(c, p, a1, a2, nat) {
 
 // ── Default Template Blocks ──────────────────────────────────────
 var DEFAULT_BLOCKS = [
+  // Court title
   { id: 'ct-1', type: 'title', content: 'UNITED STATES DISTRICT COURT' },
   { id: 'ct-2', type: 'title', content: 'FOR THE {{COURT_DISTRICT}}' },
   { id: 'ct-3', type: 'title', content: '{{COURT_DIVISION}}' },
+  // Caption
   { id: 'cap-pet', type: 'cap-name', content: '{{PETITIONER_FULL_NAME}},' },
   { id: 'cap-role', type: 'cap-center', content: 'Petitioner-Plaintiff,' },
   { id: 'cap-v', type: 'cap-center', content: 'v.' },
-  { id: 'cap-r1', type: 'cap-resp', content: '{{WARDEN_NAME}}, Warden of {{DETENTION_FACILITY_NAME}};' },
-  { id: 'cap-r2', type: 'cap-resp', content: '{{FIELD_OFFICE_DIRECTOR}}, FOD, {{FIELD_OFFICE_NAME}}, ERO, ICE;' },
+  { id: 'cap-r1', type: 'cap-resp', content: '{{WARDEN_NAME}}, in his official capacity as Warden of {{DETENTION_FACILITY_NAME}};' },
+  { id: 'cap-r2', type: 'cap-resp', content: '{{FIELD_OFFICE_DIRECTOR}}, in his official capacity as Field Office Director of the {{FIELD_OFFICE_NAME}} of Enforcement and Removal Operations, U.S. Immigration and Customs Enforcement;' },
   { id: 'cap-r3', type: 'cap-resp', content: 'U.S. Department of Homeland Security;' },
-  { id: 'cap-r4', type: 'cap-resp', content: '{{ICE_DIRECTOR}}, {{ICE_DIRECTOR_TITLE}}, ICE, DHS;' },
-  { id: 'cap-r5', type: 'cap-resp', content: '{{DHS_SECRETARY}}, Secretary, DHS; and' },
-  { id: 'cap-r6', type: 'cap-resp', content: '{{ATTORNEY_GENERAL}}, Attorney General; Respondents-Defendants.' },
+  { id: 'cap-r4', type: 'cap-resp', content: '{{ICE_DIRECTOR}}, in his official capacity as {{ICE_DIRECTOR_TITLE}}, Immigration and Customs Enforcement, U.S. Department of Homeland Security;' },
+  { id: 'cap-r5', type: 'cap-resp', content: '{{DHS_SECRETARY}}, in her official capacity as Secretary, U.S. Department of Homeland Security; and' },
+  { id: 'cap-r6', type: 'cap-resp', content: '{{ATTORNEY_GENERAL}}, in her official capacity as Attorney General of the United States;\nRespondents-Defendants.' },
   { id: 'cap-case', type: 'cap-case', content: 'C/A No. {{CASE_NUMBER}}' },
   { id: 'cap-title', type: 'cap-doctitle', content: 'PETITION FOR WRIT OF HABEAS CORPUS AND COMPLAINT FOR DECLARATORY AND INJUNCTIVE RELIEF' },
+  // Introduction
   { id: 'h-intro', type: 'heading', content: 'INTRODUCTION' },
-  { id: 'p-1', type: 'para', content: '1. {{PETITIONER_FULL_NAME}} ("Petitioner") is a citizen of {{PETITIONER_COUNTRY}} who has resided in the U.S. for {{PETITIONER_YEARS_IN_US}} years. ICE apprehended him in {{PETITIONER_APPREHENSION_LOCATION}} on or about {{PETITIONER_APPREHENSION_DATE}}.' },
-  { id: 'p-2', type: 'para', content: '2. Petitioner is detained at {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}.' },
-  { id: 'p-3', type: 'para', content: '3. The BIA reinterpreted the INA. <em>Matter of Yajure Hurtado</em>, 29 I&N Dec. 216 (BIA 2025). Petitioner is subject to mandatory detention under \u00a7 1225(b)(2)(A) with no bond.' },
-  { id: 'p-4', type: 'para', content: '4. This violates the INA. Petitioner, residing nearly {{PETITIONER_YEARS_IN_US}} years, is not an "applicant for admission." He should be under \u00a7 1226(a), which allows bond.' },
-  { id: 'p-5', type: 'para', content: '5. Petitioner seeks declaratory relief under \u00a7 1226(a) and asks for release or a bond hearing.' },
+  { id: 'p-1', type: 'para', content: '1. Petitioner-Plaintiff {{PETITIONER_FULL_NAME}} ("Petitioner") is a citizen of {{PETITIONER_COUNTRY}} who has resided in the U.S. for {{PETITIONER_YEARS_IN_US}} years. On information and belief, Immigration and Customs Enforcement ("ICE") officers apprehended him near his home in {{PETITIONER_APPREHENSION_LOCATION}}, on or about {{PETITIONER_APPREHENSION_DATE}}.' },
+  { id: 'p-2', type: 'para', content: '2. Petitioner is currently detained at the {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}.' },
+  { id: 'p-3', type: 'para', content: '3. On September 5, 2025, the Board of Immigration Appeals ("BIA") issued a precedential decision that unlawfully reinterpreted the Immigration and Nationality Act ("INA"). See <em>Matter of Yajure Hurtado</em>, 29 I&N Dec. 216 (BIA 2025). Prior to this decision, noncitizens like Petitioner who had lived in the U.S. for many years and were apprehended by ICE in the interior of the country were detained pursuant to 8 U.S.C. \u00a7 1226(a) and eligible to seek bond hearings before Immigration Judges ("IJs"). Instead, in conflict with nearly thirty years of legal precedent, Petitioner is now considered subject to mandatory detention under 8 U.S.C. \u00a7 1225(b)(2)(A) and has no opportunity for release on bond while his removal proceedings are pending.' },
+  { id: 'p-4', type: 'para', content: '4. Petitioner\u2019s detention pursuant to \u00a7 1225(b)(2)(A) violates the plain language of the INA and its implementing regulations. Petitioner, who has resided in the U.S. for nearly {{PETITIONER_YEARS_IN_US}} years and who was apprehended in the interior of the U.S., should not be considered an "applicant for admission" who is "seeking admission." Rather, he should be detained pursuant to 8 U.S.C. \u00a7 1226(a), which allows for release on conditional parole or bond.' },
+  { id: 'p-5', type: 'para', content: '5. Petitioner seeks declaratory relief that he is subject to detention under \u00a7 1226(a) and its implementing regulations and asks that this Court either order Respondents to release Petitioner from custody or provide him with a bond hearing.' },
+  // Custody
   { id: 'h-cust', type: 'heading', content: 'CUSTODY' },
-  { id: 'p-6', type: 'para', content: '6. Petitioner is in ICE custody at {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}. <em>Jones v. Cunningham</em>, 371 U.S. 236, 243 (1963).' },
+  { id: 'p-6', type: 'para', content: '6. Petitioner is currently in the custody of Immigration and Customs Enforcement ("ICE") at the {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}. He is therefore in "\u2018custody\u2019 of [the DHS] within the meaning of the habeas corpus statute." <em>Jones v. Cunningham</em>, 371 U.S. 236, 243 (1963).' },
+  // Jurisdiction
   { id: 'h-jur', type: 'heading', content: 'JURISDICTION' },
-  { id: 'p-7', type: 'para', content: '7. Jurisdiction under 28 U.S.C. \u00a7 2241, \u00a7 1331, the Suspension Clause, and the INA.' },
+  { id: 'p-7', type: 'para', content: '7. This court has jurisdiction under 28 U.S.C. \u00a7 2241 (habeas corpus), 28 U.S.C. \u00a7 1331 (federal question), Article I, \u00a7 9, cl. 2 of the United States Constitution (Suspension Clause), and the Immigration and Nationality Act ("INA"), 8 U.S.C. \u00a7 1101 et seq.' },
+  { id: 'p-8', type: 'para', content: '8. This Court may grant relief under the habeas corpus statutes, 28 U.S.C. \u00a7 2241 et seq., the Declaratory Judgment Act, 28 U.S.C. \u00a7 2201 et seq., the All Writs Act, 28 U.S.C. \u00a7 1651, and the Immigration and Nationality Act, 8 U.S.C. \u00a7 1252(e)(2).' },
+  { id: 'p-9', type: 'para', content: '9. Federal district courts have jurisdiction to hear habeas claims by non-citizens challenging both the lawfulness and the constitutionality of their detention. See <em>Zadvydas v. Davis</em>, 533 U.S. 678, 687 (2001).' },
+  // Requirements of 28 U.S.C. 2241, 2243
+  { id: 'h-req', type: 'heading', content: 'REQUIREMENTS OF 28 U.S.C. \u00a7\u00a7 2241, 2243' },
+  { id: 'p-10', type: 'para', content: '10. The Court must grant the petition for writ of habeas corpus or issue an order to show cause ("OSC") to Respondents "forthwith," unless Petitioner is not entitled to relief. 28 U.S.C. \u00a7 2243. If an OSC is issued, the Court must require Respondents to file a return "within three days unless for good cause additional time, not exceeding twenty days, is allowed." Id.' },
+  { id: 'p-11', type: 'para', content: '11. Petitioner is "in custody" for the purpose of \u00a7 2241 because Petitioner is arrested and detained by Respondents.' },
+  // Venue
   { id: 'h-ven', type: 'heading', content: 'VENUE' },
-  { id: 'p-12', type: 'para', content: '12. Venue proper under 28 U.S.C. \u00a7 1391(e). Petitioner is under ICE\u2019s {{FIELD_OFFICE_NAME}} and detained at {{DETENTION_FACILITY_NAME}}.' },
+  { id: 'p-12', type: 'para', content: '12. Venue is properly before this Court pursuant to 28 U.S.C. \u00a7 1391(e) because Respondents are employees or officers of the United States acting in their official capacity and because a substantial part of the events or omissions giving rise to the claim occurred in the {{COURT_DISTRICT}}. Petitioner is under the jurisdiction of ICE\u2019s {{FIELD_OFFICE_NAME}}, and he is currently detained at the {{DETENTION_FACILITY_NAME}} in {{DETENTION_FACILITY_CITY}}, {{DETENTION_FACILITY_STATE}}.' },
+  // Exhaustion
+  { id: 'h-exh', type: 'heading', content: 'EXHAUSTION OF ADMINISTRATIVE REMEDIES' },
+  { id: 'p-13', type: 'para', content: '13. Administrative exhaustion is unnecessary as it would be futile. See, e.g., <em>Aguilar v. Lewis</em>, 50 F. Supp. 2d 539, 542\u201343 (E.D. Va. 1999).' },
+  { id: 'p-14', type: 'para', content: '14. It would be futile for Petitioner to seek a custody redetermination hearing before an IJ due to the BIA\u2019s recent decision holding that anyone who has entered the U.S. without inspection is now considered an "applicant for admission" who is "seeking admission" and therefore subject to mandatory detention under \u00a7 1225(b)(2)(A). See <em>Matter of Yajure Hurtado</em>, 29 I&N Dec. 216 (BIA 2025); see also <em>Zaragoza Mosqueda v. Noem</em>, 2025 WL 2591530, at *7 (C.D. Cal. Sept. 8, 2025) (noting that BIA\u2019s decision in <em>Yajure Hurtado</em> renders exhaustion futile).' },
+  { id: 'p-15', type: 'para', content: '15. Additionally, the agency does not have jurisdiction to review Petitioner\u2019s claim of unlawful custody in violation of his due process rights, and it would therefore be futile for him to pursue administrative remedies. <em>Reno v. Amer.-Arab Anti-Discrim. Comm.</em>, 525 U.S. 471, 119 S.Ct. 936, 142 L.Ed.2d 940 (1999) (finding exhaustion to be a "futile exercise because the agency does not have jurisdiction to review" constitutional claims).' },
+  // Parties
   { id: 'h-par', type: 'heading', content: 'PARTIES' },
-  { id: 'p-16', type: 'para', content: '16. Petitioner {{PETITIONER_FULL_NAME}} is from {{PETITIONER_COUNTRY}}, in the U.S. since {{PETITIONER_ENTRY_DATE}}.' },
-  { id: 'p-17', type: 'para', content: '17\u201321. Respondents {{WARDEN_NAME}}, {{FIELD_OFFICE_DIRECTOR}}, {{ICE_DIRECTOR}}, {{DHS_SECRETARY}}, and {{ATTORNEY_GENERAL}} are sued in their official capacities.' },
-  { id: 'h-leg', type: 'heading', content: 'LEGAL BACKGROUND' },
-  { id: 'p-22', type: 'para', content: '22\u201337. \u00a7 1226(a) allows bond. \u00a7 1225(b) is for those seeking admission at borders. The BIA\u2019s reinterpretation in <em>Yajure Hurtado</em> is contrary to statute, regulations, and precedent. Under <em>Loper Bright</em>, 603 U.S. 369 (2024), no deference is owed.' },
+  { id: 'p-16', type: 'para', content: '16. Petitioner {{PETITIONER_FULL_NAME}} is from {{PETITIONER_COUNTRY}} and has resided in the U.S. since {{PETITIONER_ENTRY_DATE}}. He is currently detained in the {{DETENTION_FACILITY_NAME}}.' },
+  { id: 'p-17', type: 'para', content: '17. Respondent {{WARDEN_NAME}} is sued in his official capacity as Warden of the {{DETENTION_FACILITY_NAME}}. In his official capacity, {{WARDEN_NAME}} is Petitioner\u2019s immediate custodian.' },
+  { id: 'p-18', type: 'para', content: '18. Respondent {{FIELD_OFFICE_DIRECTOR}} is sued in his official capacity as Field Office Director, {{FIELD_OFFICE_NAME}}, Enforcement and Removal Operations, U.S. Immigration & Customs Enforcement ("ICE"). In his official capacity, Respondent {{FIELD_OFFICE_DIRECTOR}} is the legal custodian of Petitioner.' },
+  { id: 'p-19', type: 'para', content: '19. Respondent {{ICE_DIRECTOR}} is sued in his official capacity as {{ICE_DIRECTOR_TITLE}} of ICE. As the {{ICE_DIRECTOR_TITLE}} of ICE, Respondent {{ICE_DIRECTOR}} is a legal custodian of Petitioner.' },
+  { id: 'p-20', type: 'para', content: '20. Respondent {{DHS_SECRETARY}} is sued in her official capacity as Secretary of Homeland Security. As the head of the Department of Homeland Security, the agency tasked with enforcing immigration laws, Secretary {{DHS_SECRETARY}} is Petitioner\u2019s ultimate legal custodian.' },
+  { id: 'p-21', type: 'para', content: '21. Respondent {{ATTORNEY_GENERAL}} is sued in her official capacity as the Attorney General of the United States. As Attorney General, she has authority over the Department of Justice and is charged with faithfully administering the immigration laws of the United States.' },
+  // Legal Background and Argument
+  { id: 'h-leg', type: 'heading', content: 'LEGAL BACKGROUND AND ARGUMENT' },
+  { id: 'p-22', type: 'para', content: '22. The INA prescribes three basic forms of detention for noncitizens in removal proceedings.' },
+  { id: 'p-23', type: 'para', content: '23. First, individuals detained pursuant to 8 U.S.C. \u00a7 1226(a) are generally entitled to a bond hearing, unless they have been arrested, charged with, or convicted of certain crimes and are subject to mandatory detention. See 8 U.S.C. \u00a7\u00a7 1226(a), 1226(c) (listing grounds for mandatory detention); see also 8 C.F.R. \u00a7\u00a7 1003.19(a) (immigration judges may review custody determinations made by DHS), 1236.1(d) (same).' },
+  { id: 'p-24', type: 'para', content: '24. Second, the INA provides for mandatory detention of noncitizens subject to expedited removal under 8 U.S.C. \u00a7 1225(b)(1) as well as other recent arrivals deemed to be "seeking admission" under \u00a7 1225(b)(2).' },
+  { id: 'p-25', type: 'para', content: '25. Third, the INA authorizes detention of noncitizens who have received a final order of removal, including those in withholding-only proceedings. See 8 U.S.C. \u00a7 1231(a)\u2013(b).' },
+  { id: 'p-26', type: 'para', content: '26. Thus, in the decades that followed, most people who entered without inspection and were thereafter detained and placed in standard removal proceedings were considered for release on bond and received bond hearings before an IJ, unless their criminal history rendered them ineligible.' },
+  { id: 'p-27', type: 'para', content: '27. For decades, long-term residents of the U.S. who entered without inspection and were subsequently apprehended by ICE in the interior of the country have been detained pursuant to \u00a7 1226 and entitled to bond hearings before an IJ, unless barred from doing so due to their criminal history.' },
+  { id: 'p-28', type: 'para', content: '28. In July 2025, however, ICE began asserting that all individuals who entered without inspection should be considered "seeking admission" and therefore subject to mandatory detention under 8 U.S.C. \u00a7 1225(b)(2)(A).' },
+  { id: 'p-29', type: 'para', content: '29. On September 5, 2025, the BIA issued a precedential decision adopting this interpretation, despite its departure from the INA\u2019s text, federal precedent, and existing regulations. <em>Matter of Yajure Hurtado</em>, 29 I&N Dec. 216 (BIA 2025).' },
+  { id: 'p-30', type: 'para', content: '30. Respondents\u2019 new legal interpretation is contrary to the statutory framework and its implementing regulations.' },
+  { id: 'p-31', type: 'para', content: '31. Courts across the country, including this Court, have rejected this interpretation and instead have consistently found that \u00a7 1226, not \u00a7 1225(b)(2), authorizes detention of noncitizens who entered without inspection and were later apprehended in the interior of the country. See, e.g., <em>Hasan v. Crawford</em>, No. 1:25-CV-1408 (LMB/IDD), 2025 WL 2682255 (E.D. Va. Sept. 19, 2025); <em>Quispe Ardiles v. Noem</em>, No. 1:25-cv-01382 (E.D. Va. Sept. 30, 2025); <em>Venancio v. Hyde et al</em>, No. 1:25-cv-12616 (D. Mass. Oct. 9, 2025); <em>Artiga v. Genalo</em>, No. 2:25-cv-05208 (E.D.N.Y. Oct. 7, 2025); <em>Sampiao v. Hyde</em>, 2025 WL 2607924 (D. Mass. Sept. 9, 2025); <em>Leal-Hernandez v. Noem</em>, 2025 WL 2430025 (D. Md. Aug. 24, 2025); <em>Lopez Benitez v. Francis</em>, 2025 WL 2371588 (S.D.N.Y. Aug. 13, 2025); <em>Jimenez v. FCI Berlin, Warden</em>, No. 25-cv-326-LM-AJ (D.N.H. Sept. 8, 2025); <em>Kostak v. Trump</em>, 2025 WL 2472136 (W.D. La. Aug. 27, 2025); <em>Cuevas Guzman v. Andrews</em>, 2025 WL 2617256, at *3 n.4 (E.D. Cal. Sept. 9, 2025).' },
+  { id: 'p-32', type: 'para', content: '32. Under the Supreme Court\u2019s recent decision in <em>Loper Bright v. Raimondo</em>, this Court should independently interpret the statute and give the BIA\u2019s expansive interpretation of \u00a7 1225(b)(2) no weight, as it conflicts with the statute, regulations, and precedent. 603 U.S. 369 (2024).' },
+  { id: 'p-33', type: 'para', content: '33. The detention provisions at \u00a7 1226(a) and \u00a7 1225(b)(2) were enacted as part of the Illegal Immigration Reform and Immigrant Responsibility Act ("IIRIRA") of 1996, Pub. L. No. 104-208, Div. C, \u00a7\u00a7 302\u201303, 110 Stat. 3009-546, 3009\u2013582 to 3009\u2013583, 3009\u2013585. Following IIRIRA, the Executive Office for Immigration Review ("EOIR") issued regulations clarifying that individuals who entered the country without inspection were not considered detained under \u00a7 1225, but rather under \u00a7 1226(a). See Inspection and Expedited Removal of Aliens; Detention and Removal of Aliens; Conduct of Removal Proceedings; Asylum Procedures, 62 Fed. Reg. 10312, 10323 (Mar. 6, 1997) ("[d]espite being applicants for admission, aliens who are present without having been admitted or paroled (formerly referred to as aliens who entered without inspection) will be eligible for bond and bond redetermination").' },
+  { id: 'p-34', type: 'para', content: '34. The statutory context and structure also make clear that \u00a7 1226 applies to individuals who have not been admitted and entered without inspection. In 2025, Congress added new mandatory detention grounds to \u00a7 1226(c) that apply only to noncitizens who have not been admitted. By specifically referencing inadmissibility for entry without inspection under 8 U.S.C. \u00a7 1182(6)(A), Congress made clear that such individuals are otherwise covered by \u00a7 1226(a). Thus, \u00a7 1226 plainly applies to noncitizens charged as inadmissible, including those present without admission or parole.' },
+  { id: 'p-35', type: 'para', content: '35. The Supreme Court has explained that \u00a7 1225(b) is concerned "primarily [with those] seeking entry," and is generally imposed "at the Nation\u2019s borders and ports of entry, where the Government must determine whether [a noncitizen] seeking to enter the country is admissible." <em>Jennings v. Rodriguez</em>, 583 U.S. 281, 297, 298 (2018). In contrast, Section 1226 "authorizes the Government to detain certain aliens already in the country pending the outcome of removal proceedings." Id. at 289 (emphases added).' },
+  { id: 'p-36', type: 'para', content: '36. Furthermore, \u00a7 1225(b)(2) specifically applies only to those "seeking admission." Similarly, the implementing regulations at 8 C.F.R. \u00a7 1.2 addresses noncitizens who are "coming or attempting to come into the United States." The use of the present progressive tense would exclude noncitizens like Petitioner who are apprehended in the interior years after they entered, as they are no longer "seeking admission" or "coming [...] into the United States." See <em>Martinez v. Hyde</em>, 2025 WL 2084238 at *6 (D. Mass. July 24, 2025) (citing the use of present and present progressive tense to support conclusion that INA \u00a7 1225(b)(2) does not apply to individuals apprehended in the interior); see also <em>Al Otro Lado v. McAleenan</em>, 394 F. Supp. 3d 1168, 1200 (S.D. Cal. 2019) (construing "is arriving" in INA \u00a7 235(b)(1)(A)(i) and observing that "[t]he use of the present progressive, like use of the present participle, denotes an ongoing process").' },
+  { id: 'p-37', type: 'para', content: '37. Accordingly, the mandatory detention provision of \u00a7 1225(b)(2) does not apply to Petitioner, who entered the U.S. years before he was apprehended.' },
+  // Statement of Facts
   { id: 'h-facts', type: 'heading', content: 'STATEMENT OF FACTS' },
-  { id: 'p-38', type: 'para', content: '38\u201343. Petitioner is from {{PETITIONER_COUNTRY}}, entered {{PETITIONER_ENTRY_METHOD}} in {{PETITIONER_ENTRY_DATE}}, {{PETITIONER_CRIMINAL_HISTORY}}, arrested in {{PETITIONER_APPREHENSION_LOCATION}} on {{PETITIONER_APPREHENSION_DATE}}, detained at {{DETENTION_FACILITY_NAME}}.' },
-  { id: 'h-c1', type: 'heading', content: 'COUNT I \u2014 Violation of \u00a7 1226(a)' },
-  { id: 'p-45', type: 'para', content: '45. Petitioner is entitled to a bond hearing under \u00a7 1226(a). His detention is unlawful.' },
-  { id: 'h-c2', type: 'heading', content: 'COUNT II \u2014 Violation of Bond Regulations' },
-  { id: 'p-51', type: 'para', content: '51. Application of \u00a7 1225(b)(2) violates 8 C.F.R. \u00a7\u00a7 236.1, 1236.1, 1003.19.' },
-  { id: 'h-c3', type: 'heading', content: 'COUNT III \u2014 Fifth Amendment Due Process' },
-  { id: 'p-57', type: 'para', content: '57. Petitioner {{PETITIONER_CRIMINAL_HISTORY}} and {{PETITIONER_COMMUNITY_TIES}}. Risk of erroneous deprivation is high.' },
+  { id: 'p-38', type: 'para', content: '38. Petitioner is a citizen of {{PETITIONER_COUNTRY}}.' },
+  { id: 'p-39', type: 'para', content: '39. On information and belief, Petitioner entered the U.S. {{PETITIONER_ENTRY_METHOD}} in {{PETITIONER_ENTRY_DATE}}, and he has resided in the U.S. since then.' },
+  { id: 'p-40', type: 'para', content: '40. On information and belief, Petitioner {{PETITIONER_CRIMINAL_HISTORY}}.' },
+  { id: 'p-41', type: 'para', content: '41. On information and belief, Petitioner was arrested by immigration authorities in {{PETITIONER_APPREHENSION_LOCATION}} on {{PETITIONER_APPREHENSION_DATE}}.' },
+  { id: 'p-42', type: 'para', content: '42. He is now detained at the {{DETENTION_FACILITY_NAME}}.' },
+  { id: 'p-43', type: 'para', content: '43. Without relief from this Court, he faces the prospect of continued detention without any access to a bond hearing.' },
+  // Count I
+  { id: 'h-c1', type: 'heading', content: 'COUNT I' },
+  { id: 'p-c1-sub', type: 'para', content: 'Violation of 8 U.S.C. \u00a7 1226(a) Unlawful Denial of Release on Bond' },
+  { id: 'p-44', type: 'para', content: '44. Petitioner restates and realleges all paragraphs as if fully set forth here.' },
+  { id: 'p-45', type: 'para', content: '45. Petitioner may be detained, if at all, pursuant to 8 U.S.C. \u00a7 1226(a).' },
+  { id: 'p-46', type: 'para', content: '46. Under \u00a7 1226(a) and its associated regulations, Petitioner is entitled to a bond hearing. See 8 C.F.R. 236.1(d) & 1003.19(a)-(f).' },
+  { id: 'p-47', type: 'para', content: '47. Petitioner has not been, and will not be, provided with a bond hearing as required by law.' },
+  { id: 'p-48', type: 'para', content: '48. Petitioner\u2019s continuing detention is therefore unlawful.' },
+  // Count II
+  { id: 'h-c2', type: 'heading', content: 'COUNT II' },
+  { id: 'p-c2-sub', type: 'para', content: 'Violation of the Bond Regulations, 8 C.F.R. \u00a7\u00a7 236.1, 1236.1 and 1003.19 Unlawful Denial of Release on Bond' },
+  { id: 'p-49', type: 'para', content: '49. Petitioner restates and realleges all paragraphs as if fully set forth here.' },
+  { id: 'p-50', type: 'para', content: '50. In 1997, after Congress amended the INA through IIRIRA, EOIR and the then-Immigration and Naturalization Service issued an interim rule to interpret and apply IIRIRA. Specifically, under the heading of "Apprehension, Custody, and Detention of [Noncitizens]," the agencies explained that "[d]espite being applicants for admission, [noncitizens] who are present without having been admitted or paroled (formerly referred to as [noncitizens] who entered without inspection) will be eligible for bond and bond redetermination." 62 Fed. Reg. at 10323. The agencies thus made clear that individuals who had entered without inspection were eligible for consideration for bond and bond hearings before IJs under 8 U.S.C. \u00a7 1226 and its implementing regulations.' },
+  { id: 'p-51', type: 'para', content: '51. The application of \u00a7 1225(b)(2) to Petitioner unlawfully mandates his continued detention and violates 8 C.F.R. \u00a7\u00a7 236.1, 1236.1, and 1003.19.' },
+  // Count III
+  { id: 'h-c3', type: 'heading', content: 'COUNT III' },
+  { id: 'p-c3-sub', type: 'para', content: 'Violation of Fifth Amendment Right to Due Process' },
+  { id: 'p-52', type: 'para', content: '52. Petitioner restates and realleges all paragraphs as if fully set forth here.' },
+  { id: 'p-53', type: 'para', content: '53. The Fifth Amendment\u2019s Due Process Clause prohibits the federal government from depriving any person of "life, liberty, or property, without due process of law." U.S. Const. Amend. V.' },
+  { id: 'p-54', type: 'para', content: '54. The Supreme Court has repeatedly emphasized that the Constitution generally requires a hearing before the government deprives a person of liberty or property. <em>Zinermon v. Burch</em>, 494 U.S. 113, 127 (1990).' },
+  { id: 'p-55', type: 'para', content: '55. Under the <em>Mathews v. Eldridge</em> framework, the balance of interests strongly favors Petitioner\u2019s release.' },
+  { id: 'p-56', type: 'para', content: '56. Petitioner\u2019s private interest in freedom from detention is profound. The interest in being free from physical detention is "the most elemental of liberty interests." <em>Hamdi v. Rumsfeld</em>, 542 U.S. 507, 529 (2004); see also <em>Zadvydas v. Davis</em>, 533 U.S. 678, 690 (2001) ("Freedom from imprisonment\u2014from government custody, detention, or other forms of physical restraint\u2014lies at the heart of the liberty that [the Due Process] Clause protects.").' },
+  { id: 'p-57', type: 'para', content: '57. The risk of erroneous deprivation is exceptionally high. Petitioner {{PETITIONER_CRIMINAL_HISTORY}} and {{PETITIONER_COMMUNITY_TIES}}.' },
+  { id: 'p-58', type: 'para', content: '58. The government\u2019s interest in detaining Petitioner without due process is minimal. Immigration detention is civil, not punitive, and may only be used to prevent danger to the community or ensure appearance at immigration proceedings. See <em>Zadvydas</em>, 533 U.S. at 690.' },
+  { id: 'p-59', type: 'para', content: '59. Furthermore, the "fiscal and administrative burdens" of providing Petitioner with a bond hearing are minimal, particularly when weighed against the significant liberty interests at stake. See <em>Mathews</em>, 424 U.S. at 334\u201335.' },
+  { id: 'p-60', type: 'para', content: '60. Considering these factors, Petitioner respectfully requests that this Court order his immediate release from custody or provide him with a bond hearing.' },
+  // Prayer for Relief
   { id: 'h-pray', type: 'heading', content: 'PRAYER FOR RELIEF' },
-  { id: 'p-pray', type: 'para', content: 'WHEREFORE: (1) jurisdiction; (2) expedited; (3) no transfer; (4) OSC; (5) declare unlawful; (6) Writ with bond hearing; (7) EAJA fees; (8) further relief.' },
+  { id: 'p-pray', type: 'para', content: 'WHEREFORE, Petitioner prays that this Court will: (1) Assume jurisdiction over this matter; (2) Set this matter for expedited consideration; (3) Order that Petitioner not be transferred outside of this District; (4) Issue an Order to Show Cause ordering Respondents to show cause why this Petition should not be granted within three days; (5) Declare that Petitioner\u2019s detention is unlawful; (6) Issue a Writ of Habeas Corpus ordering Respondents to release Petitioner from custody or provide him with a bond hearing pursuant to 8 U.S.C. \u00a7 1226(a) or the Due Process Clause within seven days; (7) Award Petitioner attorney\u2019s fees and costs under the Equal Access to Justice Act, and on any other basis justified under law; and (8) Grant any further relief this Court deems just and proper.' },
+  // Signature
   { id: 'sig-date', type: 'sig', content: 'Date: {{FILING_DATE}}' },
   { id: 'sig-sub', type: 'sig', content: 'Respectfully Submitted,' },
-  { id: 'sig-a1', type: 'sig', content: '/s/ {{ATTORNEY1_NAME}}\n{{ATTORNEY1_BAR_NO}}\n{{ATTORNEY1_FIRM}}\n{{ATTORNEY1_ADDRESS}}\n{{ATTORNEY1_CITY_STATE_ZIP}}\n{{ATTORNEY1_PHONE}} \u00b7 {{ATTORNEY1_FAX}}\n{{ATTORNEY1_EMAIL}}' },
-  { id: 'sig-a2', type: 'sig', content: '/s/ {{ATTORNEY2_NAME}}\n{{ATTORNEY2_BAR_NO}}*\n{{ATTORNEY2_FIRM}}\n{{ATTORNEY2_ADDRESS}}\n{{ATTORNEY2_CITY_STATE_ZIP}}\n{{ATTORNEY2_PHONE}}\n{{ATTORNEY2_EMAIL}}\n{{ATTORNEY2_PRO_HAC}}' },
+  { id: 'sig-a1', type: 'sig', content: '/s/ {{ATTORNEY1_NAME}}\n{{ATTORNEY1_NAME}}\n{{ATTORNEY1_BAR_NO}}\n{{ATTORNEY1_FIRM}}\n{{ATTORNEY1_ADDRESS}}\n{{ATTORNEY1_CITY_STATE_ZIP}}\n{{ATTORNEY1_PHONE}} \u00b7 {{ATTORNEY1_FAX}}\n{{ATTORNEY1_EMAIL}}' },
+  { id: 'sig-a2', type: 'sig', content: '/s/ {{ATTORNEY2_NAME}}\n{{ATTORNEY2_NAME}}\n{{ATTORNEY2_BAR_NO}}*\n{{ATTORNEY2_FIRM}}\n{{ATTORNEY2_ADDRESS}}\n{{ATTORNEY2_CITY_STATE_ZIP}}\n{{ATTORNEY2_PHONE}}\n{{ATTORNEY2_EMAIL}}\n{{ATTORNEY2_PRO_HAC}}' },
   { id: 'sig-role', type: 'sig-label', content: 'Attorneys for Petitioner' },
-  { id: 'h-ver', type: 'heading', content: 'VERIFICATION \u2014 28 U.S.C. \u00a7 2242' },
-  { id: 'p-ver', type: 'para', content: 'I represent {{PETITIONER_FULL_NAME}} and verify the foregoing. Dated {{FILING_DAY}} day of {{FILING_MONTH_YEAR}}.' },
-  { id: 'sig-ver', type: 'sig', content: '/s/ {{ATTORNEY2_NAME}}\nAttorney for Petitioner Pro Hac Vice' },
+  // Verification
+  { id: 'h-ver', type: 'heading', content: 'VERIFICATION PURSUANT TO 28 U.S.C. \u00a7 2242' },
+  { id: 'p-ver', type: 'para', content: 'I represent Petitioner, {{PETITIONER_FULL_NAME}}, and submit this verification on his behalf. I hereby verify that the factual statements made in the foregoing Petition for Writ of Habeas Corpus are true and correct to the best of my knowledge. Dated this {{FILING_DAY}} day of {{FILING_MONTH_YEAR}}.' },
+  { id: 'sig-ver', type: 'sig', content: '/s/ {{ATTORNEY2_NAME}}\n{{ATTORNEY2_NAME}}\nAttorney for Petitioner Appearing Pro Hac Vice' },
 ];
 
 // ── Matrix Event Types ───────────────────────────────────────────
@@ -206,8 +273,23 @@ var matrix = {
     if (body) opts.body = JSON.stringify(body);
     return fetch(this.baseUrl + '/_matrix/client/v3' + path, opts)
       .then(function(r) {
-        if (!r.ok) return r.json().then(function(e) { throw e; });
+        if (!r.ok) {
+          return r.text().then(function(text) {
+            try {
+              throw JSON.parse(text);
+            } catch(e) {
+              if (e instanceof SyntaxError) {
+                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+              }
+              throw e;
+            }
+          });
+        }
         return r.json();
+      })
+      .catch(function(e) {
+        if (e && e.errcode) throw e;
+        throw { errcode: 'M_NETWORK', error: e.message || 'Network error', status: 0 };
       });
   },
 
@@ -224,7 +306,19 @@ var matrix = {
       }),
     })
     .then(function(r) {
-      if (!r.ok) return r.json().then(function(e) { throw e; });
+      if (!r.ok) {
+        return r.text().then(function(text) {
+          try {
+            throw JSON.parse(text);
+          } catch(e) {
+            if (e instanceof SyntaxError) {
+              throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+            }
+            if (!e.status) e.status = r.status;
+            throw e;
+          }
+        });
+      }
       return r.json();
     })
     .then(function(data) {
@@ -380,6 +474,8 @@ function setState(updates) {
 // ── Room discovery from synced data ──────────────────────────────
 function discoverRoomByAlias(alias) {
   var roomIds = Object.keys(matrix.rooms);
+  // Extract the local part from the alias (e.g., "#org:server" -> "org")
+  var localPart = alias.replace(/^#/, '').split(':')[0];
   for (var i = 0; i < roomIds.length; i++) {
     var roomId = roomIds[i];
     var room = matrix.rooms[roomId];
@@ -391,23 +487,67 @@ function discoverRoomByAlias(alias) {
       var alts = canonical[''].content.alt_aliases || [];
       if (alts.indexOf(alias) >= 0) return roomId;
     }
+    // Fallback: check m.room.name (e.g., room named "Amino Org" for #org)
+    var nameEvt = room.stateEvents['m.room.name'];
+    if (nameEvt && nameEvt[''] && nameEvt[''].content && nameEvt[''].content.name) {
+      var rname = nameEvt[''].content.name.toLowerCase();
+      if (localPart === 'org' && (rname === 'amino org' || rname === 'org')) return roomId;
+      if (localPart === 'templates' && (rname === 'templates' || rname === 'amino templates')) return roomId;
+    }
   }
   return null;
 }
 
+// ── Room auto-creation ───────────────────────────────────────────
+function ensureRoom(alias, name) {
+  // 1. Check synced data
+  var id = discoverRoomByAlias(alias);
+  if (id) return Promise.resolve(id);
+  // 2. Try alias resolution API
+  return matrix.resolveAlias(alias)
+    .catch(function() {
+      // 3. Room not found — create it
+      var localAlias = alias.replace(/^#/, '').split(':')[0];
+      return matrix.createRoom({
+        name: name,
+        room_alias_name: localAlias,
+        visibility: 'private',
+        preset: 'private_chat',
+      }).then(function(data) {
+        // Cache the new room locally so getStateEvents works immediately
+        if (!matrix.rooms[data.room_id]) {
+          matrix.rooms[data.room_id] = { stateEvents: {} };
+        }
+        return data.room_id;
+      }).catch(function(createErr) {
+        // If alias already taken (race condition), try resolving again
+        if (createErr && createErr.errcode === 'M_ROOM_IN_USE') {
+          return matrix.resolveAlias(alias).catch(function() { return null; });
+        }
+        // If alias creation is restricted, try creating without alias
+        if (createErr && (createErr.errcode === 'M_UNKNOWN' || createErr.errcode === 'M_FORBIDDEN')) {
+          return matrix.createRoom({
+            name: name,
+            visibility: 'private',
+            preset: 'private_chat',
+          }).then(function(data) {
+            if (!matrix.rooms[data.room_id]) {
+              matrix.rooms[data.room_id] = { stateEvents: {} };
+            }
+            return data.room_id;
+          }).catch(function() { return null; });
+        }
+        console.warn('Could not create room ' + alias + ':', createErr);
+        return null;
+      });
+    });
+}
+
 // ── Hydration from Matrix ────────────────────────────────────────
 function hydrateFromMatrix() {
-  // First try to discover rooms from already-synced data (avoids extra API calls)
-  var orgId = discoverRoomByAlias(CONFIG.ORG_ROOM_ALIAS);
-  var tmplId = discoverRoomByAlias(CONFIG.TEMPLATES_ROOM_ALIAS);
-
-  // Fall back to alias resolution API only if sync-based discovery failed
-  var orgPromise = orgId
-    ? Promise.resolve(orgId)
-    : matrix.resolveAlias(CONFIG.ORG_ROOM_ALIAS).catch(function() { return null; });
-  var tmplPromise = tmplId
-    ? Promise.resolve(tmplId)
-    : matrix.resolveAlias(CONFIG.TEMPLATES_ROOM_ALIAS).catch(function() { return null; });
+  // Discover or auto-create org and templates rooms
+  var orgPromise = ensureRoom(CONFIG.ORG_ROOM_ALIAS, 'Amino Org');
+  var tmplPromise = ensureRoom(CONFIG.TEMPLATES_ROOM_ALIAS, 'Templates');
 
   return orgPromise
     .then(function(resolvedOrgId) {
@@ -521,10 +661,15 @@ function hydrateFromMatrix() {
         }
       }
 
+      var syncError = '';
+      if (!matrix.orgRoomId) {
+        syncError = 'Could not connect to the organization room. Directory data may be unavailable. Check that the Matrix server is running.';
+      }
+
       setState({
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
-        role: role, currentUser: matrix.userId,
+        role: role, currentUser: matrix.userId, syncError: syncError,
       });
     });
 }
@@ -1206,7 +1351,16 @@ function handleLogin() {
     })
     .then(function() { render(); })
     .catch(function(err) {
-      errEl.textContent = (err && err.error) || (err && err.message) || 'Login failed. Check your credentials.';
+      var status = (err && err.status) || 0;
+      var msg;
+      if (status === 502 || status === 503 || status === 504) {
+        msg = 'Matrix server is unavailable (HTTP ' + status + '). Please try again later or check server status.';
+      } else if (status === 0 || (err && err.errcode === 'M_NETWORK')) {
+        msg = 'Cannot reach the Matrix server. Check your network connection and that the server is running.';
+      } else {
+        msg = (err && err.error) || (err && err.message) || 'Login failed. Check your credentials.';
+      }
+      errEl.textContent = msg;
       errEl.style.display = 'block';
       btnEl.disabled = false;
       btnEl.textContent = 'Sign In';
@@ -1487,8 +1641,21 @@ document.addEventListener('DOMContentLoaded', function() {
       .then(function() { render(); })
       .catch(function(err) {
         console.error('Session restore failed:', err);
-        matrix.clearSession();
+        var status = (err && err.status) || 0;
+        // On 401/403 (invalid token), clear session and show login
+        if (status === 401 || status === 403) {
+          matrix.clearSession();
+          S.loading = false;
+          render();
+          return;
+        }
+        // On network errors or 502/503/504, enter offline mode
+        // Keep session so user can retry, but let them work locally
+        S.authenticated = true;
         S.loading = false;
+        S.syncError = 'Could not reach the Matrix server (' + ((err && err.error) || 'network error') + '). Working in local-only mode \u2014 changes will not sync.';
+        S.currentUser = matrix.userId || 'local';
+        S.role = 'attorney';
         render();
       });
   } else {
