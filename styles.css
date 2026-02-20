@@ -616,6 +616,11 @@ body,
   font-size: 11px !important;
   display: inline-block !important;
 }
+.board-export-btns {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
 
 /* ── Board Add Matter ─────────────────────────────── */
 .board-toggle-bar > .hbtn {
@@ -725,6 +730,10 @@ body,
     flex-direction: column;
     gap: 10px;
     align-items: flex-start;
+  }
+  .board-export-btns {
+    width: 100%;
+    justify-content: flex-start;
   }
 }
 
