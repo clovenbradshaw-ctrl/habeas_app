@@ -1997,33 +1997,53 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
       // Inject header/footer into template pages
       var hasHeader = ps.headerLeft || ps.headerCenter || ps.headerRight;
       var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
-      if (hasHeader || hasFooter) {
-        var pageMatches = html.match(/<section class="page">/g) || [];
-        var totalPages = pageMatches.length;
-        var hfCss = '.page-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666;font-family:"Times New Roman",serif}.page-hf span{flex:1}.page-hf span:nth-child(2){text-align:center}.page-hf span:last-child{text-align:right}.page-hdr{margin-bottom:12pt}.page-ftr{margin-top:24pt}';
-        html = html.replace('</style>', hfCss + '\n</style>');
+      var hfCss = '.page-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666;font-family:"Times New Roman",serif}.page-hf span{flex:1}.page-hf span:nth-child(2){text-align:center}.page-hf span:last-child{text-align:right}.page-hdr{margin-bottom:12pt}.page-ftr{margin-top:auto;padding-top:12pt}';
 
-        var pgIdx = 0;
-        html = html.replace(/<section class="page">/g, function() {
-          pgIdx++;
-          var isFirst = pgIdx === 1;
-          var hdrHtml = '';
-          if (hasHeader && (!isFirst || ps.showHeaderOnFirstPage)) {
-            hdrHtml = '<div class="page-hf page-hdr"><span>' + resolveExpVar(ps.headerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerRight, pgIdx, totalPages) + '</span></div>';
-          }
-          return '<section class="page">' + hdrHtml;
-        });
+      if (forWord) {
+        // Word path: inject headers/footers at section boundaries (existing behavior)
+        if (hasHeader || hasFooter) {
+          html = html.replace('</style>', hfCss + '\n</style>');
+          var pageMatches = html.match(/<section class="page">/g) || [];
+          var totalPages = pageMatches.length;
 
-        pgIdx = 0;
-        html = html.replace(/<\/section>/g, function() {
-          pgIdx++;
-          var isFirst = pgIdx === 1;
-          var ftrHtml = '';
-          if (hasFooter && (!isFirst || ps.showFooterOnFirstPage)) {
-            ftrHtml = '<div class="page-hf page-ftr"><span>' + resolveExpVar(ps.footerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerRight, pgIdx, totalPages) + '</span></div>';
-          }
-          return ftrHtml + '</section>';
+          var pgIdx = 0;
+          html = html.replace(/<section class="page">/g, function() {
+            pgIdx++;
+            var isFirst = pgIdx === 1;
+            var hdrHtml = '';
+            if (hasHeader && (!isFirst || ps.showHeaderOnFirstPage)) {
+              hdrHtml = '<div class="page-hf page-hdr"><span>' + resolveExpVar(ps.headerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerRight, pgIdx, totalPages) + '</span></div>';
+            }
+            return '<section class="page">' + hdrHtml;
+          });
+
+          pgIdx = 0;
+          html = html.replace(/<\/section>/g, function() {
+            pgIdx++;
+            var isFirst = pgIdx === 1;
+            var ftrHtml = '';
+            if (hasFooter && (!isFirst || ps.showFooterOnFirstPage)) {
+              ftrHtml = '<div class="page-hf page-ftr"><span>' + resolveExpVar(ps.footerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerRight, pgIdx, totalPages) + '</span></div>';
+            }
+            return ftrHtml + '</section>';
+          });
+        }
+      } else {
+        // PDF path: embed raw page settings for DOM-based pagination in the print window
+        var printCss = hfCss + '\n@media print{.page{display:flex;flex-direction:column;min-height:9in}}';
+        html = html.replace('</style>', printCss + '\n</style>');
+        var psData = JSON.stringify({
+          headerLeft: ps.headerLeft || '',
+          headerCenter: ps.headerCenter || '',
+          headerRight: ps.headerRight || '',
+          footerLeft: ps.footerLeft || '',
+          footerCenter: ps.footerCenter || '',
+          footerRight: ps.footerRight || '',
+          showHeaderOnFirstPage: !!ps.showHeaderOnFirstPage,
+          showFooterOnFirstPage: !!ps.showFooterOnFirstPage,
+          caseNo: caseNo
         });
+        html = html.replace('<body>', '<body data-page-settings="' + psData.replace(/"/g, '&quot;') + '">');
       }
 
       if (forWord) {
@@ -2051,6 +2071,134 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
       }
       return html;
     });
+}
+
+// ── PDF print-window pagination ─────────────────────────────────
+function paginatePrintWindow(w) {
+  var doc = w.document;
+  var sections = doc.querySelectorAll('section.page');
+  if (sections.length < 1) return;
+
+  // Parse page settings embedded by buildExportFromTemplate
+  var psRaw = doc.body.getAttribute('data-page-settings');
+  var ps;
+  try { ps = JSON.parse(psRaw || '{}'); } catch(e) { ps = {}; }
+
+  var hasHeader = ps.headerLeft || ps.headerCenter || ps.headerRight;
+  var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
+
+  var captionSection = sections[0];
+  var bodySection = sections.length > 1 ? sections[sections.length - 1] : null;
+  if (!bodySection) return;
+
+  // Measure each direct child element of the body section
+  var children = Array.from(bodySection.children);
+  var measurements = [];
+  children.forEach(function(el) {
+    var rect = el.getBoundingClientRect();
+    var cs = w.getComputedStyle(el);
+    var mt = parseFloat(cs.marginTop) || 0;
+    var mb = parseFloat(cs.marginBottom) || 0;
+    measurements.push({
+      el: el,
+      h: rect.height + mt + mb,
+      isHeading: el.tagName === 'H2' || (el.className && el.className.indexOf('section') >= 0)
+    });
+  });
+
+  // Usable height per page: 11in - 2*1in @page margin = 9in = 864px at 96 DPI
+  // Reserve space for footer (~28px)
+  var USABLE_H = 9 * 96 - 28;
+
+  // Split into page-sized groups
+  var pageGroups = [];
+  var current = [];
+  var remaining = USABLE_H;
+
+  for (var i = 0; i < measurements.length; i++) {
+    var m = measurements[i];
+    if (m.h > remaining && current.length > 0) {
+      pageGroups.push(current);
+      current = [];
+      remaining = USABLE_H;
+    }
+    // Heading orphan prevention: if heading fits alone but heading + next block doesn't,
+    // push heading to next page so it stays with its content
+    if (m.isHeading && current.length > 0 && i + 1 < measurements.length) {
+      var nextH = measurements[i + 1].h;
+      if (m.h <= remaining && m.h + nextH > remaining) {
+        pageGroups.push(current);
+        current = [];
+        remaining = USABLE_H;
+      }
+    }
+    current.push(m);
+    remaining -= m.h;
+  }
+  if (current.length > 0) pageGroups.push(current);
+
+  var totalPages = pageGroups.length + 1; // +1 for caption page
+
+  function resolvePageVar(text, pageNum) {
+    if (!text) return '';
+    return text
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + pageNum + ' of ' + totalPages)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(pageNum))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(totalPages))
+      .replace(/\{\{CASE_NUMBER\}\}/g, ps.caseNo || '');
+  }
+
+  function makeFooter(pageNum) {
+    var div = doc.createElement('div');
+    div.className = 'page-hf page-ftr';
+    div.innerHTML = '<span>' + resolvePageVar(ps.footerLeft, pageNum) +
+      '</span><span>' + resolvePageVar(ps.footerCenter, pageNum) +
+      '</span><span>' + resolvePageVar(ps.footerRight, pageNum) + '</span>';
+    return div;
+  }
+
+  function makeHeader(pageNum) {
+    var div = doc.createElement('div');
+    div.className = 'page-hf page-hdr';
+    div.innerHTML = '<span>' + resolvePageVar(ps.headerLeft, pageNum) +
+      '</span><span>' + resolvePageVar(ps.headerCenter, pageNum) +
+      '</span><span>' + resolvePageVar(ps.headerRight, pageNum) + '</span>';
+    return div;
+  }
+
+  var parent = bodySection.parentNode;
+
+  // Build new sections for each page group
+  pageGroups.forEach(function(group, idx) {
+    var pageNum = idx + 2; // caption is page 1
+    var isFirst = false; // body pages are never the "first" page
+    var section = doc.createElement('section');
+    section.className = 'page';
+
+    if (hasHeader && (!isFirst || ps.showHeaderOnFirstPage)) {
+      section.appendChild(makeHeader(pageNum));
+    }
+
+    group.forEach(function(item) {
+      section.appendChild(item.el);
+    });
+
+    if (hasFooter) {
+      section.appendChild(makeFooter(pageNum));
+    }
+
+    parent.insertBefore(section, bodySection);
+  });
+
+  parent.removeChild(bodySection);
+
+  // Handle caption page (page 1) header and footer
+  if (hasFooter && ps.showFooterOnFirstPage) {
+    captionSection.appendChild(makeFooter(1));
+  }
+  if (hasHeader && ps.showHeaderOnFirstPage) {
+    captionSection.insertBefore(makeHeader(1), captionSection.firstChild);
+  }
 }
 
 // ── Matrix sync helpers ─────────────────────────────────────────
@@ -4045,14 +4193,17 @@ document.addEventListener('click', function(e) {
           });
       }
     } else {
-      // PDF: template-based print flow
+      // PDF: template-based print flow with DOM-based pagination
       buildExportFromTemplate(vars, false, pet.pageSettings)
         .then(function(html) {
           var w = window.open('', '_blank', 'width=850,height=1100');
           if (!w) { alert('Allow popups for PDF export'); return; }
           w.document.write(html);
           w.document.close();
-          setTimeout(function() { w.focus(); w.print(); }, 500);
+          setTimeout(function() {
+            paginatePrintWindow(w);
+            setTimeout(function() { w.focus(); w.print(); }, 300);
+          }, 500);
         })
         .catch(function(err) {
           console.error('Template export failed, falling back to block export:', err);
