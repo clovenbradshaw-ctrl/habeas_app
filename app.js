@@ -299,12 +299,16 @@ var matrix = {
       .then(function(r) {
         clearTimeout(timeoutId);
         if (!r.ok) {
+          var httpStatus = r.status;
           return r.text().then(function(text) {
             try {
-              throw JSON.parse(text);
+              var parsed = JSON.parse(text);
+              // Always include HTTP status on error objects
+              if (!parsed.status) parsed.status = httpStatus;
+              throw parsed;
             } catch(e) {
               if (e instanceof SyntaxError) {
-                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+                throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + httpStatus + ' ' + r.statusText, status: httpStatus };
               }
               throw e;
             }
@@ -441,6 +445,14 @@ var matrix = {
 
   isReady: function() {
     return !!this.accessToken;
+  },
+
+  // Verify the stored token is still valid by calling /whoami
+  whoami: function() {
+    return this._api('GET', '/account/whoami')
+      .then(function(data) {
+        return data; // { user_id: "@user:server" }
+      });
   },
 
   saveSession: function() {
@@ -835,8 +847,8 @@ function debouncedSync(key, fn) {
 }
 
 function syncClientToMatrix(client) {
-  if (!matrix.isReady() || !client.roomId) return;
-  matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
+  if (!matrix.isReady() || !client.roomId) return Promise.resolve();
+  return matrix.sendStateEvent(client.roomId, EVT_CLIENT, {
     id: client.id, name: client.name, country: client.country,
     yearsInUS: client.yearsInUS, entryDate: client.entryDate,
     entryMethod: client.entryMethod,
@@ -847,9 +859,82 @@ function syncClientToMatrix(client) {
   }, '').catch(function(e) { console.error('Client sync failed:', e); });
 }
 
+// Create a Matrix room for a client and sync initial data
+var _pendingRoomCreations = {};
+function createClientRoom(clientId) {
+  if (!matrix.isReady()) return Promise.resolve();
+  var client = S.clients[clientId];
+  if (!client) return Promise.resolve();
+  // Already has a room
+  if (client.roomId) return Promise.resolve(client.roomId);
+  // Room creation already in flight for this client
+  if (_pendingRoomCreations[clientId]) return _pendingRoomCreations[clientId];
+  var roomName = 'client:' + (client.name || client.id);
+  _pendingRoomCreations[clientId] = matrix.createRoom({
+    name: roomName,
+    visibility: 'private',
+    preset: 'private_chat',
+    initial_state: [
+      {
+        type: EVT_CLIENT,
+        state_key: '',
+        content: {
+          id: client.id, name: client.name, country: client.country,
+          yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+          entryMethod: client.entryMethod,
+          apprehensionLocation: client.apprehensionLocation,
+          apprehensionDate: client.apprehensionDate,
+          criminalHistory: client.criminalHistory,
+          communityTies: client.communityTies,
+        },
+      },
+    ],
+  }).then(function(data) {
+    var roomId = data.room_id;
+    // Update local cache
+    if (!matrix.rooms[roomId]) matrix.rooms[roomId] = { stateEvents: {} };
+    if (!matrix.rooms[roomId].stateEvents[EVT_CLIENT]) matrix.rooms[roomId].stateEvents[EVT_CLIENT] = {};
+    matrix.rooms[roomId].stateEvents[EVT_CLIENT][''] = {
+      content: {
+        id: client.id, name: client.name, country: client.country,
+        yearsInUS: client.yearsInUS, entryDate: client.entryDate,
+        entryMethod: client.entryMethod,
+        apprehensionLocation: client.apprehensionLocation,
+        apprehensionDate: client.apprehensionDate,
+        criminalHistory: client.criminalHistory,
+        communityTies: client.communityTies,
+      },
+      sender: matrix.userId,
+      origin_server_ts: Date.now(),
+    };
+    // Update client's roomId in state
+    client.roomId = roomId;
+    S.clients[clientId] = client;
+    // Also update roomId on any petitions for this client
+    Object.values(S.petitions).forEach(function(p) {
+      if (p.clientId === clientId && !p.roomId) {
+        p.roomId = roomId;
+        // Sync any pending petitions now that we have a roomId
+        syncPetitionToMatrix(p);
+        if (p.blocks && p.blocks.length > 0) {
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: p.blocks }, p.id)
+            .catch(function(e) { console.error('Block sync failed:', e); });
+        }
+      }
+    });
+    console.log('Created Matrix room for client', clientId, '→', roomId);
+    delete _pendingRoomCreations[clientId];
+    return roomId;
+  }).catch(function(e) {
+    console.error('Failed to create client room:', e);
+    delete _pendingRoomCreations[clientId];
+  });
+  return _pendingRoomCreations[clientId];
+}
+
 function syncPetitionToMatrix(pet) {
-  if (!matrix.isReady() || !pet.roomId) return;
-  matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
+  if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
+  return matrix.sendStateEvent(pet.roomId, EVT_PETITION, {
     clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
     district: pet.district, division: pet.division, caseNumber: pet.caseNumber,
     facilityName: pet.facilityName, facilityCity: pet.facilityCity,
@@ -1656,11 +1741,14 @@ document.addEventListener('click', function(e) {
     S.clients[id] = { id: id, name: '', country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
     S.log.push({ op: 'CREATE', target: id, payload: null, frame: { t: now(), entity: 'client' } });
     setState({ selectedClientId: id });
+    // Create a Matrix room for the client in the background
+    createClientRoom(id);
     return;
   }
   if (action === 'create-petition') {
     var cid = btn.dataset.clientId;
     var pid = uid();
+    var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
     S.petitions[pid] = {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
       stageHistory: [{ stage: 'drafted', at: now() }],
@@ -1668,10 +1756,17 @@ document.addEventListener('click', function(e) {
       district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
-      createdAt: now(), roomId: (S.clients[cid] && S.clients[cid].roomId) || '',
+      createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor' });
+    // Sync petition to Matrix (will be picked up by createClientRoom if roomId is empty)
+    var pet = S.petitions[pid];
+    if (pet.roomId && matrix.isReady()) {
+      syncPetitionToMatrix(pet);
+      matrix.sendStateEvent(pet.roomId, EVT_PETITION_BLOCKS, { blocks: pet.blocks }, pet.id)
+        .catch(function(e) { console.error('Block sync failed:', e); });
+    }
     return;
   }
 
@@ -1843,7 +1938,14 @@ document.addEventListener('input', function(e) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
-    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
+    debouncedSync('client-' + client.id, function() {
+      if (client.roomId) {
+        syncClientToMatrix(client);
+      } else if (matrix.isReady()) {
+        // Room hasn't been created yet — create it now (includes initial sync)
+        createClientRoom(client.id);
+      }
+    });
     return;
   }
 
@@ -1854,7 +1956,13 @@ document.addEventListener('input', function(e) {
     if (!client) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
-    debouncedSync('client-' + client.id, function() { syncClientToMatrix(client); });
+    debouncedSync('client-' + client.id, function() {
+      if (client.roomId) {
+        syncClientToMatrix(client);
+      } else if (matrix.isReady()) {
+        createClientRoom(client.id);
+      }
+    });
     return;
   }
 
@@ -1919,11 +2027,44 @@ document.addEventListener('change', function(e) {
   }
 });
 
+// ── Flush pending syncs on visibility change / page unload ──────
+// When the user switches tabs or is about to leave, immediately fire
+// any pending debounced syncs (best-effort — fetch may be cancelled)
+function flushPendingSyncs() {
+  var keys = Object.keys(_syncTimers);
+  if (keys.length === 0) return;
+  keys.forEach(function(key) {
+    // clearTimeout returns undefined; we need to re-invoke the sync
+    clearTimeout(_syncTimers[key]);
+    delete _syncTimers[key];
+  });
+  // Re-sync all clients and petitions that have room IDs
+  if (!matrix.isReady()) return;
+  Object.values(S.clients).forEach(function(client) {
+    if (client.roomId) syncClientToMatrix(client);
+  });
+  Object.values(S.petitions).forEach(function(pet) {
+    if (pet.roomId) syncPetitionToMatrix(pet);
+  });
+}
+
+document.addEventListener('visibilitychange', function() {
+  if (document.visibilityState === 'hidden') flushPendingSyncs();
+});
+window.addEventListener('beforeunload', flushPendingSyncs);
+
 // ── Initialization ───────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
   render(); // Show loading state immediately
   if (matrix.loadSession()) {
-    matrix.initialSync()
+    // First verify the token is still valid with /whoami
+    matrix.whoami()
+      .then(function(whoamiData) {
+        console.log('Session verified for:', whoamiData.user_id);
+        // Ensure userId matches what we have stored
+        if (whoamiData.user_id) matrix.userId = whoamiData.user_id;
+        return matrix.initialSync();
+      })
       .then(function() {
         S.authenticated = true;
         S.loading = false;
@@ -1935,6 +2076,7 @@ document.addEventListener('DOMContentLoaded', function() {
         var status = (err && err.status) || 0;
         // On 401/403 (invalid token), clear session and show login
         if (status === 401 || status === 403) {
+          console.warn('Token invalid or expired, clearing session');
           matrix.clearSession();
           S.loading = false;
           render();
