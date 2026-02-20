@@ -956,6 +956,7 @@ var S = {
   boardMode: 'kanban',
   boardTableGroup: 'stage',
   boardAddingMatter: false,
+  boardShowAllSubmitted: false,
   _rendering: false,
 };
 
@@ -1885,22 +1886,59 @@ function renderBoard() {
 
 function renderBoardKanban(vis) {
   var h = '<div class="kanban">';
+  var NOW = Date.now();
+  var WEEK_MS = 7 * 24 * 60 * 60 * 1000;
   STAGES.forEach(function(stage) {
     var items = vis.filter(function(p) { return p.stage === stage; })
-      .sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+      .sort(function(a, b) {
+        // For submitted: sort by time entered submitted (newest first)
+        if (stage === 'submitted') {
+          var aTime = submittedAt(a);
+          var bTime = submittedAt(b);
+          return bTime - aTime;
+        }
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      });
     var m = SM[stage];
-    h += '<div class="kb-col"><div class="kb-col-head" style="border-bottom-color:' + m.color + '">';
+
+    // For submitted column, compute hidden count
+    var hiddenCount = 0;
+    if (stage === 'submitted' && !S.boardShowAllSubmitted) {
+      hiddenCount = items.filter(function(p) {
+        var age = NOW - submittedAt(p);
+        return age >= WEEK_MS;
+      }).length;
+    }
+
+    h += '<div class="kb-col" data-stage="' + stage + '"><div class="kb-col-head" style="border-bottom-color:' + m.color + '">';
     h += '<span class="kb-col-title">' + m.label + '</span>';
     h += '<span class="kb-col-count" style="background:' + m.color + '">' + items.length + '</span>';
-    h += '</div><div class="kb-col-body">';
+    h += '</div><div class="kb-col-body" data-drop-stage="' + stage + '">';
     if (items.length === 0) {
       h += '<div class="kb-empty">None</div>';
     }
     items.forEach(function(p) {
+      // For submitted cards: compute opacity based on age
+      var fadeStyle = '';
+      var isHidden = false;
+      if (stage === 'submitted') {
+        var age = NOW - submittedAt(p);
+        if (age >= WEEK_MS && !S.boardShowAllSubmitted) {
+          isHidden = true;
+          return; // skip rendering
+        }
+        // Fade from 1.0 (just submitted) to 0.25 (approaching 1 week)
+        var ratio = Math.min(age / WEEK_MS, 1);
+        var opacity = 1 - (ratio * 0.75); // 1.0 → 0.25
+        if (opacity < 1) {
+          fadeStyle = ' opacity:' + opacity.toFixed(2) + ';';
+        }
+      }
+
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
       var attNames = petAttorneyNames(p);
-      h += '<div class="kb-card" style="border-left-color:' + m.color + '" data-action="open-petition" data-id="' + p.id + '">';
+      h += '<div class="kb-card" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
       h += '<div class="kb-card-name">' + esc(cl ? cl.name || 'Unnamed' : 'Unnamed') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.caseNumber || 'No case no.') + (p.district ? ' \u00b7 ' + esc(p.district) : '') + '</div>';
       h += '<div class="kb-card-meta">' + esc(p.facilityName || '') + '</div>';
@@ -1921,10 +1959,31 @@ function renderBoardKanban(vis) {
       if (si < STAGES.length - 1) h += '<button class="kb-btn accent" data-action="stage-change" data-id="' + p.id + '" data-dir="advance">' + STAGES[si + 1] + ' &rarr;</button>';
       h += '</div></div>';
     });
+
+    // Show all toggle for submitted column
+    if (stage === 'submitted' && hiddenCount > 0) {
+      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-submitted">Show ' + hiddenCount + ' older</button>';
+    }
+    if (stage === 'submitted' && S.boardShowAllSubmitted) {
+      h += '<button class="kb-show-all-btn" data-action="toggle-show-all-submitted">Hide older</button>';
+    }
+
     h += '</div></div>';
   });
   h += '</div>';
   return h;
+}
+
+// Helper: get the timestamp when a petition entered the submitted stage
+function submittedAt(p) {
+  if (p.stageHistory && p.stageHistory.length > 0) {
+    for (var i = p.stageHistory.length - 1; i >= 0; i--) {
+      if (p.stageHistory[i].stage === 'submitted') {
+        return new Date(p.stageHistory[i].at).getTime();
+      }
+    }
+  }
+  return new Date(p.createdAt).getTime();
 }
 
 function renderBoardTable(vis) {
@@ -2570,8 +2629,79 @@ function render() {
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
   }
+  // Post-render: initialize kanban drag-and-drop
+  if (S.currentView === 'board' && S.boardMode === 'kanban') {
+    requestAnimationFrame(function() { initKanbanDragDrop(); });
+  }
   // Post-render: initialize flatpickr date pickers and facility autocomplete
   requestAnimationFrame(function() { initDatePickers(); initFacilityAC(); });
+}
+
+// ── Kanban Drag-and-Drop ────────────────────────────────────────
+function initKanbanDragDrop() {
+  var dropZones = document.querySelectorAll('[data-drop-stage]');
+  var cards = document.querySelectorAll('[data-drag-id]');
+
+  cards.forEach(function(card) {
+    card.addEventListener('dragstart', function(e) {
+      // Don't drag when starting from action buttons
+      if (e.target.closest && e.target.closest('.kb-card-actions')) {
+        e.preventDefault();
+        return;
+      }
+      e.dataTransfer.setData('text/plain', card.dataset.dragId);
+      e.dataTransfer.effectAllowed = 'move';
+      card.classList.add('kb-dragging');
+      // Highlight valid drop columns
+      requestAnimationFrame(function() {
+        dropZones.forEach(function(z) { z.classList.add('kb-drop-target'); });
+      });
+    });
+    card.addEventListener('dragend', function() {
+      card.classList.remove('kb-dragging');
+      dropZones.forEach(function(z) {
+        z.classList.remove('kb-drop-target');
+        z.classList.remove('kb-drop-over');
+      });
+    });
+  });
+
+  dropZones.forEach(function(zone) {
+    zone.addEventListener('dragover', function(e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      zone.classList.add('kb-drop-over');
+    });
+    zone.addEventListener('dragleave', function(e) {
+      // Only remove highlight when leaving the zone itself (not children)
+      if (!zone.contains(e.relatedTarget)) {
+        zone.classList.remove('kb-drop-over');
+      }
+    });
+    zone.addEventListener('drop', function(e) {
+      e.preventDefault();
+      zone.classList.remove('kb-drop-over');
+      dropZones.forEach(function(z) { z.classList.remove('kb-drop-target'); });
+
+      var petId = e.dataTransfer.getData('text/plain');
+      var newStage = zone.dataset.dropStage;
+      var pet = S.petitions[petId];
+      if (!pet) return;
+      if (pet.stage === newStage) return; // dropped in same column
+      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+
+      var t = now();
+      S.log.push({ op: 'STAGE', target: petId, payload: newStage, frame: { t: t, prior: pet.stage } });
+      S.petitions[pet.id] = Object.assign({}, pet, { stage: newStage, stageHistory: pet.stageHistory.concat([{ stage: newStage, at: t }]) });
+      if (matrix.isReady() && pet.roomId) {
+        var stageLabel = SM[newStage] ? SM[newStage].label : newStage;
+        matrix.sendStateEvent(pet.roomId, EVT_PETITION, Object.assign({}, pet, { stage: newStage, stageHistory: S.petitions[pet.id].stageHistory }), pet.id)
+          .then(function() { toast('ALT \u21CC stage \u2192 ' + stageLabel, 'success'); })
+          .catch(function(err) { console.error(err); toast('ALT \u21CC stage change failed', 'error'); });
+      }
+      render();
+    });
+  });
 }
 
 // ── Post-render Initializers ────────────────────────────────────
@@ -2701,6 +2831,7 @@ document.addEventListener('click', function(e) {
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'toggle-show-all-submitted') { setState({ boardShowAllSubmitted: !S.boardShowAllSubmitted }); return; }
   if (action === 'board-add-matter') {
     var clientList = Object.values(S.clients);
     if (clientList.length === 0) {
