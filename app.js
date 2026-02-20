@@ -799,6 +799,7 @@ var S = {
   draft: {},
   boardMode: 'kanban',
   boardTableGroup: 'stage',
+  boardAddingMatter: false,
   _rendering: false,
 };
 
@@ -1086,7 +1087,7 @@ function doExportDoc(blocks, vars, name) {
   var url = URL.createObjectURL(blob);
   var a = document.createElement('a');
   a.href = url;
-  a.download = 'habeas-' + (name || 'petition').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+  a.download = 'habeas-' + (name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
   document.body.appendChild(a);
   a.click();
   setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
@@ -1485,6 +1486,22 @@ function renderBoard() {
     h += '</div>';
   }
 
+  // Add Matter button / inline client picker
+  var clientList = Object.values(S.clients);
+  if (S.boardAddingMatter && clientList.length > 0) {
+    h += '<div class="board-add-matter">';
+    h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
+    h += '<option value="">Select client\u2026</option>';
+    clientList.forEach(function(c) {
+      h += '<option value="' + c.id + '">' + esc(c.name || 'Unnamed') + '</option>';
+    });
+    h += '</select>';
+    h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
+    h += '</div>';
+  } else {
+    h += '<button class="hbtn accent" data-action="board-add-matter">+ Add Matter</button>';
+  }
+
   h += '</div>';
 
   if (S.boardMode === 'table') {
@@ -1494,7 +1511,7 @@ function renderBoard() {
   }
 
   if (vis.length === 0) {
-    h += '<div class="board-empty"><p>No petitions yet. Go to <strong>Clients</strong> to create one, or set up <strong>Directory</strong> first.</p></div>';
+    h += '<div class="board-empty"><p>No matters yet. Click <strong>+ Add Matter</strong> above, or go to <strong>Clients</strong> to get started.</p></div>';
   }
 
   h += '</div>';
@@ -1641,7 +1658,7 @@ function renderClients() {
     var pets = Object.values(S.petitions).filter(function(p) { return p.clientId === c.id; });
     h += '<div class="cv-item' + (S.selectedClientId === c.id ? ' on' : '') + '" data-action="select-client" data-id="' + c.id + '">';
     h += '<div class="cv-item-name">' + esc(c.name || 'Unnamed') + '</div>';
-    h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' pet.' : '') + '</div>';
+    h += '<div class="cv-item-meta">' + esc(c.country || '') + (pets.length > 0 ? ' \u00b7 ' + pets.length + ' matter' + (pets.length !== 1 ? 's' : '') : '') + '</div>';
     pets.forEach(function(p) {
       var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
       h += '<span class="stage-badge sm" style="background:' + sc + '">' + p.stage + '</span>';
@@ -1652,10 +1669,10 @@ function renderClients() {
   h += '<div class="cv-detail">';
   if (client) {
     h += '<div class="cv-detail-head"><h2>' + esc(client.name || 'New Client') + '</h2>';
-    h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Petition</button></div>';
+    h += '<button class="hbtn accent" data-action="create-petition" data-client-id="' + client.id + '">+ New Matter</button></div>';
     h += htmlFieldGroup('Client Information', CLIENT_FIELDS, client, 'client-field');
     if (clientPets.length > 0) {
-      h += '<div class="fg"><div class="fg-title">Petitions</div>';
+      h += '<div class="fg"><div class="fg-title">Matters</div>';
       clientPets.forEach(function(p) {
         var sc = SM[p.stage] ? SM[p.stage].color : '#ccc';
         h += '<div class="pet-row" data-action="open-petition" data-id="' + p.id + '">';
@@ -1689,7 +1706,7 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Detention Facilities</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-facility">+ Add Facility</button>';
     h += '</div>';
-    h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a petition auto-fills all six fields.</p>';
+    h += '<p class="dir-desc">Each facility bundles its warden, location, and linked field office. Selecting a facility on a matter auto-fills all six fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.facilities).forEach(function(f) {
       h += '<div class="dir-card' + (S.editId === f.id ? ' editing' : '') + '">';
@@ -1728,7 +1745,7 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Courts</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-court">+ Add Court</button>';
     h += '</div>';
-    h += '<p class="dir-desc">District + division combos. Selecting a court on a petition fills both fields.</p>';
+    h += '<p class="dir-desc">District + division combos. Selecting a court on a matter fills both fields.</p>';
     h += '<div class="dir-list">';
     Object.values(S.courts).forEach(function(c) {
       h += '<div class="dir-card' + (S.editId === c.id ? ' editing' : '') + '">';
@@ -1763,7 +1780,7 @@ function renderDirectory() {
     h += '<div class="dir-section"><div class="dir-head"><h3>Attorney Profiles</h3>';
     if (isAdmin) h += '<button class="hbtn accent" data-action="add-attorney">+ Add Attorney</button>';
     h += '</div>';
-    h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any petition.</p>';
+    h += '<p class="dir-desc">Reusable attorney profiles. Select as Attorney 1 or 2 on any matter.</p>';
     h += '<div class="dir-list">';
     Object.values(S.attProfiles).forEach(function(a) {
       h += '<div class="dir-card' + (S.editId === a.id ? ' editing' : '') + '">';
@@ -1799,7 +1816,7 @@ function renderDirectory() {
 
   if (tab === 'national') {
     h += '<div class="dir-section"><div class="dir-head"><h3>National Defaults</h3></div>';
-    h += '<p class="dir-desc">These auto-fill on every petition.' + (isAdmin ? ' Update when officials change.' : '') + '</p>';
+    h += '<p class="dir-desc">These auto-fill on every matter.' + (isAdmin ? ' Update when officials change.' : '') + '</p>';
     h += '<div class="dir-card editing">';
     NATIONAL_FIELDS.forEach(function(f) {
       var val = (S.national[f.key]) || '';
@@ -1904,7 +1921,7 @@ function renderAdmin() {
 function renderEditor() {
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) {
-    return '<div class="editor-view"><div style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa">No petition selected.</div></div>';
+    return '<div class="editor-view"><div style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa">No matter selected.</div></div>';
   }
   var client = S.clients[pet.clientId] || null;
   var att1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
@@ -2309,12 +2326,22 @@ document.addEventListener('click', function(e) {
   if (!btn) return;
   var action = btn.dataset.action;
 
-  if (action === 'nav') { setState({ currentView: btn.dataset.view }); return; }
+  if (action === 'nav') { setState({ currentView: btn.dataset.view, boardAddingMatter: false }); return; }
   if (action === 'logout') { matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
+  if (action === 'board-add-matter') {
+    var clientList = Object.values(S.clients);
+    if (clientList.length === 0) {
+      setState({ currentView: 'clients' });
+    } else {
+      setState({ boardAddingMatter: true });
+    }
+    return;
+  }
+  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
   if (action === 'toggle-group') {
     var gKey = btn.dataset.group || (btn.closest('[data-group]') && btn.closest('[data-group]').dataset.group);
     if (gKey) { _collapsedGroups[gKey] = !_collapsedGroups[gKey]; render(); }
@@ -2394,7 +2421,7 @@ document.addEventListener('click', function(e) {
           var url = URL.createObjectURL(blob);
           var a = document.createElement('a');
           a.href = url;
-          a.download = 'habeas-' + (cl.name || 'petition').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
+          a.download = 'habeas-' + (cl.name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.doc';
           document.body.appendChild(a);
           a.click();
           setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
@@ -2675,6 +2702,31 @@ document.addEventListener('change', function(e) {
 
   if (action === 'board-table-group') {
     setState({ boardTableGroup: val });
+    return;
+  }
+
+  if (action === 'board-create-matter') {
+    var cid = val;
+    if (!cid) return;
+    var pid = uid();
+    var clientRoomId = (S.clients[cid] && S.clients[cid].roomId) || '';
+    S.petitions[pid] = {
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'drafted',
+      stageHistory: [{ stage: 'drafted', at: now() }],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      district: '', division: '', caseNumber: '', facilityName: '', facilityCity: '',
+      facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      filingDate: '', filingDay: '', filingMonthYear: '',
+      createdAt: now(), roomId: clientRoomId,
+    };
+    S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
+    var newPet = S.petitions[pid];
+    if (newPet.roomId && matrix.isReady()) {
+      syncPetitionToMatrix(newPet);
+      matrix.sendStateEvent(newPet.roomId, EVT_PETITION_BLOCKS, { blocks: newPet.blocks }, newPet.id)
+        .catch(function(e) { console.error('Block sync failed:', e); });
+    }
     return;
   }
 
