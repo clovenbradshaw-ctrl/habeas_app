@@ -377,15 +377,45 @@ function setState(updates) {
   }
 }
 
+// ── Room discovery from synced data ──────────────────────────────
+function discoverRoomByAlias(alias) {
+  var roomIds = Object.keys(matrix.rooms);
+  for (var i = 0; i < roomIds.length; i++) {
+    var roomId = roomIds[i];
+    var room = matrix.rooms[roomId];
+    if (!room || !room.stateEvents) continue;
+    // Check m.room.canonical_alias
+    var canonical = room.stateEvents['m.room.canonical_alias'];
+    if (canonical && canonical[''] && canonical[''].content) {
+      if (canonical[''].content.alias === alias) return roomId;
+      var alts = canonical[''].content.alt_aliases || [];
+      if (alts.indexOf(alias) >= 0) return roomId;
+    }
+  }
+  return null;
+}
+
 // ── Hydration from Matrix ────────────────────────────────────────
 function hydrateFromMatrix() {
-  return matrix.resolveAlias(CONFIG.ORG_ROOM_ALIAS)
-    .then(function(orgId) {
-      matrix.orgRoomId = orgId;
-      return matrix.resolveAlias(CONFIG.TEMPLATES_ROOM_ALIAS).catch(function() { return null; });
+  // First try to discover rooms from already-synced data (avoids extra API calls)
+  var orgId = discoverRoomByAlias(CONFIG.ORG_ROOM_ALIAS);
+  var tmplId = discoverRoomByAlias(CONFIG.TEMPLATES_ROOM_ALIAS);
+
+  // Fall back to alias resolution API only if sync-based discovery failed
+  var orgPromise = orgId
+    ? Promise.resolve(orgId)
+    : matrix.resolveAlias(CONFIG.ORG_ROOM_ALIAS).catch(function() { return null; });
+  var tmplPromise = tmplId
+    ? Promise.resolve(tmplId)
+    : matrix.resolveAlias(CONFIG.TEMPLATES_ROOM_ALIAS).catch(function() { return null; });
+
+  return orgPromise
+    .then(function(resolvedOrgId) {
+      matrix.orgRoomId = resolvedOrgId;
+      return tmplPromise;
     })
-    .then(function(tmplId) {
-      matrix.templatesRoomId = tmplId;
+    .then(function(resolvedTmplId) {
+      matrix.templatesRoomId = resolvedTmplId;
 
       // Facilities
       var facEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_FACILITY);
