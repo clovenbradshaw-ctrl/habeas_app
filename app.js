@@ -5206,10 +5206,11 @@ function handleAdminCreateUser() {
   })
   .then(function() {
     // Step 2: Store role in !org room as EVT_USER state event
-    // If this fails with 403, try to auto-promote via make_room_admin and retry
+    // If this fails, try to auto-promote via make_room_admin and retry
     return setUserRole().catch(function(e) {
-      if (e && e.status === 403 && S.isSynapseAdmin) {
+      if (S.isSynapseAdmin) {
         // Room permissions insufficient — use Synapse admin API to promote ourselves
+        console.warn('setUserRole failed (status ' + (e && e.status) + '), trying makeRoomAdmin recovery:', e);
         return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
           return setUserRole();
         });
@@ -5220,7 +5221,7 @@ function handleAdminCreateUser() {
   .then(function() {
     // Step 3: Invite user to !org room
     return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
-      if (e.errcode === 'M_FORBIDDEN') return;
+      if (e && e.errcode === 'M_FORBIDDEN') return;
       console.warn('Invite to org room failed:', e);
     });
   })
@@ -5228,7 +5229,7 @@ function handleAdminCreateUser() {
     // Step 4: Invite user to !templates room
     if (matrix.templatesRoomId) {
       return matrix.inviteUser(matrix.templatesRoomId, mxid).catch(function(e) {
-        if (e.errcode === 'M_FORBIDDEN') return;
+        if (e && e.errcode === 'M_FORBIDDEN') return;
         console.warn('Invite to templates room failed:', e);
       });
     }
@@ -5298,7 +5299,8 @@ function handleAdminSaveUser() {
 
   // Update EVT_USER state event, auto-promoting room permissions if needed
   var roleChain = setUserRole().catch(function(e) {
-    if (e && e.status === 403 && S.isSynapseAdmin) {
+    if (S.isSynapseAdmin) {
+      console.warn('setUserRole failed (status ' + (e && e.status) + '), trying makeRoomAdmin recovery:', e);
       return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
         return setUserRole();
       });
@@ -5366,12 +5368,12 @@ function handleAdminSaveUser() {
 
       // If password reset succeeded (or wasn't requested), and state update may have failed
       if (stateUpdateError && !pwErr) {
+        var errDetail = (stateUpdateError && (stateUpdateError.error || stateUpdateError.errcode || stateUpdateError.message)) || 'unknown error';
         // Password was reset successfully but state update failed
         if (passwordResetDone) {
-          toast('Password reset successfully. Role/display update failed — try refreshing.', 'warning');
+          toast('Password reset OK. Role/display update failed: ' + errDetail, 'warning');
         } else {
-          var msg = (stateUpdateError && stateUpdateError.error) || 'Failed to update user.';
-          showAdminError('admin-edit-error', msg);
+          showAdminError('admin-edit-error', 'Failed to update user: ' + errDetail);
           return;
         }
       }
@@ -5396,7 +5398,8 @@ function handleAdminDeactivateUser(mxid) {
   matrix.adminApi('POST', '/v1/deactivate/' + encodeURIComponent(mxid), { erase: false })
     .then(function() {
       return setUserDeactivated().catch(function(e) {
-        if (e && e.status === 403 && S.isSynapseAdmin) {
+        if (S.isSynapseAdmin) {
+          console.warn('setUserDeactivated failed (status ' + (e && e.status) + '), trying makeRoomAdmin recovery:', e);
           return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
             return setUserDeactivated();
           });
@@ -5437,7 +5440,8 @@ function handleAdminAdoptUser(mxid) {
 
   // Role/invite/PL chain — errors are captured, not thrown
   var roleChain = setUserRole().catch(function(e) {
-    if (e && e.status === 403 && S.isSynapseAdmin) {
+    if (S.isSynapseAdmin) {
+      console.warn('setUserRole failed (status ' + (e && e.status) + '), trying makeRoomAdmin recovery:', e);
       return matrix.makeRoomAdmin(matrix.orgRoomId).then(function() {
         return setUserRole();
       });
@@ -5446,14 +5450,14 @@ function handleAdminAdoptUser(mxid) {
   })
   .then(function() {
     return matrix.inviteUser(matrix.orgRoomId, mxid).catch(function(e) {
-      if (e.errcode === 'M_FORBIDDEN') return;
+      if (e && e.errcode === 'M_FORBIDDEN') return;
       console.warn('Invite to org room failed:', e);
     });
   })
   .then(function() {
     if (matrix.templatesRoomId) {
       return matrix.inviteUser(matrix.templatesRoomId, mxid).catch(function(e) {
-        if (e.errcode === 'M_FORBIDDEN') return;
+        if (e && e.errcode === 'M_FORBIDDEN') return;
         console.warn('Invite to templates room failed:', e);
       });
     }
@@ -5513,10 +5517,11 @@ function handleAdminAdoptUser(mxid) {
       }
 
       if (stateUpdateError && !pwErr) {
+        var errDetail = (stateUpdateError && (stateUpdateError.error || stateUpdateError.errcode || stateUpdateError.message)) || 'unknown error';
         if (passwordResetDone) {
-          toast('Password reset successfully. Role setup failed — try refreshing.', 'warning');
+          toast('Password reset OK. Role setup failed: ' + errDetail, 'warning');
         } else {
-          showAdminError('admin-adopt-error', (stateUpdateError && stateUpdateError.error) || 'Failed to adopt user.');
+          showAdminError('admin-adopt-error', 'Failed to adopt user: ' + errDetail);
           return;
         }
       }
