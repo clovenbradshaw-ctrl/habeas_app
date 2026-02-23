@@ -9,6 +9,7 @@ var CONFIG = {
   MATRIX_SERVER_NAME: 'aminoimmigration.com',
   ORG_ROOM_ALIAS: '#org:aminoimmigration.com',
   TEMPLATES_ROOM_ALIAS: '#templates:aminoimmigration.com',
+  ALLOWED_REGISTRATION_DOMAINS: ['aminoimmigration.com', 'rklacylaw.com', 'aminointegration.com'],
 };
 
 // ── Utilities ────────────────────────────────────────────────────
@@ -1091,6 +1092,57 @@ var matrix = {
       });
   },
 
+  // Register a new account via the Matrix registration API
+  register: function(baseUrl, username, password, email) {
+    this.baseUrl = baseUrl;
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+    return fetch(baseUrl + '/_matrix/client/v3/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        auth: { type: 'm.login.dummy' },
+        username: username,
+        password: password,
+        initial_device_display_name: 'Amino Habeas App',
+      }),
+      signal: controller.signal,
+    })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.text().then(function(text) {
+          clearTimeout(timeoutId);
+          try {
+            var err = JSON.parse(text);
+            if (!err.status) err.status = r.status;
+            throw err;
+          } catch(e) {
+            if (e instanceof SyntaxError) {
+              throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+            }
+            throw e;
+          }
+        });
+      }
+      return r.json();
+    })
+    .then(function(data) {
+      clearTimeout(timeoutId);
+      matrix.accessToken = data.access_token;
+      matrix.userId = data.user_id;
+      matrix.deviceId = data.device_id;
+      matrix.saveSession();
+      return data;
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      if (e && e.name === 'AbortError') {
+        throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+      }
+      throw e;
+    });
+  },
+
   _processIncrementalSync: function(data) {
     var joinedRooms = data.rooms && data.rooms.join ? data.rooms.join : {};
     var changed = false;
@@ -1441,6 +1493,7 @@ function hydrateFromMatrix() {
             mxid: k,
             displayName: e.content.displayName || k.replace(/@(.+):.*/, '$1'),
             role: e.content.role || 'attorney',
+            email: e.content.email || '',
             active: e.content.active !== false,
             createdBy: e.sender,
             updatedAt: new Date(e.origin_server_ts).toISOString(),
@@ -2685,6 +2738,28 @@ function htmlProvenanceBadge(record) {
 
 // ── View Renderers ───────────────────────────────────────────────
 function renderLogin() {
+  if (S._showRegister) {
+    var domainsStr = CONFIG.ALLOWED_REGISTRATION_DOMAINS.join(', ');
+    return '<div class="login-wrap"><form class="login-box" id="register-form">' +
+      '<div class="login-brand">Habeas</div>' +
+      '<div class="login-sub">Amino Immigration</div>' +
+      '<div class="login-sub" style="margin:-12px 0 16px;font-size:11px;color:var(--accent)">Create Account</div>' +
+      '<div id="register-error" class="login-error" style="display:none"></div>' +
+      '<div class="frow"><label class="flbl">Email</label>' +
+      '<input class="finp" type="email" id="register-email" placeholder="you@' + esc(CONFIG.ALLOWED_REGISTRATION_DOMAINS[0]) + '" autofocus></div>' +
+      '<div class="frow"><label class="flbl">Username</label>' +
+      '<input class="finp" type="text" id="register-user" placeholder="jsmith"></div>' +
+      '<div class="frow"><label class="flbl">Display Name</label>' +
+      '<input class="finp" type="text" id="register-display" placeholder="Jane Smith"></div>' +
+      '<div class="frow"><label class="flbl">Password</label>' +
+      '<input class="finp" type="password" id="register-pass" placeholder="Choose a strong password"></div>' +
+      '<div class="frow"><label class="flbl">Confirm Password</label>' +
+      '<input class="finp" type="password" id="register-pass2" placeholder="Confirm password"></div>' +
+      '<button type="submit" class="hbtn accent login-btn" id="register-btn">Create Account</button>' +
+      '<div class="login-toggle">Already have an account? <a href="#" data-action="show-login">Sign In</a></div>' +
+      '<div class="login-server">Allowed domains: ' + esc(domainsStr) + '</div>' +
+      '</form></div>';
+  }
   return '<div class="login-wrap"><form class="login-box" id="login-form">' +
     '<div class="login-brand">Habeas</div>' +
     '<div class="login-sub">Amino Immigration</div>' +
@@ -2694,6 +2769,7 @@ function renderLogin() {
     '<div class="frow"><label class="flbl">Password</label>' +
     '<input class="finp" type="password" id="login-pass" placeholder="password"></div>' +
     '<button type="submit" class="hbtn accent login-btn" id="login-btn">Sign In</button>' +
+    '<div class="login-toggle">Need an account? <a href="#" data-action="show-register">Register</a></div>' +
     '<div class="login-server">Server: ' + CONFIG.MATRIX_SERVER_URL.replace('https://', '') + '</div>' +
     '</form></div>';
 }
@@ -3375,6 +3451,16 @@ function renderAdmin() {
   h += '</div></div>';
   h += '<p class="dir-desc">Manage user accounts. Creating a user registers them on the Matrix server, sets their role, and invites them to the required rooms.</p>';
 
+  // Show "Send Credentials" prompt if a user was just created with an email
+  if (S._pendingCredentialEmail) {
+    var pc = S._pendingCredentialEmail;
+    h += '<div class="admin-credential-banner">';
+    h += '<span>User <strong>' + esc(pc.displayName) + '</strong> created. Send login credentials to <strong>' + esc(pc.email) + '</strong>?</span>';
+    h += '<button class="hbtn accent sm" data-action="admin-send-credentials">Send Credentials</button>';
+    h += '<button class="hbtn sm" data-action="admin-dismiss-credential-banner">Dismiss</button>';
+    h += '</div>';
+  }
+
   // Server users loading/error status
   if (!S.serverUsersLoaded) {
     h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Loading server user list...</div>';
@@ -3400,6 +3486,8 @@ function renderAdmin() {
       h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
     }
     h += '</div>';
+    h += '<div class="frow"><label class="flbl">Email</label>';
+    h += '<input class="finp" type="email" value="' + esc(S.adminDraft.email || '') + '" placeholder="user@example.com" data-field-key="email" data-change="admin-draft-field"></div>';
     h += '<div class="frow"><label class="flbl">Role</label>';
     h += '<select class="finp" data-change="admin-draft-role">';
     h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
@@ -3438,6 +3526,8 @@ function renderAdmin() {
       h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Edit User</div>';
       h += '<div class="frow"><label class="flbl">Display Name</label>';
       h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
+      h += '<div class="frow"><label class="flbl">Email</label>';
+      h += '<input class="finp" type="email" value="' + esc(S.adminDraft.email || '') + '" placeholder="user@example.com" data-field-key="email" data-change="admin-draft-field"></div>';
       h += '<div class="frow"><label class="flbl">Role</label>';
       h += '<select class="finp" data-change="admin-draft-role">';
       h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
@@ -3470,10 +3560,17 @@ function renderAdmin() {
       }
       h += '</div>';
       h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
+      if (u.email) {
+        h += '<div class="dir-card-detail">' + esc(u.email) + '</div>';
+      }
       if (!u.active) {
         h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
       }
       h += htmlProvenanceBadge(u);
+      // Send/Resend credentials button
+      if (u.active && u.email) {
+        h += '<div style="margin-top:6px"><button class="hbtn sm" data-action="admin-resend-credentials" data-mxid="' + esc(u.mxid) + '">Resend Credentials</button></div>';
+      }
     }
     h += '</div>';
   });
@@ -3492,6 +3589,8 @@ function renderAdmin() {
         h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Adopt User</div>';
         h += '<div class="frow"><label class="flbl">Display Name</label>';
         h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
+        h += '<div class="frow"><label class="flbl">Email</label>';
+        h += '<input class="finp" type="email" value="' + esc(S.adminDraft.email || '') + '" placeholder="user@example.com" data-field-key="email" data-change="admin-draft-field"></div>';
         h += '<div class="frow"><label class="flbl">Role</label>';
         h += '<select class="finp" data-change="admin-draft-role">';
         h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
@@ -4016,6 +4115,13 @@ function render() {
         handleLogin();
       });
     }
+    var regForm = document.getElementById('register-form');
+    if (regForm) {
+      regForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        handleRegister();
+      });
+    }
     return;
   }
 
@@ -4258,6 +4364,131 @@ function handleLogin() {
     });
 }
 
+function handleRegister() {
+  var emailEl = document.getElementById('register-email');
+  var userEl = document.getElementById('register-user');
+  var displayEl = document.getElementById('register-display');
+  var passEl = document.getElementById('register-pass');
+  var pass2El = document.getElementById('register-pass2');
+  var errEl = document.getElementById('register-error');
+  var btnEl = document.getElementById('register-btn');
+  if (!emailEl || !userEl || !passEl || !pass2El) return;
+
+  var email = emailEl.value.trim();
+  var username = userEl.value.trim();
+  var displayName = (displayEl ? displayEl.value.trim() : '') || username;
+  var password = passEl.value;
+  var password2 = pass2El.value;
+
+  // Validate email domain
+  if (!email) {
+    errEl.textContent = 'Email is required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var emailDomain = email.split('@')[1];
+  if (!emailDomain) {
+    errEl.textContent = 'Please enter a valid email address.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var domainAllowed = false;
+  for (var i = 0; i < CONFIG.ALLOWED_REGISTRATION_DOMAINS.length; i++) {
+    if (emailDomain.toLowerCase() === CONFIG.ALLOWED_REGISTRATION_DOMAINS[i].toLowerCase()) {
+      domainAllowed = true;
+      break;
+    }
+  }
+  if (!domainAllowed) {
+    errEl.textContent = 'Registration is restricted to the following email domains: ' + CONFIG.ALLOWED_REGISTRATION_DOMAINS.join(', ');
+    errEl.style.display = 'block';
+    return;
+  }
+
+  if (!username) {
+    errEl.textContent = 'Username is required.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!/^[a-z0-9._=-]+$/.test(username)) {
+    errEl.textContent = 'Username may only contain lowercase letters, numbers, dots, underscores, hyphens, and equals signs.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (!password || password.length < 8) {
+    errEl.textContent = 'Password must be at least 8 characters.';
+    errEl.style.display = 'block';
+    return;
+  }
+  if (password !== password2) {
+    errEl.textContent = 'Passwords do not match.';
+    errEl.style.display = 'block';
+    return;
+  }
+
+  btnEl.disabled = true;
+  btnEl.textContent = 'Creating account...';
+  errEl.style.display = 'none';
+
+  matrix.register(CONFIG.MATRIX_SERVER_URL, username, password, email)
+    .then(function(data) {
+      // Registration succeeded — now set display name
+      var setDisplayName = Promise.resolve();
+      if (displayName && displayName !== username) {
+        setDisplayName = matrix._api('PUT', '/profile/' + encodeURIComponent(matrix.userId) + '/displayname', {
+          displayname: displayName,
+        }).catch(function(e) {
+          console.warn('Failed to set display name:', e);
+        });
+      }
+      return setDisplayName;
+    })
+    .then(function() {
+      // Now login flow — sync and hydrate
+      S.authenticated = true;
+      S.loading = true;
+      S._showRegister = false;
+      render();
+      return matrix.initialSync();
+    })
+    .then(function() {
+      return hydrateFromMatrix();
+    })
+    .then(function() {
+      S.loading = false;
+      render();
+      matrix.startLongPoll();
+      toast('Account created successfully. Welcome!', 'success');
+    })
+    .catch(function(err) {
+      S.authenticated = false;
+      S.loading = false;
+      var status = (err && err.status) || 0;
+      var msg;
+      if (err && err.errcode === 'M_USER_IN_USE') {
+        msg = 'That username is already taken. Please choose a different one.';
+      } else if (err && err.errcode === 'M_FORBIDDEN') {
+        msg = 'Registration is not enabled on this server. Please contact your administrator.';
+      } else if (err && err.errcode === 'M_INVALID_USERNAME') {
+        msg = 'Invalid username. Use only lowercase letters, numbers, dots, underscores, and hyphens.';
+      } else if (status === 502 || status === 503 || status === 504) {
+        msg = 'Server is unavailable (HTTP ' + status + '). Please try again later.';
+      } else if (status === 0 || (err && err.errcode === 'M_NETWORK')) {
+        msg = 'Cannot reach the server. Check your network connection.';
+      } else {
+        msg = (err && err.error) || (err && err.message) || 'Registration failed. Please try again.';
+      }
+      render();
+      setTimeout(function() {
+        var newErrEl = document.getElementById('register-error');
+        if (newErrEl) {
+          newErrEl.textContent = msg;
+          newErrEl.style.display = 'block';
+        }
+      }, 0);
+    });
+}
+
 document.addEventListener('click', function(e) {
   var btn = e.target.closest('[data-action]');
   if (!btn) return;
@@ -4266,6 +4497,8 @@ document.addEventListener('click', function(e) {
   if (action === 'nav') { cleanupInlineAdd(); setState({ currentView: btn.dataset.view, boardAddingMatter: false, inlineAdd: null, draft: {} }); return; }
   if (action === 'logout') { matrix.stopLongPoll(); matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
+  if (action === 'show-register') { e.preventDefault(); S._showRegister = true; render(); return; }
+  if (action === 'show-login') { e.preventDefault(); S._showRegister = false; render(); return; }
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
@@ -4713,7 +4946,7 @@ document.addEventListener('click', function(e) {
   // Admin view actions
   if (action === 'admin-show-create') {
     if (S.role !== 'admin') return;
-    setState({ adminEditUserId: 'new', adminDraft: { username: '', displayName: '', password: '', role: 'attorney' } });
+    setState({ adminEditUserId: 'new', adminDraft: { username: '', displayName: '', password: '', email: '', role: 'attorney' } });
     return;
   }
   if (action === 'admin-refresh-users') {
@@ -4748,7 +4981,7 @@ document.addEventListener('click', function(e) {
     var mxid = btn.dataset.mxid;
     var user = S.users[mxid];
     if (user) {
-      setState({ adminEditUserId: mxid, adminDraft: { displayName: user.displayName, role: user.role || 'attorney', password: '' } });
+      setState({ adminEditUserId: mxid, adminDraft: { displayName: user.displayName, email: user.email || '', role: user.role || 'attorney', password: '' } });
     }
     return;
   }
@@ -4774,6 +5007,35 @@ document.addEventListener('click', function(e) {
     if (mxid && confirm('Deactivate user ' + mxid + '? This cannot be undone.')) {
       handleAdminDeactivateUser(mxid);
     }
+    return;
+  }
+  if (action === 'admin-resend-credentials') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    var user = S.users[mxid];
+    if (user && user.email) {
+      var username = mxid.replace(/@(.+):.*/, '$1');
+      sendCredentialEmail(user.email, user.displayName, username, null);
+      toast('Opening email client to send credentials to ' + user.email, 'info');
+    } else {
+      toast('No email address on file for this user. Edit the user to add one.', 'error');
+    }
+    return;
+  }
+  if (action === 'admin-send-credentials') {
+    if (S.role !== 'admin') return;
+    var pending = S._pendingCredentialEmail;
+    if (pending) {
+      sendCredentialEmail(pending.email, pending.displayName, pending.username, pending.password);
+      S._pendingCredentialEmail = null;
+      toast('Opening email client to send credentials', 'info');
+      render();
+    }
+    return;
+  }
+  if (action === 'admin-dismiss-credential-banner') {
+    S._pendingCredentialEmail = null;
+    render();
     return;
   }
 
@@ -5163,6 +5425,31 @@ document.addEventListener('change', function(e) {
 });
 
 // ── Admin Business Logic ─────────────────────────────────────────
+
+// Compose and open a mailto: link to send login credentials to a user
+function sendCredentialEmail(email, displayName, username, password) {
+  var loginUrl = window.location.origin + window.location.pathname;
+  var serverName = matrix.userId ? matrix.userId.split(':').slice(1).join(':') : CONFIG.MATRIX_SERVER_NAME;
+  var subject = 'Your Amino Habeas Login Credentials';
+  var body = 'Hello ' + displayName + ',\n\n' +
+    'An account has been created for you on the Amino Immigration Habeas Petition System.\n\n' +
+    'Login URL: ' + loginUrl + '\n' +
+    'Username: ' + username + '\n';
+  if (password) {
+    body += 'Password: ' + password + '\n';
+  } else {
+    body += 'Password: (Please contact your administrator for your password)\n';
+  }
+  body += 'Server: ' + serverName + '\n\n' +
+    'Please change your password after your first login.\n\n' +
+    'If you have any questions, please contact your administrator.\n\n' +
+    'Best regards,\nAmino Immigration';
+  var mailtoUrl = 'mailto:' + encodeURIComponent(email) +
+    '?subject=' + encodeURIComponent(subject) +
+    '&body=' + encodeURIComponent(body);
+  window.open(mailtoUrl, '_blank');
+}
+
 function showAdminError(elementId, msg) {
   var el = document.getElementById(elementId);
   if (el) {
@@ -5188,13 +5475,17 @@ function handleAdminCreateUser() {
   var createBtn = document.getElementById('admin-create-btn');
   if (createBtn) { createBtn.disabled = true; createBtn.textContent = 'Creating...'; }
 
+  var email = (d.email || '').trim();
+
   // Helper: send the EVT_USER state event, auto-promoting room permissions if needed
   function setUserRole() {
-    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    var content = {
       displayName: displayName,
       role: role,
       active: true,
-    }, mxid);
+    };
+    if (email) content.email = email;
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
   }
 
   // Step 1: Create account via Synapse admin API
@@ -5255,11 +5546,21 @@ function handleAdminCreateUser() {
       displayName: displayName,
       role: role,
       active: true,
+      email: email,
       createdBy: S.currentUser,
       updatedAt: now(),
     };
     S.log.push({ op: 'CREATE', target: mxid, payload: displayName, frame: { t: now(), entity: 'user' } });
+    // Prompt to send credentials via email
+    if (email) {
+      S._pendingCredentialEmail = { mxid: mxid, email: email, displayName: displayName, username: d.username.trim(), password: d.password };
+    }
     setState({ adminEditUserId: null, adminDraft: {} });
+    if (email) {
+      toast('User created. Click "Send Credentials" to email login details.', 'success');
+    } else {
+      toast('User created. Share the password with the user manually.', 'success');
+    }
   })
   .catch(function(err) {
     var msg = (err && err.error) || (err && err.message) || 'Failed to create user.';
@@ -5282,15 +5583,18 @@ function handleAdminSaveUser() {
   var d = S.adminDraft;
   var displayName = d.displayName || mxid.replace(/@(.+):.*/, '$1');
   var role = d.role || 'attorney';
+  var email = (d.email || '').trim();
   var powerLevel = role === 'admin' ? 50 : 0;
 
   // Helper: send the EVT_USER state event
   function setUserRole() {
-    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    var content = {
       displayName: displayName,
       role: role,
       active: S.users[mxid] ? S.users[mxid].active : true,
-    }, mxid);
+    };
+    if (email) content.email = email;
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
   }
 
   // Track results from independent operations
@@ -5361,6 +5665,7 @@ function handleAdminSaveUser() {
         S.users[mxid] = Object.assign({}, S.users[mxid], {
           displayName: displayName,
           role: role,
+          email: email,
           updatedAt: now(),
         });
         S.log.push({ op: 'UPDATE', target: mxid, payload: role, frame: { t: now(), entity: 'user' } });
@@ -5388,11 +5693,13 @@ function handleAdminSaveUser() {
 
 function handleAdminDeactivateUser(mxid) {
   function setUserDeactivated() {
-    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    var content = {
       displayName: S.users[mxid] ? S.users[mxid].displayName : mxid,
       role: S.users[mxid] ? S.users[mxid].role : 'attorney',
       active: false,
-    }, mxid);
+    };
+    if (S.users[mxid] && S.users[mxid].email) content.email = S.users[mxid].email;
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
   }
 
   matrix.adminApi('POST', '/v1/deactivate/' + encodeURIComponent(mxid), { erase: false })
@@ -5424,15 +5731,18 @@ function handleAdminAdoptUser(mxid) {
   var d = S.adminDraft;
   var displayName = d.displayName || mxid.replace(/@(.+):.*/, '$1');
   var role = d.role || 'attorney';
+  var email = (d.email || '').trim();
   var powerLevel = role === 'admin' ? 50 : 0;
 
   // Helper: send the EVT_USER state event
   function setUserRole() {
-    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, {
+    var content = {
       displayName: displayName,
       role: role,
       active: true,
-    }, mxid);
+    };
+    if (email) content.email = email;
+    return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
   }
 
   var stateUpdateError = null;
@@ -5508,6 +5818,7 @@ function handleAdminAdoptUser(mxid) {
         S.users[mxid] = Object.assign({}, S.users[mxid], {
           displayName: displayName,
           role: role,
+          email: email,
           active: true,
           managed: true,
           createdBy: S.currentUser,
