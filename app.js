@@ -727,6 +727,7 @@ var EVT_PETITION = 'com.amino.petition';
 var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
 var EVT_OP       = 'com.amino.op';
 var EVT_GITHUB   = 'com.amino.config.github';
+var EVT_VERSION  = 'com.amino.config.version';
 
 // ── Matrix REST Client ───────────────────────────────────────────
 var matrix = {
@@ -1286,6 +1287,13 @@ var S = {
   deployDiffError: '',
   deployDiffBaseSha: '',     // production SHA we diff against
   deployDiffHeadSha: '',     // main HEAD SHA
+  // Dual-repo version management
+  versionInfo: null,         // com.amino.config.version content from Matrix org room
+  upstreamNewCommits: 0,     // habeas_app commits newer than current previewSha
+  upstreamChecking: false,
+  upstreamLatestSha: '',
+  previewSyncBusy: false,
+  previewPromoteBusy: false,
 };
 
 var _collapsedGroups = {};
@@ -1551,6 +1559,10 @@ function hydrateFromMatrix() {
         sessionStorage.setItem('amino_gh_token', ghEvt.content.pat);
       }
 
+      // Version info (dual-repo management — tracks production/preview SHAs)
+      var verEvt = matrix.getStateEvent(matrix.orgRoomId, EVT_VERSION, '');
+      var versionInfo = verEvt && verEvt.content ? verEvt.content : null;
+
       // Users
       var userEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_USER);
       var users = {};
@@ -1652,7 +1664,16 @@ function hydrateFromMatrix() {
         national: national, clients: clients, petitions: petitions,
         users: users, role: role, currentUser: matrix.userId, syncError: syncError,
         mustChangePassword: mustChangePassword,
+        versionInfo: versionInfo,
       });
+
+      // Notify non-admin users when a newer production version has been deployed
+      if (versionInfo && versionInfo.productionSha && S.deployInfo && S.deployInfo.sha &&
+          versionInfo.productionSha !== S.deployInfo.sha && role !== 'admin') {
+        setTimeout(function() {
+          toast('A newer version of this app is available. Please refresh your browser to update.', 'info');
+        }, 2000);
+      }
 
       // Check if current user is a Synapse server admin by trying listUsers.
       // If they are, auto-promote to PL 100 in org/templates rooms via make_room_admin.
@@ -2869,7 +2890,13 @@ function renderHeader() {
     h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
   }
   // Environment indicator — visible to all users so everyone knows DEV vs PROD
-  if (S.deployInfo && S.deployInfo.env === 'production' && S.deployInfo.sha !== 'local') {
+  if (window._amino_devMode && S.role === 'admin') {
+    // Admin is in dev preview mode — show prominent DEV badge with preview SHA
+    h += '<span class="deploy-version-pill deploy-env-development" title="Dev preview mode — testing new version before deploying">';
+    h += 'DEV';
+    if (S.deployInfo && S.deployInfo.shortSha) h += ' <code>' + esc(S.deployInfo.shortSha) + '</code>';
+    h += '</span>';
+  } else if (S.deployInfo && S.deployInfo.env === 'production' && S.deployInfo.sha !== 'local') {
     h += '<span class="deploy-version-pill deploy-env-production" title="' + esc(S.deployInfo.message) + '">';
     h += 'PROD';
     if (S.role === 'admin') h += ' <code>' + esc(S.deployInfo.shortSha) + '</code>';
@@ -3710,6 +3737,60 @@ function renderDeployments() {
   var h = '<div class="dir-section">';
   var info = S.deployInfo;
   var isProduction = info && info.env === 'production' && info.sha !== 'local';
+
+  // ── Upstream Updates / Dev Preview ───────────────────────────
+  h += '<div class="dir-head"><h3>Upstream Updates</h3></div>';
+  if (window._amino_devMode) {
+    // Admin is in dev preview — show approve/exit controls
+    h += '<div class="deploy-dev-mode-banner">';
+    h += '<div class="deploy-dev-mode-title">&#127974; DEV PREVIEW MODE ACTIVE</div>';
+    h += '<div class="deploy-dev-mode-desc">You are testing a preview version of this app. Regular users continue to see the production version. When satisfied, approve to deploy this preview live for everyone.</div>';
+    if (info) {
+      h += '<div class="deploy-version" style="margin-top:8px"><strong>Preview SHA:</strong> <code>' + esc(info.shortSha || info.sha.substring(0, 7)) + '</code></div>';
+      h += '<div class="deploy-version"><strong>Message:</strong> ' + esc(info.message) + '</div>';
+    }
+    h += '<div class="deploy-dev-mode-actions">';
+    if (!S.previewPromoteBusy) {
+      h += '<button class="hbtn deploy-promote-btn" data-action="deploy-promote-preview">&#10003; Approve &amp; Deploy Live</button>';
+    } else {
+      h += '<button class="hbtn deploy-promote-btn" disabled>Deploying&hellip;</button>';
+    }
+    h += '<a href="/" class="hbtn" style="text-decoration:none">&#8592; Exit Dev Mode</a>';
+    h += '</div></div>';
+  } else {
+    // Normal production view — show upstream status and controls
+    var vi = S.versionInfo;
+    h += '<p class="dir-desc">Updates from <code>habeas_app</code> (upstream source) are staged in a preview before going live. Check for new commits, sync them to preview, then enter Dev Mode to test before approving for production.</p>';
+    if (vi) {
+      h += '<div class="deploy-current-card">';
+      h += '<div class="deploy-version"><strong>Production SHA:</strong> <code>' + esc(vi.productionSha ? vi.productionSha.substring(0, 7) : '\u2014') + '</code></div>';
+      h += '<div class="deploy-version"><strong>Preview SHA:</strong> <code>' + esc(vi.previewSha ? vi.previewSha.substring(0, 7) : '\u2014') + '</code></div>';
+      if (vi.previewMessage) h += '<div class="deploy-version"><strong>Preview:</strong> ' + esc(vi.previewMessage) + '</div>';
+      if (vi.previewSyncedAt) h += '<div class="deploy-version"><strong>Last Synced:</strong> ' + ts(vi.previewSyncedAt) + '</div>';
+      h += '</div>';
+    }
+    h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:12px">';
+    if (S.upstreamChecking) {
+      h += '<button class="hbtn" disabled>Checking&hellip;</button>';
+    } else {
+      h += '<button class="hbtn" data-action="deploy-check-upstream">Check for Updates</button>';
+    }
+    if (S.upstreamNewCommits > 0) {
+      h += '<span class="deploy-pending-badge">' + S.upstreamNewCommits + ' new commit' + (S.upstreamNewCommits === 1 ? '' : 's') + '</span>';
+      if (!S.previewSyncBusy) {
+        h += '<button class="hbtn accent" data-action="deploy-sync-preview">Sync to Preview</button>';
+      } else {
+        h += '<button class="hbtn accent" disabled>Syncing&hellip;</button>';
+      }
+    }
+    h += '</div>';
+    if (vi && vi.previewAvailable) {
+      h += '<div style="margin-top:12px">';
+      h += '<button class="hbtn" data-action="deploy-enter-dev">&#9656; Enter Dev Mode to Test Preview</button>';
+      h += '</div>';
+    }
+  }
+  h += '<hr style="margin:20px 0;border:none;border-top:1px solid var(--border)">';
 
   // ── Current Production Version ────────────────────────────────
   h += '<div class="dir-head"><h3>Production (Live)</h3></div>';
@@ -5638,6 +5719,123 @@ document.addEventListener('click', function(e) {
     var msg = btn.dataset.msg;
     if (!confirm('Rollback to version ' + sha.substring(0, 7) + '?\n\n' + msg + '\n\nThis will replace the current live version.')) return;
     triggerRollback(sha, 'Rollback to ' + sha.substring(0, 7) + ': ' + msg);
+    return;
+  }
+
+  // ── Upstream / dev preview actions ──────────────────────────
+  if (action === 'deploy-check-upstream') {
+    if (S.upstreamChecking) return;
+    if (!S.deployGithubToken) { toast('GitHub token required. Enter it in the GitHub Access section below.', 'error'); return; }
+    setState({ upstreamChecking: true });
+    var upstreamRepo = 'clovenbradshaw-ctrl/habeas_app';
+    fetch('https://api.github.com/repos/' + upstreamRepo + '/commits?per_page=1', {
+      headers: { 'Authorization': 'token ' + S.deployGithubToken, 'Accept': 'application/vnd.github.v3+json' }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+      if (!Array.isArray(data) || data.length === 0) { throw new Error('No commits found'); }
+      var latestSha = data[0].sha;
+      var currentSha = (S.versionInfo && S.versionInfo.previewSha) || (S.deployInfo && S.deployInfo.sha) || '';
+      if (!currentSha || latestSha === currentSha) {
+        setState({ upstreamNewCommits: 0, upstreamChecking: false, upstreamLatestSha: latestSha });
+        toast('Already up to date with upstream.', 'info');
+        return;
+      }
+      var compareUrl = 'https://api.github.com/repos/' + upstreamRepo + '/compare/' + currentSha.substring(0, 40) + '...' + latestSha;
+      return fetch(compareUrl, {
+        headers: { 'Authorization': 'token ' + S.deployGithubToken, 'Accept': 'application/vnd.github.v3+json' }
+      })
+      .then(function(r) { return r.json(); })
+      .then(function(cmp) {
+        var count = (cmp.commits && cmp.commits.length) || 1;
+        setState({ upstreamNewCommits: count, upstreamChecking: false, upstreamLatestSha: latestSha });
+        toast(count + ' new commit' + (count === 1 ? '' : 's') + ' available from upstream.', 'info');
+      });
+    })
+    .catch(function(e) {
+      setState({ upstreamChecking: false });
+      toast('Could not check upstream: ' + (e.message || 'unknown error'), 'error');
+    });
+    return;
+  }
+
+  if (action === 'deploy-sync-preview') {
+    if (S.previewSyncBusy) return;
+    if (!S.deployGithubToken) { toast('GitHub token required.', 'error'); return; }
+    if (!confirm('Sync latest habeas_app code to the preview branch?\n\nThis overwrites the current preview with upstream changes.')) return;
+    setState({ previewSyncBusy: true });
+    var forkRepo = 'clovenbradshaw-ctrl/habeas_patches';
+    fetch('https://api.github.com/repos/' + forkRepo + '/actions/workflows/sync-preview.yml/dispatches', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'token ' + S.deployGithubToken,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ref: 'main' })
+    })
+    .then(function(r) {
+      if (r.status !== 204) return r.json().then(function(d) { throw new Error(d.message || 'Dispatch failed (status ' + r.status + ')'); });
+      var newSha = S.upstreamLatestSha || '';
+      var newVersionInfo = Object.assign({}, S.versionInfo || {}, {
+        previewSha: newSha,
+        previewAvailable: true,
+        previewMessage: 'Synced from habeas_app ' + newSha.substring(0, 7),
+        previewSyncedAt: new Date().toISOString()
+      });
+      if (matrix.orgRoomId) {
+        matrix.sendStateEvent(matrix.orgRoomId, EVT_VERSION, newVersionInfo, '');
+      }
+      setState({ previewSyncBusy: false, versionInfo: newVersionInfo, upstreamNewCommits: 0 });
+      toast('Preview sync triggered! The preview will be ready in about 1 minute.', 'info');
+    })
+    .catch(function(e) {
+      setState({ previewSyncBusy: false });
+      toast('Sync failed: ' + (e.message || 'unknown error'), 'error');
+    });
+    return;
+  }
+
+  if (action === 'deploy-enter-dev') {
+    window.location.href = '/preview/';
+    return;
+  }
+
+  if (action === 'deploy-promote-preview') {
+    if (S.previewPromoteBusy) return;
+    if (!S.deployGithubToken) { toast('GitHub token required.', 'error'); return; }
+    var promoteInfo = S.deployInfo;
+    var previewSha = promoteInfo && promoteInfo.sha ? promoteInfo.sha : '';
+    var previewMsg = promoteInfo && promoteInfo.message ? promoteInfo.message : '';
+    if (!confirm('Deploy this preview to production?\n\nSHA: ' + (previewSha ? previewSha.substring(0, 7) : '\u2014') + '\n' + previewMsg + '\n\nThis will go live for ALL users.')) return;
+    setState({ previewPromoteBusy: true });
+    var forkRepo2 = 'clovenbradshaw-ctrl/habeas_patches';
+    fetch('https://api.github.com/repos/' + forkRepo2 + '/actions/workflows/promote-preview.yml/dispatches', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'token ' + S.deployGithubToken,
+        'Accept': 'application/vnd.github.v3+json',
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ ref: 'main' })
+    })
+    .then(function(r) {
+      if (r.status !== 204) return r.json().then(function(d) { throw new Error(d.message || 'Dispatch failed (status ' + r.status + ')'); });
+      var newVersionInfo = Object.assign({}, S.versionInfo || {}, {
+        productionSha: previewSha,
+        previewAvailable: false,
+        promotedAt: new Date().toISOString()
+      });
+      if (matrix.orgRoomId) {
+        matrix.sendStateEvent(matrix.orgRoomId, EVT_VERSION, newVersionInfo, '');
+      }
+      setState({ previewPromoteBusy: false, versionInfo: newVersionInfo });
+      toast('Deployment triggered! Users will see the new version in a few minutes. Exit Dev Mode when ready.', 'info');
+    })
+    .catch(function(e) {
+      setState({ previewPromoteBusy: false });
+      toast('Promotion failed: ' + (e.message || 'unknown error'), 'error');
+    });
     return;
   }
 
