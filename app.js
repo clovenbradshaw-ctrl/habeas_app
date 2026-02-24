@@ -1040,7 +1040,10 @@ var matrix = {
       var raw = sessionStorage.getItem('amino_matrix_session');
       if (!raw) return false;
       var s = JSON.parse(raw);
-      this.baseUrl = s.baseUrl;
+      // Always prefer the canonical server URL from config so that old sessions
+      // saved with a stale baseUrl (e.g. https://app.aminoimmigration.com before
+      // the direct-to-Matrix fix) don't keep routing to the wrong host.
+      this.baseUrl = CONFIG.MATRIX_SERVER_URL || s.baseUrl;
       this.userId = s.userId;
       this.accessToken = s.accessToken;
       this.deviceId = s.deviceId;
