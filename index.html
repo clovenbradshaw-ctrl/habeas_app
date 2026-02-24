@@ -9,26 +9,507 @@
       href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <!--
-      THIN BOOTSTRAP — habeas_app serves as the entry point.
-      CSS, deploy-info, and app code are loaded from the fork (habeas_patches).
-
-      SETUP: After creating and deploying the habeas_patches fork to GitHub Pages,
-      verify https://clovenbradshaw-ctrl.github.io/habeas_patches/app.js is accessible.
-      The URLs below will then serve the production code to all attorneys.
-
-      DEV MODE: Admin navigates to /preview/ which loads habeas_patches/preview/app.js
-      for testing before approving a production deploy.
-    -->
-    <link rel="stylesheet" href="https://clovenbradshaw-ctrl.github.io/habeas_patches/styles.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+    <!--
+      HARDCODED BOOTSTRAP — Login screen lives here in habeas_app.
+      After authentication the bootstrap fetches com.amino.config.version
+      from the !org Matrix room and dynamically loads the active version
+      of app code from the habeas_patches fork.
+
+      Admin version control: sign in → Admin → Deployments → App Version Source
+    -->
+    <style>
+      /* ── CSS custom properties ─────────────────────────── */
+      :root {
+        --bg: #f5f2ec;
+        --panel: #fffdf8;
+        --ink: #1a1612;
+        --muted: #7a6f63;
+        --accent: #a08540;
+        --accent2: #8b2500;
+        --border: #d4cdc2;
+        --field-bg: #fff;
+        --field-focus: #a08540;
+        --green: #5a9e6f;
+        --shadow-lg: 0 4px 24px rgba(0, 0, 0, 0.08);
+        --radius: 4px;
+      }
+      *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; background: var(--bg); color: var(--ink);
+        font-family: "DM Sans", "Helvetica Neue", Arial, sans-serif;
+        font-size: 13px; -webkit-font-smoothing: antialiased; }
+
+      /* ── Loading state ─────────────────────────────────── */
+      .loading-wrap { height: 100vh; display: flex; align-items: center;
+        justify-content: center; background: var(--bg); }
+      .loading-text { font-size: 14px; color: var(--muted); letter-spacing: 1px; }
+
+      /* ── Login box ─────────────────────────────────────── */
+      .login-wrap { height: 100vh; display: flex; align-items: center;
+        justify-content: center; background: var(--bg); }
+      .login-box { width: 340px; background: var(--panel);
+        border: 1px solid var(--border); border-radius: 8px;
+        padding: 36px 32px 28px; box-shadow: var(--shadow-lg); }
+      .login-brand { font-family: "Source Serif 4", Georgia, serif; font-size: 28px;
+        font-weight: 700; color: var(--ink); text-align: center; letter-spacing: 1px; }
+      .login-sub { font-size: 12px; text-align: center; color: var(--muted);
+        margin: 4px 0 24px; letter-spacing: 0.5px; }
+      .login-sub.login-sub-small { margin: -12px 0 16px; font-size: 11px; color: var(--accent); }
+      .login-error { background: #fef2f2; color: #b91c1c;
+        border: 1px solid #fecaca; border-radius: var(--radius);
+        padding: 8px 12px; margin-bottom: 16px; font-size: 12px; display: none; }
+      .login-btn { width: 100%; margin-top: 8px; }
+      .login-server { text-align: center; font-size: 10px; color: #bbb; margin-top: 16px; }
+      .login-toggle { text-align: center; font-size: 12px; color: var(--muted); margin-top: 16px; }
+      .login-toggle a { color: var(--accent); text-decoration: none; font-weight: 600; }
+      .login-toggle a:hover { text-decoration: underline; }
+
+      /* ── Buttons ───────────────────────────────────────── */
+      .hbtn { font-family: inherit; font-size: 11px; font-weight: 600;
+        letter-spacing: 0.5px; text-transform: uppercase; padding: 7px 14px;
+        border: 1.5px solid var(--border); border-radius: var(--radius);
+        background: var(--panel); color: var(--ink); cursor: pointer;
+        transition: all 0.12s; white-space: nowrap; }
+      .hbtn:hover { border-color: var(--accent); color: var(--accent); }
+      .hbtn:disabled { opacity: 0.4; cursor: default; }
+      .hbtn.accent { background: var(--accent); color: #fff; border-color: var(--accent); }
+      .hbtn.accent:hover { background: #b8962e; }
+
+      /* ── Form fields ───────────────────────────────────── */
+      .frow { margin-bottom: 10px; }
+      .flbl { display: block; font-size: 10px; font-weight: 600; color: var(--muted);
+        letter-spacing: 0.5px; text-transform: uppercase; margin-bottom: 3px; }
+      .finp { width: 100%; padding: 7px 10px; border: 1px solid var(--border);
+        border-radius: var(--radius); background: var(--field-bg);
+        font-family: inherit; font-size: 12px; color: var(--ink);
+        transition: border-color 0.15s, box-shadow 0.15s; }
+      .finp:focus { outline: none; border-color: var(--field-focus);
+        box-shadow: 0 0 0 2px rgba(160, 133, 64, 0.12); }
+      .finp::placeholder { color: #c0b8a8; }
+
+      /* ── Toast notifications ───────────────────────────── */
+      .toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999;
+        display: flex; flex-direction: column-reverse; gap: 8px; pointer-events: none; }
+      .toast { pointer-events: auto; max-width: 360px; padding: 10px 16px;
+        border-radius: var(--radius); font-family: inherit; font-size: 12px;
+        font-weight: 500; line-height: 1.4; box-shadow: var(--shadow-lg);
+        cursor: pointer; transform: translateX(calc(100% + 20px)); opacity: 0;
+        transition: transform 0.3s ease, opacity 0.3s ease; }
+      .toast.show { transform: translateX(0); opacity: 1; }
+      .toast.hide { transform: translateX(calc(100% + 20px)); opacity: 0; }
+      .toast-success { background: var(--green); color: #fff; border: 1px solid rgba(255,255,255,0.15); }
+      .toast-error { background: var(--accent2); color: #fff; border: 1px solid rgba(255,255,255,0.15); }
+      .toast-info { background: var(--panel); color: var(--muted); border: 1px solid var(--border); }
+
+      /* ── App root (hidden until app.js takes over) ─────── */
+      #root { height: 100%; display: none; }
+    </style>
   </head>
   <body>
+
+    <!-- ── LOGIN SCREEN (hardcoded, no CDN dependency) ───── -->
+    <div id="amino-login">
+      <div class="login-wrap">
+        <form class="login-box" id="login-form" novalidate>
+          <div class="login-brand">Habeas</div>
+          <div class="login-sub">Amino Immigration</div>
+          <div class="login-error" id="login-error"></div>
+          <div class="frow">
+            <label class="flbl" for="login-user">Username</label>
+            <input class="finp" type="text" id="login-user" name="username"
+              placeholder="attorney" autocomplete="username" autofocus />
+          </div>
+          <div class="frow">
+            <label class="flbl" for="login-pass">Password</label>
+            <input class="finp" type="password" id="login-pass" name="password"
+              placeholder="password" autocomplete="current-password" />
+          </div>
+          <button type="submit" class="hbtn accent login-btn" id="login-btn">Sign In</button>
+          <div class="login-toggle">
+            Need an account? <a href="#" id="show-register">Register</a>
+          </div>
+          <div class="login-server">Server: app.aminoimmigration.com</div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ── REGISTER SCREEN (hardcoded, hidden by default) ── -->
+    <div id="amino-register" style="display:none">
+      <div class="login-wrap">
+        <form class="login-box" id="register-form" novalidate>
+          <div class="login-brand">Habeas</div>
+          <div class="login-sub">Amino Immigration</div>
+          <div class="login-sub login-sub-small">Create Account</div>
+          <div class="login-error" id="register-error"></div>
+          <div class="frow">
+            <label class="flbl" for="register-email">Email</label>
+            <input class="finp" type="email" id="register-email" name="email"
+              placeholder="you@aminoimmigration.com" autocomplete="email" autofocus />
+          </div>
+          <div class="frow">
+            <label class="flbl" for="register-user">Username</label>
+            <input class="finp" type="text" id="register-user" name="username"
+              placeholder="jsmith" autocomplete="username" />
+          </div>
+          <div class="frow">
+            <label class="flbl" for="register-display">Display Name</label>
+            <input class="finp" type="text" id="register-display" name="displayname"
+              placeholder="Jane Smith" autocomplete="name" />
+          </div>
+          <div class="frow">
+            <label class="flbl" for="register-pass">Password</label>
+            <input class="finp" type="password" id="register-pass" name="password"
+              placeholder="Choose a strong password" autocomplete="new-password" />
+          </div>
+          <div class="frow">
+            <label class="flbl" for="register-pass2">Confirm Password</label>
+            <input class="finp" type="password" id="register-pass2" name="password2"
+              placeholder="Confirm password" autocomplete="new-password" />
+          </div>
+          <button type="submit" class="hbtn accent login-btn" id="register-btn">Create Account</button>
+          <div class="login-toggle">
+            Already have an account? <a href="#" id="show-login">Sign In</a>
+          </div>
+          <div class="login-server">
+            Allowed domains: aminoimmigration.com, rklacylaw.com, aminointegration.com
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- ── LOADING STATE (shown while app is being fetched) ─ -->
+    <div id="amino-loading" style="display:none">
+      <div class="loading-wrap">
+        <div class="loading-text" id="loading-text">Connecting&hellip;</div>
+      </div>
+    </div>
+
+    <!-- ── APP CONTAINER (app.js renders here after login) ── -->
     <div id="root"></div>
     <div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
+
+    <!-- Always-loaded third-party dependencies -->
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
     <script src="https://cdn.jsdelivr.net/npm/docx@9.5.3/build/index.umd.js"></script>
-    <script src="https://clovenbradshaw-ctrl.github.io/habeas_patches/deploy-info.js"></script>
-    <script src="https://clovenbradshaw-ctrl.github.io/habeas_patches/app.js"></script>
+
+    <!-- ── BOOTSTRAP SCRIPT ─────────────────────────────────
+         Handles login/register, fetches the active app version
+         from EVT_VERSION in the !org Matrix room, then
+         dynamically injects the app CSS and JS.
+    ───────────────────────────────────────────────────────── -->
+    <script>
+    (function() {
+      'use strict';
+
+      // ── Config ──────────────────────────────────────────
+      var CFG = {
+        matrixServerUrl: 'https://app.aminoimmigration.com',
+        orgRoomAlias: '#org:aminoimmigration.com',
+        allowedDomains: ['aminoimmigration.com', 'rklacylaw.com', 'aminointegration.com'],
+        defaultAppJs:  'https://clovenbradshaw-ctrl.github.io/habeas_patches/app.js',
+        defaultCssUrl: 'https://clovenbradshaw-ctrl.github.io/habeas_patches/styles.css',
+        patchesRepo:   'clovenbradshaw-ctrl/habeas_patches',
+      };
+
+      // ── Toast (pre-app toast for bootstrap errors) ──────
+      function bsToast(msg, type) {
+        var c = document.getElementById('toast-container');
+        if (!c) return;
+        var el = document.createElement('div');
+        el.className = 'toast toast-' + (type || 'info');
+        el.textContent = msg;
+        c.appendChild(el);
+        el.offsetHeight;
+        el.classList.add('show');
+        var dur = type === 'error' ? 6000 : 3000;
+        var t = setTimeout(function() { bsDismiss(el); }, dur);
+        el.addEventListener('click', function() { clearTimeout(t); bsDismiss(el); });
+      }
+      function bsDismiss(el) {
+        if (!el || !el.parentNode) return;
+        el.classList.remove('show');
+        el.classList.add('hide');
+        setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 300);
+      }
+
+      // ── Screen transitions ───────────────────────────────
+      function showLogin() {
+        document.getElementById('amino-login').style.display = '';
+        document.getElementById('amino-register').style.display = 'none';
+        document.getElementById('amino-loading').style.display = 'none';
+      }
+      function showRegister() {
+        document.getElementById('amino-login').style.display = 'none';
+        document.getElementById('amino-register').style.display = '';
+        document.getElementById('amino-loading').style.display = 'none';
+      }
+      function showLoading(msg) {
+        document.getElementById('amino-login').style.display = 'none';
+        document.getElementById('amino-register').style.display = 'none';
+        var ld = document.getElementById('amino-loading');
+        ld.style.display = '';
+        var lt = document.getElementById('loading-text');
+        if (lt) lt.textContent = msg || 'Connecting\u2026';
+      }
+      function showApp() {
+        document.getElementById('amino-login').style.display = 'none';
+        document.getElementById('amino-register').style.display = 'none';
+        document.getElementById('amino-loading').style.display = 'none';
+        document.getElementById('root').style.display = '';
+      }
+
+      // ── Matrix REST helper ───────────────────────────────
+      function mxFetch(method, path, body, token) {
+        var ctrl = new AbortController();
+        var tid = setTimeout(function() { ctrl.abort(); }, 15000);
+        var hdrs = { 'Content-Type': 'application/json' };
+        if (token) hdrs['Authorization'] = 'Bearer ' + token;
+        return fetch(CFG.matrixServerUrl + '/_matrix/client/v3' + path, {
+          method: method,
+          headers: hdrs,
+          body: body ? JSON.stringify(body) : undefined,
+          signal: ctrl.signal,
+        }).then(function(r) {
+          clearTimeout(tid);
+          return r.json().then(function(d) {
+            if (!r.ok) { d.status = r.status; throw d; }
+            return d;
+          });
+        }).catch(function(e) {
+          clearTimeout(tid);
+          if (e && e.name === 'AbortError') throw { error: 'Request timed out. Check your network connection.', status: 0 };
+          throw e;
+        });
+      }
+
+      // ── Session helpers ──────────────────────────────────
+      var SESSION_KEY = 'amino_matrix_session';
+      function saveSession(data) {
+        try {
+          sessionStorage.setItem(SESSION_KEY, JSON.stringify({
+            baseUrl: CFG.matrixServerUrl,
+            userId: data.user_id,
+            accessToken: data.access_token,
+            deviceId: data.device_id,
+          }));
+        } catch(e) {}
+      }
+      function loadSession() {
+        try {
+          var raw = sessionStorage.getItem(SESSION_KEY);
+          return raw ? JSON.parse(raw) : null;
+        } catch(e) { return null; }
+      }
+
+      // ── Fetch active version from EVT_VERSION ────────────
+      function fetchActiveVersion(accessToken) {
+        var encodedAlias = encodeURIComponent(CFG.orgRoomAlias);
+        return mxFetch('GET', '/directory/room/' + encodedAlias, null, accessToken)
+          .then(function(data) {
+            var roomId = encodeURIComponent(data.room_id);
+            return mxFetch('GET', '/rooms/' + roomId + '/state/com.amino.config.version/', null, accessToken)
+              .catch(function() { return null; });
+          })
+          .catch(function() { return null; });
+      }
+
+      // ── Inject app CSS + JS ──────────────────────────────
+      function injectApp(versionInfo) {
+        var appJs  = (versionInfo && versionInfo.active_url)     || CFG.defaultAppJs;
+        var cssUrl = (versionInfo && versionInfo.active_css_url) || CFG.defaultCssUrl;
+        var sha    = (versionInfo && versionInfo.active_sha)     || '';
+        var label  = (versionInfo && versionInfo.active_label)   || '';
+        var author = (versionInfo && versionInfo.active_author)  || '';
+        var actAt  = (versionInfo && versionInfo.activatedAt)    || '';
+
+        // Expose version info for app.js to read (replaces deploy-info.js)
+        window.DEPLOY_INFO = {
+          sha:      sha || 'unknown',
+          shortSha: sha ? sha.substring(0, 7) : 'unknown',
+          message:  label || 'Active version',
+          author:   author || '',
+          timestamp: actAt || new Date().toISOString(),
+          env:      'production',
+          repo:     CFG.patchesRepo,
+        };
+
+        // Tell app.js that the bootstrap is handling the login screen
+        window._amino_bootstrapMode = true;
+
+        // Inject stylesheet
+        var link = document.createElement('link');
+        link.rel = 'stylesheet';
+        link.href = cssUrl;
+        document.head.appendChild(link);
+
+        // Inject app script — app.js takes over from here
+        var script = document.createElement('script');
+        script.src = appJs;
+        script.onerror = function() {
+          // App load failed — show login with error, clear session
+          try { sessionStorage.removeItem(SESSION_KEY); } catch(e) {}
+          showLogin();
+          var err = document.getElementById('login-error');
+          if (err) {
+            err.textContent = 'Failed to load app code. Please refresh and try again.';
+            err.style.display = 'block';
+          }
+        };
+        document.head.appendChild(script);
+      }
+
+      // ── Load app after successful authentication ─────────
+      function loadApp(accessToken) {
+        showLoading('Connecting\u2026');
+        fetchActiveVersion(accessToken).then(function(versionInfo) {
+          injectApp(versionInfo);
+        });
+      }
+
+      // ── Error message helper ─────────────────────────────
+      function loginErrMsg(err) {
+        var status = (err && err.status) || 0;
+        if (status === 502 || status === 503 || status === 504)
+          return 'Matrix server unavailable (HTTP ' + status + '). Please try again later.';
+        if (status === 0 || (err && err.errcode === 'M_NETWORK'))
+          return 'Cannot reach the Matrix server. Check your network connection.';
+        return (err && (err.error || err.message)) || 'Login failed. Check your credentials.';
+      }
+
+      // ── Wire up login form ───────────────────────────────
+      function wireLoginForm() {
+        var form = document.getElementById('login-form');
+        if (!form) return;
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var user = document.getElementById('login-user').value.trim();
+          var pass = document.getElementById('login-pass').value;
+          var errEl = document.getElementById('login-error');
+          var btn   = document.getElementById('login-btn');
+          if (!user || !pass) return;
+          btn.disabled = true;
+          btn.textContent = 'Signing in\u2026';
+          errEl.style.display = 'none';
+          mxFetch('POST', '/login', {
+            type: 'm.login.password',
+            identifier: { type: 'm.id.user', user: user },
+            password: pass,
+            initial_device_display_name: 'Amino Habeas App',
+          }).then(function(data) {
+            saveSession(data);
+            loadApp(data.access_token);
+          }).catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = 'Sign In';
+            errEl.textContent = loginErrMsg(err);
+            errEl.style.display = 'block';
+          });
+        });
+      }
+
+      // ── Wire up register form ────────────────────────────
+      function wireRegisterForm() {
+        var form = document.getElementById('register-form');
+        if (!form) return;
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          var email    = document.getElementById('register-email').value.trim();
+          var user     = document.getElementById('register-user').value.trim();
+          var display  = (document.getElementById('register-display').value.trim()) || user;
+          var pass     = document.getElementById('register-pass').value;
+          var pass2    = document.getElementById('register-pass2').value;
+          var errEl    = document.getElementById('register-error');
+          var btn      = document.getElementById('register-btn');
+          errEl.style.display = 'none';
+
+          // Validation
+          if (!email) { errEl.textContent = 'Email is required.'; errEl.style.display = 'block'; return; }
+          var domain = email.split('@')[1] || '';
+          var domainOk = CFG.allowedDomains.some(function(d) {
+            return domain.toLowerCase() === d.toLowerCase();
+          });
+          if (!domainOk) {
+            errEl.textContent = 'Registration is restricted to: ' + CFG.allowedDomains.join(', ');
+            errEl.style.display = 'block'; return;
+          }
+          if (!user) { errEl.textContent = 'Username is required.'; errEl.style.display = 'block'; return; }
+          if (!/^[a-z0-9._=-]+$/.test(user)) {
+            errEl.textContent = 'Username: lowercase letters, numbers, dots, underscores, hyphens only.';
+            errEl.style.display = 'block'; return;
+          }
+          if (!pass || pass.length < 8) {
+            errEl.textContent = 'Password must be at least 8 characters.';
+            errEl.style.display = 'block'; return;
+          }
+          if (pass !== pass2) {
+            errEl.textContent = 'Passwords do not match.'; errEl.style.display = 'block'; return;
+          }
+
+          btn.disabled = true;
+          btn.textContent = 'Creating account\u2026';
+
+          var savedData = null;
+          mxFetch('POST', '/register', {
+            auth: { type: 'm.login.dummy' },
+            username: user,
+            password: pass,
+            initial_device_display_name: 'Amino Habeas App',
+          }).then(function(data) {
+            savedData = data;
+            saveSession(data);
+            // Set display name if provided
+            if (display && display !== user) {
+              var uid = encodeURIComponent(data.user_id);
+              return mxFetch('PUT', '/profile/' + uid + '/displayname',
+                { displayname: display }, data.access_token).catch(function() {});
+            }
+          }).then(function() {
+            loadApp(savedData.access_token);
+          }).catch(function(err) {
+            btn.disabled = false;
+            btn.textContent = 'Create Account';
+            var status = (err && err.status) || 0;
+            var msg;
+            if (err && err.errcode === 'M_USER_IN_USE')
+              msg = 'That username is already taken. Please choose a different one.';
+            else if (err && err.errcode === 'M_FORBIDDEN')
+              msg = 'Registration is not enabled on this server. Contact your administrator.';
+            else if (err && err.errcode === 'M_INVALID_USERNAME')
+              msg = 'Invalid username. Use lowercase letters, numbers, dots, underscores, hyphens.';
+            else if (status === 502 || status === 503 || status === 504)
+              msg = 'Server unavailable (HTTP ' + status + '). Please try again later.';
+            else
+              msg = (err && (err.error || err.message)) || 'Registration failed.';
+            errEl.textContent = msg;
+            errEl.style.display = 'block';
+          });
+        });
+      }
+
+      // ── Bootstrap entry point ────────────────────────────
+      document.addEventListener('DOMContentLoaded', function() {
+        // Check for an existing session from a previous login
+        var session = loadSession();
+        if (session && session.accessToken) {
+          loadApp(session.accessToken);
+          return;
+        }
+
+        // No session — show login form and wire handlers
+        showLogin();
+        wireLoginForm();
+        wireRegisterForm();
+
+        document.getElementById('show-register').addEventListener('click', function(e) {
+          e.preventDefault(); showRegister();
+        });
+        document.getElementById('show-login').addEventListener('click', function(e) {
+          e.preventDefault(); showLogin();
+        });
+      });
+
+    })();
+    </script>
+
   </body>
 </html>

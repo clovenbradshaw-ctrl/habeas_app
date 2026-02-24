@@ -1294,6 +1294,12 @@ var S = {
   upstreamLatestSha: '',
   previewSyncBusy: false,
   previewPromoteBusy: false,
+  // Patches fork version picker (App Version Source in Deploy tab)
+  patchesVersionHistory: [],
+  patchesVersionHistoryLoaded: false,
+  patchesVersionHistoryError: '',
+  patchesVersionActivating: false,
+  patchesVersionRollingBack: false,
 };
 
 var _collapsedGroups = {};
@@ -3565,6 +3571,107 @@ function ghApiFetch(path, options) {
   });
 }
 
+// ── GitHub API for habeas_patches fork ───────────────────────────
+var PATCHES_REPO = 'clovenbradshaw-ctrl/habeas_patches';
+
+function ghPatchesFetch(path, options) {
+  var token = S.deployGithubToken;
+  if (!token) return Promise.reject({ error: 'No GitHub token configured' });
+  var url = 'https://api.github.com/repos/' + PATCHES_REPO + path;
+  var opts = Object.assign({
+    headers: {
+      'Authorization': 'token ' + token,
+      'Accept': 'application/vnd.github.v3+json',
+    }
+  }, options || {});
+  return fetch(url, opts).then(function(r) {
+    if (!r.ok) return r.json().then(function(d) { throw d; });
+    return r.json();
+  });
+}
+
+function loadPatchesVersions() {
+  setState({ patchesVersionHistoryLoaded: false, patchesVersionHistoryError: '' });
+  return ghPatchesFetch('/commits?sha=main&per_page=20')
+    .then(function(commits) {
+      var versions = commits.map(function(c) {
+        var sha = c.sha;
+        return {
+          sha: sha,
+          shortSha: sha.substring(0, 7),
+          message: (c.commit.message || '').split('\n')[0],
+          author: c.commit.author.name,
+          date: c.commit.author.date,
+          appUrl: 'https://cdn.jsdelivr.net/gh/' + PATCHES_REPO + '@' + sha + '/app.js',
+          cssUrl: 'https://cdn.jsdelivr.net/gh/' + PATCHES_REPO + '@' + sha + '/styles.css',
+        };
+      });
+      setState({ patchesVersionHistory: versions, patchesVersionHistoryLoaded: true });
+    })
+    .catch(function(e) {
+      setState({
+        patchesVersionHistoryError: (e && (e.message || e.error)) || 'Failed to load version history',
+        patchesVersionHistoryLoaded: true,
+      });
+    });
+}
+
+function activatePatchesVersion(sha, message, author) {
+  if (!confirm('Activate version ' + sha.substring(0, 7) + '?\n\n"' + message + '"\n\nUsers will load this version on their next login.')) return;
+  var vi = S.versionInfo || {};
+  var newVerInfo = Object.assign({}, vi, {
+    active_url:     'https://cdn.jsdelivr.net/gh/' + PATCHES_REPO + '@' + sha + '/app.js',
+    active_css_url: 'https://cdn.jsdelivr.net/gh/' + PATCHES_REPO + '@' + sha + '/styles.css',
+    active_sha:     sha,
+    active_label:   message,
+    active_author:  author || '',
+    activatedAt:    new Date().toISOString(),
+    // Push current active → previous
+    previous_url:     vi.active_url     || '',
+    previous_css_url: vi.active_css_url || '',
+    previous_sha:     vi.active_sha     || '',
+    previous_label:   vi.active_label   || '',
+  });
+  setState({ patchesVersionActivating: true });
+  return matrix.sendStateEvent(matrix.orgRoomId, EVT_VERSION, newVerInfo, '')
+    .then(function() {
+      setState({ versionInfo: newVerInfo, patchesVersionActivating: false });
+      toast('Version ' + sha.substring(0, 7) + ' activated. Users will load this version on next login.', 'success');
+    })
+    .catch(function(e) {
+      setState({ patchesVersionActivating: false });
+      toast('Failed to activate version: ' + ((e && (e.message || e.error)) || 'Unknown error'), 'error');
+    });
+}
+
+function rollbackToPreviousVersion() {
+  var vi = S.versionInfo || {};
+  if (!vi.previous_url) { toast('No previous version stored. Activate a version first.', 'error'); return; }
+  var prevSha = vi.previous_sha ? vi.previous_sha.substring(0, 7) : 'previous version';
+  if (!confirm('Roll back to ' + prevSha + '?\n\n"' + (vi.previous_label || '') + '"\n\nUsers will load this version on their next login.')) return;
+  var newVerInfo = Object.assign({}, vi, {
+    active_url:     vi.previous_url,
+    active_css_url: vi.previous_css_url || '',
+    active_sha:     vi.previous_sha     || '',
+    active_label:   vi.previous_label   || '',
+    activatedAt:    new Date().toISOString(),
+    previous_url:     vi.active_url,
+    previous_css_url: vi.active_css_url || '',
+    previous_sha:     vi.active_sha     || '',
+    previous_label:   vi.active_label   || '',
+  });
+  setState({ patchesVersionRollingBack: true });
+  return matrix.sendStateEvent(matrix.orgRoomId, EVT_VERSION, newVerInfo, '')
+    .then(function() {
+      setState({ versionInfo: newVerInfo, patchesVersionRollingBack: false });
+      toast('Rolled back to ' + prevSha + '. Users will load this version on next login.', 'success');
+    })
+    .catch(function(e) {
+      setState({ patchesVersionRollingBack: false });
+      toast('Rollback failed: ' + ((e && (e.message || e.error)) || 'Unknown error'), 'error');
+    });
+}
+
 function loadDeployHistory() {
   setState({ deployHistoryLoaded: false, deployHistoryError: '' });
   // Fetch merged PRs and recent commits on default branch
@@ -3737,6 +3844,106 @@ function renderDeployments() {
   var h = '<div class="dir-section">';
   var info = S.deployInfo;
   var isProduction = info && info.env === 'production' && info.sha !== 'local';
+
+  // ── App Version Source ─────────────────────────────────────
+  h += '<div style="margin-bottom:28px;padding-bottom:20px;border-bottom:1px solid var(--border)">';
+  h += '<div class="dir-head"><h3>App Version Source</h3><div>';
+  if (S.deployTokenSet) {
+    h += '<button class="hbtn" data-action="patches-load-versions">Refresh Versions</button>';
+  }
+  h += '</div></div>';
+  h += '<p class="dir-desc">Controls which version of the app code (<code>habeas_patches</code>) is loaded after login. ';
+  h += 'Activating a version pins users to that specific commit via jsDelivr CDN. ';
+  h += 'Changes take effect on users\u2019 next login.</p>';
+
+  var vi = S.versionInfo || {};
+  h += '<div class="deploy-current-card">';
+  if (vi.active_url) {
+    h += '<div class="deploy-version"><strong>Active:</strong>';
+    h += ' <code>' + esc(vi.active_sha ? vi.active_sha.substring(0, 7) : 'custom') + '</code>';
+    if (vi.active_label) h += ' &mdash; ' + esc(vi.active_label);
+    if (vi.activatedAt) h += ' <span style="color:var(--muted);font-size:11px">(' + timeAgo(vi.activatedAt) + ')</span>';
+    h += '</div>';
+    if (vi.active_author) {
+      h += '<div style="font-size:11px;color:var(--muted);margin-top:2px">by ' + esc(vi.active_author) + '</div>';
+    }
+    h += '<div style="font-size:10px;color:var(--muted);margin-top:4px;word-break:break-all"><code>' + esc(vi.active_url) + '</code></div>';
+    if (vi.previous_url) {
+      h += '<div class="deploy-version" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)"><strong>Previous:</strong>';
+      h += ' <code>' + esc(vi.previous_sha ? vi.previous_sha.substring(0, 7) : '') + '</code>';
+      if (vi.previous_label) h += ' &mdash; ' + esc(vi.previous_label);
+      h += '</div>';
+    }
+  } else {
+    h += '<div class="deploy-version"><strong>Active:</strong> <em style="color:var(--muted)">Default</em>';
+    h += ' &mdash; latest from <code>' + esc(PATCHES_REPO) + '</code> main branch</div>';
+    h += '<div style="font-size:11px;color:var(--muted);margin-top:4px">No version has been pinned yet. Activate a specific commit below to lock the version.</div>';
+  }
+  h += '</div>';
+
+  // Roll back button
+  if (vi.active_url && vi.previous_url) {
+    h += '<div style="margin-top:10px">';
+    if (!S.patchesVersionRollingBack) {
+      h += '<button class="hbtn danger" data-action="patches-rollback">&#8630; Roll Back to Previous ('
+        + esc(vi.previous_sha ? vi.previous_sha.substring(0, 7) : 'prev') + ')</button>';
+    } else {
+      h += '<button class="hbtn" disabled>Rolling back&hellip;</button>';
+    }
+    h += '</div>';
+  }
+
+  // Version list
+  if (S.deployTokenSet) {
+    h += '<div style="margin-top:16px">';
+    h += '<div style="font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">';
+    h += 'Available Commits on ' + esc(PATCHES_REPO) + '</div>';
+    if (!S.patchesVersionHistoryLoaded) {
+      h += '<div style="color:var(--muted);font-style:italic;font-size:12px">Click \u201cRefresh Versions\u201d to load available commits.</div>';
+    } else if (S.patchesVersionHistoryError) {
+      h += '<div style="color:#b91c1c;font-size:12px">' + esc(S.patchesVersionHistoryError) + '</div>';
+    } else if (S.patchesVersionHistory.length === 0) {
+      h += '<div class="dir-empty">No commits found.</div>';
+    } else {
+      h += '<div class="deploy-history-list">';
+      S.patchesVersionHistory.forEach(function(ver) {
+        var isActive = vi.active_sha === ver.sha;
+        var isPrev   = !isActive && vi.previous_sha === ver.sha;
+        h += '<div class="deploy-history-item' + (isActive ? ' deploy-current' : '') + '">';
+        h += '<div class="deploy-history-main">';
+        h += '<code class="deploy-sha">' + esc(ver.shortSha) + '</code>';
+        h += '<span class="deploy-msg">' + esc(ver.message) + '</span>';
+        if (isActive) {
+          h += '<span class="deploy-pending-badge" style="background:var(--accent);color:#fff">ACTIVE</span>';
+        } else if (isPrev) {
+          h += '<span class="deploy-pending-badge" style="background:#e8e4dc;color:var(--ink)">PREV</span>';
+        }
+        h += '</div>';
+        h += '<div class="deploy-history-meta">';
+        h += '<span>' + esc(ver.author) + '</span>';
+        h += '<span>' + timeAgo(ver.date) + '</span>';
+        if (!isActive) {
+          if (!S.patchesVersionActivating) {
+            h += '<button class="hbtn sm" data-action="patches-activate"'
+              + ' data-sha="' + esc(ver.sha) + '"'
+              + ' data-msg="' + esc(ver.message) + '"'
+              + ' data-author="' + esc(ver.author) + '"'
+              + '>Activate</button>';
+          } else {
+            h += '<button class="hbtn sm" disabled>Wait&hellip;</button>';
+          }
+        }
+        h += '</div>';
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+  } else {
+    h += '<p class="dir-desc" style="margin-top:12px">Enter a GitHub token above to browse available versions.</p>';
+  }
+
+  h += '</div>';
 
   // ── Upstream Updates / Dev Preview ───────────────────────────
   h += '<div class="dir-head"><h3>Upstream Updates</h3></div>';
@@ -4763,6 +4970,15 @@ function render() {
   }
 
   if (!S.authenticated) {
+    // Bootstrap mode: the login form lives in index.html, not rendered here.
+    // Reveal the hardcoded login container and clear #root.
+    if (window._amino_bootstrapMode) {
+      var bl = document.getElementById('amino-login');
+      if (bl) bl.style.display = '';
+      root.innerHTML = '';
+      return;
+    }
+    // Standalone mode (no bootstrap): render login form into #root as before.
     root.innerHTML = renderLogin();
     var form = document.getElementById('login-form');
     if (form) {
@@ -5632,8 +5848,9 @@ document.addEventListener('click', function(e) {
   if (action === 'admin-switch-tab') {
     var tab = btn.dataset.tab;
     setState({ adminTab: tab });
-    if (tab === 'deploy' && S.deployTokenSet && !S.deployHistoryLoaded) {
-      loadDeployHistory();
+    if (tab === 'deploy' && S.deployTokenSet) {
+      if (!S.deployHistoryLoaded) loadDeployHistory();
+      if (!S.patchesVersionHistoryLoaded) loadPatchesVersions();
     }
     return;
   }
@@ -5675,6 +5892,20 @@ document.addEventListener('click', function(e) {
     }
     return;
   }
+  // ── Patches version source actions ────────────────────────────
+  if (action === 'patches-load-versions') {
+    loadPatchesVersions();
+    return;
+  }
+  if (action === 'patches-activate') {
+    activatePatchesVersion(btn.dataset.sha, btn.dataset.msg, btn.dataset.author);
+    return;
+  }
+  if (action === 'patches-rollback') {
+    rollbackToPreviousVersion();
+    return;
+  }
+
   if (action === 'deploy-refresh-history') {
     resetDeployReview();
     loadDeployHistory();
@@ -6859,7 +7090,17 @@ document.addEventListener('visibilitychange', function() {
 window.addEventListener('beforeunload', flushPendingSyncs);
 
 // ── Initialization ───────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', function() {
+// Supports both the bootstrap loader (script injected after DOMContentLoaded)
+// and direct page load (script in <head> before DOMContentLoaded).
+function initializeApp() {
+  // In bootstrap mode, reveal the app container that was hidden by index.html.
+  if (window._amino_bootstrapMode) {
+    var root = document.getElementById('root');
+    if (root) root.style.display = '';
+    var aminoLoading = document.getElementById('amino-loading');
+    if (aminoLoading) aminoLoading.style.display = 'none';
+  }
+
   render(); // Show loading state immediately
   if (matrix.loadSession()) {
     // First verify the token is still valid with /whoami
@@ -6900,4 +7141,12 @@ document.addEventListener('DOMContentLoaded', function() {
     S.loading = false;
     render();
   }
-});
+}
+
+// Run immediately if the DOM is already ready (dynamic script injection),
+// otherwise wait for DOMContentLoaded.
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', initializeApp);
+} else {
+  initializeApp();
+}
