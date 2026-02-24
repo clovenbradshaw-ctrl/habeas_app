@@ -271,6 +271,12 @@
           signal: ctrl.signal,
         }).then(function(r) {
           clearTimeout(tid);
+          // Guard: some error responses return HTML, not JSON
+          var ct = r.headers.get('content-type') || '';
+          if (!ct.includes('json')) {
+            if (!r.ok) throw { error: 'HTTP ' + r.status, status: r.status };
+            return {};
+          }
           return r.json().then(function(d) {
             if (!r.ok) { d.status = r.status; throw d; }
             return d;
@@ -283,7 +289,9 @@
       }
 
       // ── Session helpers ──────────────────────────────────
-      var SESSION_KEY = 'amino_matrix_session';
+      var SESSION_KEY    = 'amino_matrix_session';
+      var VERSION_CACHE  = 'amino_active_version';
+
       function saveSession(data) {
         try {
           sessionStorage.setItem(SESSION_KEY, JSON.stringify({
@@ -300,17 +308,34 @@
           return raw ? JSON.parse(raw) : null;
         } catch(e) { return null; }
       }
+      function cacheVersionInfo(info) {
+        if (!info || !info.active_url) return;
+        try { sessionStorage.setItem(VERSION_CACHE, JSON.stringify(info)); } catch(e) {}
+      }
+      function getCachedVersion() {
+        try {
+          var raw = sessionStorage.getItem(VERSION_CACHE);
+          return raw ? JSON.parse(raw) : null;
+        } catch(e) { return null; }
+      }
 
       // ── Fetch active version from EVT_VERSION ────────────
+      // Room alias and room ID are passed raw (no encodeURIComponent) —
+      // the Matrix API accepts them as-is in URL path segments.
       function fetchActiveVersion(accessToken) {
-        var encodedAlias = encodeURIComponent(CFG.orgRoomAlias);
-        return mxFetch('GET', '/directory/room/' + encodedAlias, null, accessToken)
+        var alias = encodeURIComponent(CFG.orgRoomAlias);
+        return mxFetch('GET', '/directory/room/' + alias, null, accessToken)
           .then(function(data) {
-            var roomId = encodeURIComponent(data.room_id);
-            return mxFetch('GET', '/rooms/' + roomId + '/state/com.amino.config.version/', null, accessToken)
-              .catch(function() { return null; });
+            var roomId = data.room_id; // e.g. !abc:aminoimmigration.com — used raw
+            return mxFetch('GET', '/rooms/' + encodeURIComponent(roomId) +
+              '/state/com.amino.config.version/', null, accessToken)
+              .then(function(info) {
+                cacheVersionInfo(info); // persist for offline/502 resilience
+                return info;
+              })
+              .catch(function() { return getCachedVersion(); });
           })
-          .catch(function() { return null; });
+          .catch(function() { return getCachedVersion(); }); // 502 / offline → use cache
       }
 
       // ── Inject app CSS + JS ──────────────────────────────
