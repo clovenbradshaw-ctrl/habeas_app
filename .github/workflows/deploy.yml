@@ -1,9 +1,15 @@
-name: Deploy to GitHub Pages
+name: Deploy to Production
 
 on:
-  push:
-    branches: [main, master]
+  # Admin-gated: production deploys are manual only.
+  # Merging PRs to main does NOT auto-deploy. An admin must trigger
+  # this workflow from the app's Deployment panel or GitHub Actions UI.
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Commit SHA to deploy (leave blank for latest main)'
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -18,6 +24,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_sha || github.ref }}
           fetch-depth: 0
 
       - name: Get deployment metadata
