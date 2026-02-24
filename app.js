@@ -726,6 +726,7 @@ var EVT_CLIENT   = 'com.amino.client';
 var EVT_PETITION = 'com.amino.petition';
 var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
 var EVT_OP       = 'com.amino.op';
+var EVT_GITHUB   = 'com.amino.config.github';
 
 // ── Matrix REST Client ───────────────────────────────────────────
 var matrix = {
@@ -1532,6 +1533,14 @@ function hydrateFromMatrix() {
           createdBy: natEvt.sender,
           updatedAt: new Date(natEvt.origin_server_ts).toISOString(),
         };
+      }
+
+      // GitHub PAT (stored in org room for persistence across sessions)
+      var ghEvt = matrix.getStateEvent(matrix.orgRoomId, EVT_GITHUB, '');
+      if (ghEvt && ghEvt.content && ghEvt.content.pat) {
+        S.deployGithubToken = ghEvt.content.pat;
+        S.deployTokenSet = true;
+        sessionStorage.setItem('amino_gh_token', ghEvt.content.pat);
       }
 
       // Users
@@ -3607,7 +3616,7 @@ function renderDeployments() {
   // GitHub token configuration
   h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
   h += '<div class="dir-head"><h3>GitHub Access</h3></div>';
-  h += '<p class="dir-desc">Enter a GitHub personal access token with <code>repo</code> and <code>workflow</code> scopes to view commit history and trigger rollbacks. The token is stored only in your browser session.</p>';
+  h += '<p class="dir-desc">Enter a GitHub personal access token with <code>repo</code> and <code>workflow</code> scopes to view commit history and trigger rollbacks. The token is stored in the organization room and shared across sessions.</p>';
   h += '<div style="display:flex;gap:8px;align-items:center;max-width:600px">';
   h += '<input class="finp" type="password" value="' + esc(S.deployGithubToken) + '" placeholder="ghp_xxxxxxxxxxxx" data-change="deploy-gh-token" style="flex:1;font-family:monospace">';
   h += '<button class="hbtn accent" data-action="deploy-save-token">' + (S.deployTokenSet ? 'Update' : 'Save') + '</button>';
@@ -5265,14 +5274,34 @@ document.addEventListener('click', function(e) {
     if (!token) { toast('Please enter a GitHub token', 'error'); return; }
     sessionStorage.setItem('amino_gh_token', token);
     setState({ deployGithubToken: token, deployTokenSet: true, deployHistoryLoaded: false });
+    // Persist PAT to Matrix org room so it survives across sessions
+    if (matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_GITHUB, { pat: token }, '')
+        .then(function() { toast('GitHub token saved', 'success'); })
+        .catch(function(e) {
+          console.warn('[amino] Failed to persist GitHub PAT to Matrix:', e);
+          toast('GitHub token saved for this session (failed to persist to server)', 'warn');
+        });
+    } else {
+      toast('GitHub token saved for this session', 'success');
+    }
     loadDeployHistory();
-    toast('GitHub token saved for this session', 'success');
     return;
   }
   if (action === 'deploy-clear-token') {
     sessionStorage.removeItem('amino_gh_token');
     setState({ deployGithubToken: '', deployTokenSet: false, deployHistory: [], deployHistoryLoaded: false });
-    toast('GitHub token cleared', 'info');
+    // Clear PAT from Matrix org room as well
+    if (matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_GITHUB, {}, '')
+        .then(function() { toast('GitHub token cleared', 'info'); })
+        .catch(function(e) {
+          console.warn('[amino] Failed to clear GitHub PAT from Matrix:', e);
+          toast('GitHub token cleared locally', 'info');
+        });
+    } else {
+      toast('GitHub token cleared', 'info');
+    }
     return;
   }
   if (action === 'deploy-refresh-history') {
