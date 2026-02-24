@@ -1279,6 +1279,13 @@ var S = {
   deployDeployBusy: false,
   deployGithubToken: sessionStorage.getItem('amino_gh_token') || '',
   deployTokenSet: !!sessionStorage.getItem('amino_gh_token'),
+  // Review gate — admin must review before deploying
+  deployReviewState: 'none', // 'none' | 'loading' | 'reviewing' | 'approved'
+  deployDiffFiles: [],       // [{filename, status, additions, deletions}]
+  deployDiffStats: null,     // {total_commits, files_changed, additions, deletions}
+  deployDiffError: '',
+  deployDiffBaseSha: '',     // production SHA we diff against
+  deployDiffHeadSha: '',     // main HEAD SHA
 };
 
 var _collapsedGroups = {};
@@ -3621,6 +3628,83 @@ function triggerProductionDeploy(sha) {
   });
 }
 
+// ── Review gate: load diff between production and main HEAD ─────
+function loadDeployDiff() {
+  var info = S.deployInfo;
+  var baseSha = (info && info.env === 'production' && info.sha !== 'local') ? info.sha : '';
+  setState({ deployReviewState: 'loading', deployDiffError: '', deployDiffFiles: [], deployDiffStats: null });
+
+  if (!baseSha) {
+    // No production SHA known — fetch latest deploy from GitHub deployments API
+    ghApiFetch('/deployments?environment=production&per_page=1')
+      .then(function(deps) {
+        if (deps && deps.length > 0) {
+          baseSha = deps[0].sha;
+          return fetchDiffCompare(baseSha);
+        }
+        // No deployments found — show all commits on main as pending
+        setState({
+          deployReviewState: 'reviewing',
+          deployDiffBaseSha: '',
+          deployDiffHeadSha: 'main',
+          deployDiffFiles: [],
+          deployDiffStats: { total_commits: S.deployHistory.length, files_changed: 0, additions: 0, deletions: 0, noBaseline: true },
+        });
+      })
+      .catch(function(e) {
+        // Fallback: show review without diff details
+        setState({
+          deployReviewState: 'reviewing',
+          deployDiffError: 'Could not determine production baseline: ' + (e.message || e.error || 'unknown'),
+          deployDiffBaseSha: '',
+          deployDiffHeadSha: 'main',
+        });
+      });
+  } else {
+    fetchDiffCompare(baseSha);
+  }
+}
+
+function fetchDiffCompare(baseSha) {
+  setState({ deployDiffBaseSha: baseSha });
+  return ghApiFetch('/compare/' + baseSha + '...main')
+    .then(function(data) {
+      var files = (data.files || []).map(function(f) {
+        return {
+          filename: f.filename,
+          status: f.status, // added, removed, modified, renamed
+          additions: f.additions || 0,
+          deletions: f.deletions || 0,
+        };
+      });
+      setState({
+        deployReviewState: 'reviewing',
+        deployDiffHeadSha: data.commits && data.commits.length > 0 ? data.commits[data.commits.length - 1].sha : 'main',
+        deployDiffFiles: files,
+        deployDiffStats: {
+          total_commits: data.total_commits || 0,
+          files_changed: files.length,
+          additions: data.ahead_by || 0,
+          deletions: 0,
+        },
+      });
+    })
+    .catch(function(e) {
+      setState({
+        deployReviewState: 'reviewing',
+        deployDiffError: 'Failed to load diff: ' + (e.message || e.error || 'unknown'),
+      });
+    });
+}
+
+function approveDeployReview() {
+  setState({ deployReviewState: 'approved' });
+}
+
+function resetDeployReview() {
+  setState({ deployReviewState: 'none', deployDiffFiles: [], deployDiffStats: null, deployDiffError: '', deployDiffBaseSha: '', deployDiffHeadSha: '' });
+}
+
 function renderDeployments() {
   var h = '<div class="dir-section">';
   var info = S.deployInfo;
@@ -3648,6 +3732,13 @@ function renderDeployments() {
     h += '<div><strong>Development Mode</strong><br><span style="font-size:12px;color:var(--muted)">This instance is not running a production deployment. Changes merged to main will NOT go live until an admin triggers a deploy.</span></div>';
     h += '</div>';
   }
+
+  // ── Pages setup reminder ──────────────────────────────────────
+  h += '<div class="deploy-setup-note">';
+  h += '<strong>Auto-deploy prevention:</strong> GitHub Pages must be set to Source = <code>GitHub Actions</code> (not "Deploy from a branch"). ';
+  h += 'Go to <em>Settings &rarr; Pages &rarr; Source</em> and select <strong>GitHub Actions</strong>. ';
+  h += 'This ensures merges to <code>main</code> never auto-deploy &mdash; only the "Deploy to Production" button below triggers a live update.';
+  h += '</div>';
 
   // ── GitHub token configuration ────────────────────────────────
   h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
@@ -3721,13 +3812,105 @@ function renderDeployments() {
         });
         h += '</div>';
 
-        // Deploy to production button
-        h += '<div class="deploy-action-bar">';
-        h += '<button class="hbtn accent deploy-production-btn" data-action="deploy-to-production"' + (S.deployDeployBusy ? ' disabled' : '') + '>';
-        h += (S.deployDeployBusy ? 'Deploying...' : 'Deploy to Production');
-        h += '</button>';
-        h += '<span class="deploy-action-desc">This will push the latest <code>main</code> to production. All users will see these changes.</span>';
-        h += '</div>';
+        // ── Review Gate: must review before deploying ─────────────
+        var reviewState = S.deployReviewState;
+        var repo = (S.deployInfo && S.deployInfo.repo) || 'clovenbradshaw-ctrl/habeas_app';
+
+        if (reviewState === 'none') {
+          // Step 1: Admin must start a review
+          h += '<div class="deploy-review-gate">';
+          h += '<div class="deploy-review-gate-icon">&#128270;</div>';
+          h += '<div class="deploy-review-gate-text">';
+          h += '<strong>Review required before deploying</strong>';
+          h += '<span>You must review the changes before they can go live. Click below to see what changed.</span>';
+          h += '</div>';
+          h += '<button class="hbtn accent" data-action="deploy-start-review">Review Changes</button>';
+          h += '</div>';
+
+        } else if (reviewState === 'loading') {
+          // Loading diff
+          h += '<div class="deploy-review-gate">';
+          h += '<div class="deploy-review-loading">Loading change details...</div>';
+          h += '</div>';
+
+        } else if (reviewState === 'reviewing') {
+          // Step 2: Show diff details for admin to review
+          h += '<div class="deploy-review-panel">';
+          h += '<div class="deploy-review-header">';
+          h += '<h4>Change Review</h4>';
+          h += '<button class="hbtn sm" data-action="deploy-cancel-review">Cancel</button>';
+          h += '</div>';
+
+          if (S.deployDiffError) {
+            h += '<div class="deploy-review-error">' + esc(S.deployDiffError) + '</div>';
+          }
+
+          // Summary stats
+          if (S.deployDiffStats) {
+            var ds = S.deployDiffStats;
+            h += '<div class="deploy-review-stats">';
+            h += '<span class="deploy-stat">' + pendingCommits.length + ' commit' + (pendingCommits.length !== 1 ? 's' : '') + '</span>';
+            if (ds.files_changed > 0) {
+              h += '<span class="deploy-stat">' + ds.files_changed + ' file' + (ds.files_changed !== 1 ? 's' : '') + ' changed</span>';
+            }
+            if (ds.noBaseline) {
+              h += '<span class="deploy-stat deploy-stat-warn">No production baseline — showing all pending commits</span>';
+            }
+            h += '</div>';
+          }
+
+          // Changed files list
+          if (S.deployDiffFiles.length > 0) {
+            h += '<div class="deploy-review-files">';
+            h += '<div class="deploy-review-files-header">Changed Files</div>';
+            S.deployDiffFiles.forEach(function(f) {
+              var statusClass = f.status === 'added' ? 'added' : f.status === 'removed' ? 'removed' : 'modified';
+              var statusLabel = f.status === 'added' ? 'A' : f.status === 'removed' ? 'D' : f.status === 'renamed' ? 'R' : 'M';
+              h += '<div class="deploy-review-file">';
+              h += '<span class="deploy-file-status deploy-file-' + statusClass + '">' + statusLabel + '</span>';
+              h += '<a class="deploy-file-name" href="https://github.com/' + esc(repo) + '/blob/main/' + esc(f.filename) + '" target="_blank" rel="noopener">' + esc(f.filename) + '</a>';
+              h += '<span class="deploy-file-changes">';
+              if (f.additions > 0) h += '<span class="deploy-file-add">+' + f.additions + '</span>';
+              if (f.deletions > 0) h += '<span class="deploy-file-del">-' + f.deletions + '</span>';
+              h += '</span>';
+              h += '</div>';
+            });
+            h += '</div>';
+          }
+
+          // View full diff on GitHub link
+          if (S.deployDiffBaseSha) {
+            h += '<div style="margin:12px 0">';
+            h += '<a class="deploy-github-link" href="https://github.com/' + esc(repo) + '/compare/' + esc(S.deployDiffBaseSha.substring(0, 7)) + '...main" target="_blank" rel="noopener">';
+            h += 'View full diff on GitHub &#8599;</a>';
+            h += '</div>';
+          }
+
+          // Approval checkbox
+          h += '<div class="deploy-review-approve">';
+          h += '<label class="deploy-approve-label">';
+          h += '<input type="checkbox" data-change="deploy-approve-checkbox" class="deploy-approve-check">';
+          h += '<span>I have reviewed these changes and approve them for production deployment</span>';
+          h += '</label>';
+          h += '</div>';
+
+          h += '</div>'; // end review panel
+
+        } else if (reviewState === 'approved') {
+          // Step 3: Approved — show deploy button
+          h += '<div class="deploy-review-approved">';
+          h += '<span class="deploy-approved-badge">&#10003; REVIEWED &amp; APPROVED</span>';
+          h += '<button class="hbtn sm" data-action="deploy-cancel-review">Reset</button>';
+          h += '</div>';
+
+          h += '<div class="deploy-action-bar">';
+          h += '<button class="hbtn accent deploy-production-btn" data-action="deploy-to-production"' + (S.deployDeployBusy ? ' disabled' : '') + '>';
+          h += (S.deployDeployBusy ? 'Deploying...' : 'Deploy to Production');
+          h += '</button>';
+          h += '<span class="deploy-action-desc">This will push the latest <code>main</code> to production. All users will see these changes.</span>';
+          h += '</div>';
+        }
+
       } else if (isProduction) {
         h += '<div class="deploy-uptodate-banner">';
         h += '<span class="deploy-uptodate-icon">&#10003;</span> Production is up to date. No pending changes.';
@@ -5409,24 +5592,40 @@ document.addEventListener('click', function(e) {
     return;
   }
   if (action === 'deploy-refresh-history') {
+    resetDeployReview();
     loadDeployHistory();
+    return;
+  }
+  if (action === 'deploy-start-review') {
+    loadDeployDiff();
+    return;
+  }
+  if (action === 'deploy-cancel-review') {
+    resetDeployReview();
     return;
   }
   if (action === 'deploy-to-production') {
     if (S.deployDeployBusy) return;
+    // Enforce review gate — must be approved before deploying
+    if (S.deployReviewState !== 'approved') {
+      toast('You must review and approve changes before deploying.', 'error');
+      return;
+    }
     var pendingCount = 0;
     var foundCurr = false;
     S.deployHistory.forEach(function(e) { if (e.isCurrent) foundCurr = true; if (!foundCurr && !e.isCurrent) pendingCount++; });
     if (!foundCurr) pendingCount = S.deployHistory.length;
     if (!confirm('Deploy latest main to production?\n\n' + pendingCount + ' pending change(s) will go live for all users.\n\nContinue?')) return;
     triggerProductionDeploy('');
+    // Reset review state after triggering deploy
+    resetDeployReview();
     return;
   }
   if (action === 'deploy-specific') {
     if (S.deployDeployBusy) return;
     var sha = btn.dataset.sha;
     var msg = btn.dataset.msg;
-    if (!confirm('Deploy version ' + sha.substring(0, 7) + ' to production?\n\n' + msg + '\n\nThis will replace the current live version.')) return;
+    if (!confirm('Deploy version ' + sha.substring(0, 7) + ' to production?\n\nThis is a direct deploy from version history and will replace the current live version.\n\n' + msg)) return;
     triggerProductionDeploy(sha);
     return;
   }
@@ -5836,6 +6035,16 @@ document.addEventListener('change', function(e) {
 
   if (action === 'admin-draft-role') {
     S.adminDraft.role = val;
+    return;
+  }
+
+  // Deploy review checkbox
+  if (action === 'deploy-approve-checkbox') {
+    if (el.checked) {
+      approveDeployReview();
+    } else {
+      setState({ deployReviewState: 'reviewing' });
+    }
     return;
   }
 

@@ -1,5 +1,11 @@
 name: Rollback Production
 
+# Rollback to a specific commit SHA.
+# Triggered from the app's Deployment panel or GitHub Actions UI.
+#
+# IMPORTANT: GitHub Pages must be configured with Source = "GitHub Actions"
+# (NOT "Deploy from a branch"). See deploy.yml for details.
+
 on:
   workflow_dispatch:
     inputs:
@@ -14,15 +20,20 @@ on:
         default: 'Manual rollback'
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   rollback:
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -61,9 +72,14 @@ jobs:
       - name: Copy 404.html for SPA routing
         run: cp index.html 404.html
 
-      - name: Deploy rollback to gh-pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          exclude_assets: '.github,CLAUDE.md,.gitignore'
+          path: '.'
+
+      - name: Deploy rollback to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

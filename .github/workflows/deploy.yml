@@ -1,9 +1,15 @@
 name: Deploy to Production
 
+# Admin-gated: production deploys are MANUAL ONLY.
+# Merging PRs to main does NOT auto-deploy.
+# An admin must trigger this workflow from the app's Deployment panel
+# or the GitHub Actions UI.
+#
+# IMPORTANT: GitHub Pages must be configured with Source = "GitHub Actions"
+# (NOT "Deploy from a branch"). This prevents any auto-deploy on merge.
+# Go to: Settings → Pages → Source → select "GitHub Actions"
+
 on:
-  # Admin-gated: production deploys are manual only.
-  # Merging PRs to main does NOT auto-deploy. An admin must trigger
-  # this workflow from the app's Deployment panel or GitHub Actions UI.
   workflow_dispatch:
     inputs:
       target_sha:
@@ -12,19 +18,24 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
+  pages: write
+  id-token: write
 
 concurrency:
   group: "pages"
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.target_sha || github.ref }}
+          ref: ${{ inputs.target_sha || 'main' }}
           fetch-depth: 0
 
       - name: Get deployment metadata
@@ -35,7 +46,6 @@ jobs:
           echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
           echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
           echo "author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
-          # Try to extract PR number from merge commit message
           PR_NUM=$(git log -1 --pretty=%s | grep -oP '#\K[0-9]+' || echo "")
           echo "pr_number=${PR_NUM}" >> $GITHUB_OUTPUT
 
@@ -57,9 +67,14 @@ jobs:
       - name: Copy 404.html for SPA routing
         run: cp index.html 404.html
 
-      - name: Deploy to gh-pages branch
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          exclude_assets: '.github,CLAUDE.md,.gitignore'
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
