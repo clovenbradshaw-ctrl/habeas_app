@@ -989,6 +989,41 @@ var matrix = {
       });
   },
 
+  // Change the current user's password via Matrix UIA flow
+  changePassword: function(currentPassword, newPassword) {
+    var self = this;
+    var username = this.userId ? this.userId.split(':')[0].substring(1) : '';
+    // First attempt without auth to get the session ID (UIA flow)
+    return this._api('POST', '/account/password', {
+      new_password: newPassword,
+    }).catch(function(e) {
+      // Synapse returns 401 with flows + session for UIA
+      if (e && e.status === 401 && e.session) {
+        return self._api('POST', '/account/password', {
+          new_password: newPassword,
+          auth: {
+            type: 'm.login.password',
+            identifier: { type: 'm.id.user', user: username },
+            password: currentPassword,
+            session: e.session,
+          },
+        });
+      }
+      // Some Synapse configs accept auth directly without a 401 first
+      if (e && e.status === 401) {
+        return self._api('POST', '/account/password', {
+          new_password: newPassword,
+          auth: {
+            type: 'm.login.password',
+            identifier: { type: 'm.id.user', user: username },
+            password: currentPassword,
+          },
+        });
+      }
+      throw e;
+    });
+  },
+
   saveSession: function() {
     try {
       sessionStorage.setItem('amino_matrix_session', JSON.stringify({
@@ -1226,6 +1261,13 @@ var S = {
   dirShowArchived: false,
   clientsShowArchived: false,
   _rendering: false,
+  // Password change modal state
+  showPasswordChange: false,
+  passwordChangeDraft: { currentPassword: '', newPassword: '', confirmPassword: '' },
+  passwordChangeError: '',
+  passwordChangeBusy: false,
+  // Forced password change on first login (admin-created users)
+  mustChangePassword: false,
 };
 
 var _collapsedGroups = {};
@@ -1486,6 +1528,7 @@ function hydrateFromMatrix() {
       // Users
       var userEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_USER);
       var users = {};
+      var mustChangePassword = false;
       Object.keys(userEvents).forEach(function(k) {
         var e = userEvents[k];
         if (k && e.content && !e.content.deleted) {
@@ -1498,6 +1541,10 @@ function hydrateFromMatrix() {
             createdBy: e.sender,
             updatedAt: new Date(e.origin_server_ts).toISOString(),
           };
+          // Check if the current user must change their password
+          if (k === matrix.userId && e.content.mustChangePassword) {
+            mustChangePassword = true;
+          }
         }
       });
 
@@ -1578,6 +1625,7 @@ function hydrateFromMatrix() {
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
         users: users, role: role, currentUser: matrix.userId, syncError: syncError,
+        mustChangePassword: mustChangePassword,
       });
 
       // Check if current user is a Synapse server admin by trying listUsers.
@@ -2793,6 +2841,7 @@ function renderHeader() {
     h += '<button class="hbtn export" data-action="export-word">DOCX</button>';
     h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
   }
+  h += '<button class="hbtn" data-action="show-password-change" title="Change Password" style="font-size:12px">Password</button>';
   h += '<button class="hbtn" data-action="logout">Sign Out</button>';
   h += '</div></header>';
   return h;
@@ -4096,6 +4145,48 @@ function attachBlockListeners() {
   });
 }
 
+// ── Password Change Modal ────────────────────────────────────────
+function renderPasswordChangeModal() {
+  var h = '<div class="pw-modal-overlay" data-action="pw-modal-close">';
+  h += '<div class="pw-modal" onclick="event.stopPropagation()">';
+  h += '<div class="pw-modal-title">Change Password</div>';
+  h += '<form id="pw-change-form">';
+  h += '<div class="frow"><label class="flbl">Current Password</label>';
+  h += '<input class="finp" type="password" id="pw-current" autocomplete="current-password" required></div>';
+  h += '<div class="frow"><label class="flbl">New Password</label>';
+  h += '<input class="finp" type="password" id="pw-new" minlength="8" autocomplete="new-password" required></div>';
+  h += '<div class="frow"><label class="flbl">Confirm New Password</label>';
+  h += '<input class="finp" type="password" id="pw-confirm" minlength="8" autocomplete="new-password" required></div>';
+  if (S.passwordChangeError) {
+    h += '<div class="login-error" style="display:block;margin-top:8px">' + esc(S.passwordChangeError) + '</div>';
+  }
+  h += '<div class="dir-card-actions" style="margin-top:16px">';
+  h += '<button class="hbtn accent" type="submit" id="pw-change-btn"' + (S.passwordChangeBusy ? ' disabled' : '') + '>' + (S.passwordChangeBusy ? 'Changing...' : 'Change Password') + '</button>';
+  h += '<button class="hbtn" type="button" data-action="pw-modal-close">Cancel</button>';
+  h += '</div></form></div></div>';
+  return h;
+}
+
+function renderForcedPasswordChange() {
+  var h = '<div class="loading-wrap" style="max-width:400px;margin:80px auto;padding:32px">';
+  h += '<div class="pw-modal-title" style="margin-bottom:8px">Set Your Password</div>';
+  h += '<p style="color:var(--fg2);font-size:13px;margin-bottom:20px">Your account was created by an administrator with a temporary password. Please choose a new password to continue.</p>';
+  h += '<form id="forced-pw-form">';
+  h += '<div class="frow"><label class="flbl">Temporary Password</label>';
+  h += '<input class="finp" type="password" id="fpw-current" autocomplete="current-password" required></div>';
+  h += '<div class="frow"><label class="flbl">New Password</label>';
+  h += '<input class="finp" type="password" id="fpw-new" minlength="8" autocomplete="new-password" required></div>';
+  h += '<div class="frow"><label class="flbl">Confirm New Password</label>';
+  h += '<input class="finp" type="password" id="fpw-confirm" minlength="8" autocomplete="new-password" required></div>';
+  if (S.passwordChangeError) {
+    h += '<div class="login-error" style="display:block;margin-top:8px">' + esc(S.passwordChangeError) + '</div>';
+  }
+  h += '<div class="dir-card-actions" style="margin-top:16px">';
+  h += '<button class="hbtn accent" type="submit" id="fpw-btn"' + (S.passwordChangeBusy ? ' disabled' : '') + '>' + (S.passwordChangeBusy ? 'Setting Password...' : 'Set Password') + '</button>';
+  h += '</div></form></div>';
+  return h;
+}
+
 // ── Main Render ──────────────────────────────────────────────────
 function render() {
   var root = document.getElementById('root');
@@ -4129,14 +4220,39 @@ function render() {
   if (S.syncError) {
     h += '<div class="sync-banner">' + esc(S.syncError) + '<button data-action="dismiss-error" style="margin-left:12px;background:none;border:1px solid rgba(255,255,255,.4);color:#fff;padding:2px 8px;border-radius:3px;cursor:pointer;font-size:11px">Dismiss</button></div>';
   }
+  // Force password change gate — blocks the main app until user sets a new password
+  if (S.mustChangePassword) {
+    root.innerHTML = renderForcedPasswordChange();
+    var fpForm = document.getElementById('forced-pw-form');
+    if (fpForm) {
+      fpForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        handleForcedPasswordChange();
+      });
+    }
+    return;
+  }
+
   h += renderHeader();
   if (S.currentView === 'board') h += renderBoard();
   else if (S.currentView === 'clients') h += renderClients();
   else if (S.currentView === 'directory') h += renderDirectory();
   else if (S.currentView === 'admin') h += renderAdmin();
   else if (S.currentView === 'editor') h += renderEditor();
+  // Password change modal overlay
+  if (S.showPasswordChange) h += renderPasswordChangeModal();
   h += '</div>';
   root.innerHTML = h;
+  // Post-render: wire up password change form submit
+  if (S.showPasswordChange) {
+    var pwForm = document.getElementById('pw-change-form');
+    if (pwForm) {
+      pwForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        handlePasswordChange();
+      });
+    }
+  }
 
   // Post-render: pagination for editor
   if (S.currentView === 'editor') {
@@ -4497,6 +4613,8 @@ document.addEventListener('click', function(e) {
   if (action === 'nav') { cleanupInlineAdd(); setState({ currentView: btn.dataset.view, boardAddingMatter: false, inlineAdd: null, draft: {} }); return; }
   if (action === 'logout') { matrix.stopLongPoll(); matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
+  if (action === 'show-password-change') { setState({ showPasswordChange: true, passwordChangeError: '', passwordChangeDraft: { currentPassword: '', newPassword: '', confirmPassword: '' } }); return; }
+  if (action === 'pw-modal-close') { setState({ showPasswordChange: false, passwordChangeError: '', passwordChangeBusy: false }); return; }
   if (action === 'show-register') { e.preventDefault(); S._showRegister = true; render(); return; }
   if (action === 'show-login') { e.preventDefault(); S._showRegister = false; render(); return; }
 
@@ -5426,6 +5544,78 @@ document.addEventListener('change', function(e) {
 
 // ── Admin Business Logic ─────────────────────────────────────────
 
+// ── Password Change Handlers ─────────────────────────────────────
+function handlePasswordChange() {
+  var currentEl = document.getElementById('pw-current');
+  var newEl = document.getElementById('pw-new');
+  var confirmEl = document.getElementById('pw-confirm');
+  if (!currentEl || !newEl || !confirmEl) return;
+
+  var currentPw = currentEl.value;
+  var newPw = newEl.value;
+  var confirmPw = confirmEl.value;
+
+  if (!currentPw) { setState({ passwordChangeError: 'Current password is required.' }); return; }
+  if (!newPw || newPw.length < 8) { setState({ passwordChangeError: 'New password must be at least 8 characters.' }); return; }
+  if (newPw !== confirmPw) { setState({ passwordChangeError: 'New passwords do not match.' }); return; }
+  if (newPw === currentPw) { setState({ passwordChangeError: 'New password must be different from current password.' }); return; }
+
+  S.passwordChangeBusy = true;
+  S.passwordChangeError = '';
+  render();
+
+  matrix.changePassword(currentPw, newPw)
+    .then(function() {
+      setState({ showPasswordChange: false, passwordChangeBusy: false, passwordChangeError: '' });
+      toast('Password changed successfully.', 'success');
+    })
+    .catch(function(err) {
+      var msg = 'Failed to change password.';
+      if (err && err.errcode === 'M_FORBIDDEN') msg = 'Current password is incorrect.';
+      else if (err && err.error) msg = err.error;
+      setState({ passwordChangeBusy: false, passwordChangeError: msg });
+    });
+}
+
+function handleForcedPasswordChange() {
+  var currentEl = document.getElementById('fpw-current');
+  var newEl = document.getElementById('fpw-new');
+  var confirmEl = document.getElementById('fpw-confirm');
+  if (!currentEl || !newEl || !confirmEl) return;
+
+  var currentPw = currentEl.value;
+  var newPw = newEl.value;
+  var confirmPw = confirmEl.value;
+
+  if (!currentPw) { setState({ passwordChangeError: 'Temporary password is required.' }); return; }
+  if (!newPw || newPw.length < 8) { setState({ passwordChangeError: 'New password must be at least 8 characters.' }); return; }
+  if (newPw !== confirmPw) { setState({ passwordChangeError: 'New passwords do not match.' }); return; }
+  if (newPw === currentPw) { setState({ passwordChangeError: 'New password must be different from the temporary password.' }); return; }
+
+  S.passwordChangeBusy = true;
+  S.passwordChangeError = '';
+  render();
+
+  matrix.changePassword(currentPw, newPw)
+    .then(function() {
+      // Clear the mustChangePassword flag in the user's org room state
+      var evt = matrix.getStateEvent(matrix.orgRoomId, EVT_USER, matrix.userId);
+      var userContent = Object.assign({}, (evt && evt.content) || {});
+      delete userContent.mustChangePassword;
+      return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, userContent, matrix.userId);
+    })
+    .then(function() {
+      setState({ mustChangePassword: false, passwordChangeBusy: false, passwordChangeError: '' });
+      toast('Password set successfully. Welcome!', 'success');
+    })
+    .catch(function(err) {
+      var msg = 'Failed to change password.';
+      if (err && err.errcode === 'M_FORBIDDEN') msg = 'Temporary password is incorrect.';
+      else if (err && err.error) msg = err.error;
+      setState({ passwordChangeBusy: false, passwordChangeError: msg });
+    });
+}
+
 // Compose and open a mailto: link to send login credentials to a user
 function sendCredentialEmail(email, displayName, username, password) {
   var loginUrl = window.location.origin + window.location.pathname;
@@ -5436,12 +5626,12 @@ function sendCredentialEmail(email, displayName, username, password) {
     'Login URL: ' + loginUrl + '\n' +
     'Username: ' + username + '\n';
   if (password) {
-    body += 'Password: ' + password + '\n';
+    body += 'Temporary Password: ' + password + '\n';
   } else {
-    body += 'Password: (Please contact your administrator for your password)\n';
+    body += 'Temporary Password: (Please contact your administrator for your password)\n';
   }
   body += 'Server: ' + serverName + '\n\n' +
-    'Please change your password after your first login.\n\n' +
+    'When you log in for the first time, you will be prompted to set a new password.\n\n' +
     'If you have any questions, please contact your administrator.\n\n' +
     'Best regards,\nAmino Immigration';
   var mailtoUrl = 'mailto:' + encodeURIComponent(email) +
@@ -5483,6 +5673,7 @@ function handleAdminCreateUser() {
       displayName: displayName,
       role: role,
       active: true,
+      mustChangePassword: true,
     };
     if (email) content.email = email;
     return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
@@ -5586,6 +5777,8 @@ function handleAdminSaveUser() {
   var email = (d.email || '').trim();
   var powerLevel = role === 'admin' ? 50 : 0;
 
+  var resettingPassword = !!(d.password && d.password.trim());
+
   // Helper: send the EVT_USER state event
   function setUserRole() {
     var content = {
@@ -5594,6 +5787,8 @@ function handleAdminSaveUser() {
       active: S.users[mxid] ? S.users[mxid].active : true,
     };
     if (email) content.email = email;
+    // If admin is resetting the password, flag user to change it on next login
+    if (resettingPassword) content.mustChangePassword = true;
     return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
   }
 
@@ -5733,6 +5928,7 @@ function handleAdminAdoptUser(mxid) {
   var role = d.role || 'attorney';
   var email = (d.email || '').trim();
   var powerLevel = role === 'admin' ? 50 : 0;
+  var resettingPassword = !!(d.password && d.password.trim());
 
   // Helper: send the EVT_USER state event
   function setUserRole() {
@@ -5742,6 +5938,7 @@ function handleAdminAdoptUser(mxid) {
       active: true,
     };
     if (email) content.email = email;
+    if (resettingPassword) content.mustChangePassword = true;
     return matrix.sendStateEvent(matrix.orgRoomId, EVT_USER, content, mxid);
   }
 
