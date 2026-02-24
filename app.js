@@ -1268,6 +1268,15 @@ var S = {
   passwordChangeBusy: false,
   // Forced password change on first login (admin-created users)
   mustChangePassword: false,
+  // Deployment management (admin only)
+  adminTab: 'users',
+  deployInfo: typeof DEPLOY_INFO !== 'undefined' ? DEPLOY_INFO : null,
+  deployHistory: [],
+  deployHistoryLoaded: false,
+  deployHistoryError: '',
+  deployRollbackBusy: false,
+  deployGithubToken: sessionStorage.getItem('amino_gh_token') || '',
+  deployTokenSet: !!sessionStorage.getItem('amino_gh_token'),
 };
 
 var _collapsedGroups = {};
@@ -2841,6 +2850,15 @@ function renderHeader() {
     h += '<button class="hbtn export" data-action="export-word">DOCX</button>';
     h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
   }
+  // Admin-only version indicator
+  if (S.role === 'admin' && S.deployInfo && S.deployInfo.sha !== 'local') {
+    h += '<span class="deploy-version-pill deploy-env-' + esc(S.deployInfo.env) + '" title="' + esc(S.deployInfo.message) + '">';
+    h += '<code>' + esc(S.deployInfo.shortSha) + '</code>';
+    if (S.deployInfo.prNumber) h += ' #' + esc(S.deployInfo.prNumber);
+    h += '</span>';
+  } else if (S.role === 'admin') {
+    h += '<span class="deploy-version-pill deploy-env-development" title="Local development">DEV</span>';
+  }
   h += '<button class="hbtn" data-action="show-password-change" title="Change Password" style="font-size:12px">Password</button>';
   h += '<button class="hbtn" data-action="logout">Sign Out</button>';
   h += '</div></header>';
@@ -3484,14 +3502,183 @@ function renderDirectory() {
   return h;
 }
 
+// ── GitHub Deployment API ────────────────────────────────────────
+function ghApiFetch(path, options) {
+  var token = S.deployGithubToken;
+  if (!token) return Promise.reject({ error: 'No GitHub token configured' });
+  var repo = (S.deployInfo && S.deployInfo.repo) || 'clovenbradshaw-ctrl/habeas_app';
+  var url = 'https://api.github.com/repos/' + repo + path;
+  var opts = Object.assign({
+    headers: {
+      'Authorization': 'token ' + token,
+      'Accept': 'application/vnd.github.v3+json',
+    }
+  }, options || {});
+  return fetch(url, opts).then(function(r) {
+    if (!r.ok) return r.json().then(function(d) { throw d; });
+    return r.json();
+  });
+}
+
+function loadDeployHistory() {
+  setState({ deployHistoryLoaded: false, deployHistoryError: '' });
+  // Fetch merged PRs and recent commits on default branch
+  return ghApiFetch('/commits?sha=main&per_page=30')
+    .then(function(commits) {
+      var history = commits.map(function(c) {
+        var msg = c.commit.message || '';
+        var prMatch = msg.match(/#(\d+)/);
+        return {
+          sha: c.sha,
+          shortSha: c.sha.substring(0, 7),
+          message: msg.split('\n')[0],
+          author: c.commit.author.name,
+          date: c.commit.author.date,
+          prNumber: prMatch ? prMatch[1] : '',
+          isCurrent: S.deployInfo && c.sha === S.deployInfo.sha,
+        };
+      });
+      setState({ deployHistory: history, deployHistoryLoaded: true });
+    })
+    .catch(function(e) {
+      setState({
+        deployHistoryError: e.message || e.error || 'Failed to load history',
+        deployHistoryLoaded: true,
+      });
+    });
+}
+
+function triggerRollback(sha, reason) {
+  setState({ deployRollbackBusy: true });
+  var repo = (S.deployInfo && S.deployInfo.repo) || 'clovenbradshaw-ctrl/habeas_app';
+  return fetch('https://api.github.com/repos/' + repo + '/actions/workflows/rollback.yml/dispatches', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'token ' + S.deployGithubToken,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      ref: 'main',
+      inputs: {
+        target_sha: sha,
+        reason: reason || 'Admin rollback from deployment panel',
+      }
+    })
+  }).then(function(r) {
+    setState({ deployRollbackBusy: false });
+    if (r.status === 204 || r.ok) {
+      toast('Rollback triggered. Deploying ' + sha.substring(0, 7) + '...', 'success');
+    } else {
+      return r.json().then(function(d) {
+        toast('Rollback failed: ' + (d.message || r.status), 'error');
+      });
+    }
+  }).catch(function(e) {
+    setState({ deployRollbackBusy: false });
+    toast('Rollback failed: ' + (e.message || 'Network error'), 'error');
+  });
+}
+
+function renderDeployments() {
+  var h = '<div class="dir-section">';
+  var info = S.deployInfo;
+
+  // Current version card
+  h += '<div class="dir-head"><h3>Current Deployment</h3></div>';
+  if (info && info.sha !== 'local') {
+    h += '<div class="deploy-current-card">';
+    h += '<div class="deploy-env-badge deploy-env-' + esc(info.env) + '">' + esc(info.env) + '</div>';
+    if (info.rollback) {
+      h += '<div class="deploy-rollback-badge">ROLLBACK</div>';
+    }
+    h += '<div class="deploy-version"><strong>Commit:</strong> <code>' + esc(info.shortSha) + '</code></div>';
+    if (info.prNumber) {
+      h += '<div class="deploy-version"><strong>PR:</strong> #' + esc(info.prNumber) + '</div>';
+    }
+    h += '<div class="deploy-version"><strong>Message:</strong> ' + esc(info.message) + '</div>';
+    h += '<div class="deploy-version"><strong>Author:</strong> ' + esc(info.author) + '</div>';
+    h += '<div class="deploy-version"><strong>Deployed:</strong> ' + ts(info.timestamp) + '</div>';
+    h += '</div>';
+  } else {
+    h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Running in local development mode — no deployment info available.</div>';
+  }
+
+  // GitHub token configuration
+  h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
+  h += '<div class="dir-head"><h3>GitHub Access</h3></div>';
+  h += '<p class="dir-desc">Enter a GitHub personal access token with <code>repo</code> and <code>workflow</code> scopes to view commit history and trigger rollbacks. The token is stored only in your browser session.</p>';
+  h += '<div style="display:flex;gap:8px;align-items:center;max-width:600px">';
+  h += '<input class="finp" type="password" value="' + esc(S.deployGithubToken) + '" placeholder="ghp_xxxxxxxxxxxx" data-change="deploy-gh-token" style="flex:1;font-family:monospace">';
+  h += '<button class="hbtn accent" data-action="deploy-save-token">' + (S.deployTokenSet ? 'Update' : 'Save') + '</button>';
+  if (S.deployTokenSet) {
+    h += '<button class="hbtn" data-action="deploy-clear-token">Clear</button>';
+  }
+  h += '</div></div>';
+
+  // Version history
+  if (S.deployTokenSet) {
+    h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
+    h += '<div class="dir-head"><h3>Version History</h3><div>';
+    h += '<button class="hbtn" data-action="deploy-refresh-history">Refresh</button>';
+    h += '</div></div>';
+    h += '<p class="dir-desc">Recent commits on <code>main</code>. Click "Deploy" to roll back production to that version.</p>';
+
+    if (!S.deployHistoryLoaded) {
+      h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Loading version history...</div>';
+    } else if (S.deployHistoryError) {
+      h += '<div class="dir-desc" style="color:#b91c1c">' + esc(S.deployHistoryError) + '</div>';
+    } else if (S.deployHistory.length === 0) {
+      h += '<div class="dir-empty">No commits found.</div>';
+    } else {
+      h += '<div class="deploy-history-list">';
+      S.deployHistory.forEach(function(entry) {
+        var isCurrent = entry.isCurrent;
+        h += '<div class="deploy-history-item' + (isCurrent ? ' deploy-current' : '') + '">';
+        h += '<div class="deploy-history-main">';
+        h += '<code class="deploy-sha">' + esc(entry.shortSha) + '</code>';
+        if (entry.prNumber) {
+          h += '<span class="deploy-pr-badge">PR #' + esc(entry.prNumber) + '</span>';
+        }
+        h += '<span class="deploy-msg">' + esc(entry.message) + '</span>';
+        h += '</div>';
+        h += '<div class="deploy-history-meta">';
+        h += '<span>' + esc(entry.author) + '</span>';
+        h += '<span>' + timeAgo(entry.date) + '</span>';
+        if (isCurrent) {
+          h += '<span class="deploy-live-badge">LIVE</span>';
+        } else {
+          h += '<button class="hbtn sm deploy-btn" data-action="deploy-rollback" data-sha="' + esc(entry.sha) + '" data-msg="' + esc(entry.message) + '"' + (S.deployRollbackBusy ? ' disabled' : '') + '>Deploy</button>';
+        }
+        h += '</div>';
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
 function renderAdmin() {
   if (S.role !== 'admin') {
     return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
   }
 
   var h = '<div class="dir-view"><div class="dir-tabs">';
-  h += '<button class="dir-tab on">User Management</button>';
-  h += '</div><div class="dir-body"><div class="dir-section">';
+  h += '<button class="dir-tab' + (S.adminTab === 'users' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="users">User Management</button>';
+  h += '<button class="dir-tab' + (S.adminTab === 'deploy' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="deploy">Deployments</button>';
+  h += '</div><div class="dir-body">';
+
+  if (S.adminTab === 'deploy') {
+    h += renderDeployments();
+    h += '</div></div>';
+    return h;
+  }
+
+  h += '<div class="dir-section">';
 
   // Header with create + refresh buttons
   h += '<div class="dir-head"><h3>Users</h3><div>';
@@ -5058,6 +5245,46 @@ document.addEventListener('click', function(e) {
         .catch(function(e) { console.error(e); toast('Recover attorney failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
+    return;
+  }
+
+  // Admin tab switching
+  if (action === 'admin-switch-tab') {
+    var tab = btn.dataset.tab;
+    setState({ adminTab: tab });
+    if (tab === 'deploy' && S.deployTokenSet && !S.deployHistoryLoaded) {
+      loadDeployHistory();
+    }
+    return;
+  }
+
+  // Deployment panel actions
+  if (action === 'deploy-save-token') {
+    var tokenInput = document.querySelector('[data-change="deploy-gh-token"]');
+    var token = tokenInput ? tokenInput.value.trim() : '';
+    if (!token) { toast('Please enter a GitHub token', 'error'); return; }
+    sessionStorage.setItem('amino_gh_token', token);
+    setState({ deployGithubToken: token, deployTokenSet: true, deployHistoryLoaded: false });
+    loadDeployHistory();
+    toast('GitHub token saved for this session', 'success');
+    return;
+  }
+  if (action === 'deploy-clear-token') {
+    sessionStorage.removeItem('amino_gh_token');
+    setState({ deployGithubToken: '', deployTokenSet: false, deployHistory: [], deployHistoryLoaded: false });
+    toast('GitHub token cleared', 'info');
+    return;
+  }
+  if (action === 'deploy-refresh-history') {
+    loadDeployHistory();
+    return;
+  }
+  if (action === 'deploy-rollback') {
+    if (S.deployRollbackBusy) return;
+    var sha = btn.dataset.sha;
+    var msg = btn.dataset.msg;
+    if (!confirm('Deploy version ' + sha.substring(0, 7) + ' to production?\n\n' + msg + '\n\nThis will replace the current live version.')) return;
+    triggerRollback(sha, 'Rollback to ' + sha.substring(0, 7) + ': ' + msg);
     return;
   }
 

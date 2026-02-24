@@ -1,9 +1,17 @@
-name: Deploy to GitHub Pages
+name: Rollback Production
 
 on:
-  push:
-    branches: [main, master]
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 'Commit SHA to deploy (rollback target)'
+        required: true
+        type: string
+      reason:
+        description: 'Reason for rollback'
+        required: false
+        type: string
+        default: 'Manual rollback'
 
 permissions:
   contents: write
@@ -13,11 +21,12 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  deploy:
+  rollback:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ inputs.target_sha }}
           fetch-depth: 0
 
       - name: Get deployment metadata
@@ -28,11 +37,10 @@ jobs:
           echo "timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_OUTPUT
           echo "message=$(git log -1 --pretty=%s)" >> $GITHUB_OUTPUT
           echo "author=$(git log -1 --pretty=%an)" >> $GITHUB_OUTPUT
-          # Try to extract PR number from merge commit message
           PR_NUM=$(git log -1 --pretty=%s | grep -oP '#\K[0-9]+' || echo "")
           echo "pr_number=${PR_NUM}" >> $GITHUB_OUTPUT
 
-      - name: Stamp version info
+      - name: Stamp version info (rollback)
         run: |
           cat > deploy-info.js << 'DEPLOY_EOF'
           var DEPLOY_INFO = {
@@ -43,14 +51,17 @@ jobs:
             author: "${{ steps.meta.outputs.author }}",
             prNumber: "${{ steps.meta.outputs.pr_number }}",
             env: "production",
-            repo: "${{ github.repository }}"
+            repo: "${{ github.repository }}",
+            rollback: true,
+            rollbackReason: "${{ inputs.reason }}",
+            deployedAt: "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           };
           DEPLOY_EOF
 
       - name: Copy 404.html for SPA routing
         run: cp index.html 404.html
 
-      - name: Deploy to gh-pages branch
+      - name: Deploy rollback to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
