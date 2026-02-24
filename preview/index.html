@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      DEV PREVIEW ENTRY POINT (admin only)
+      Loads CSS and app code from habeas_patches/preview/ so the admin can
+      test the staged update before approving it for production.
+
+      /favicon.svg and data files (courts.json, facilities.json, template.html)
+      are still fetched from app.aminoimmigration.com (habeas_app origin) via
+      relative URLs in app.js, so no duplication is needed.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>[DEV] Habeas — Amino Immigration</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=JetBrains+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="https://clovenbradshaw-ctrl.github.io/habeas_patches/preview/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="toast-container" class="toast-container" role="status" aria-live="polite"></div>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/docx@9.5.3/build/index.umd.js"></script>
+    <script src="https://clovenbradshaw-ctrl.github.io/habeas_patches/preview/deploy-info.js"></script>
+    <!-- Signal to app.js that this is an admin dev preview session -->
+    <script>window._amino_devMode = true;</script>
+    <script src="https://clovenbradshaw-ctrl.github.io/habeas_patches/preview/app.js"></script>
+  </body>
+</html>
