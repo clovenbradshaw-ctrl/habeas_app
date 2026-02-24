@@ -1275,6 +1275,7 @@ var S = {
   deployHistoryLoaded: false,
   deployHistoryError: '',
   deployRollbackBusy: false,
+  deployDeployBusy: false,
   deployGithubToken: sessionStorage.getItem('amino_gh_token') || '',
   deployTokenSet: !!sessionStorage.getItem('amino_gh_token'),
 };
@@ -2850,14 +2851,14 @@ function renderHeader() {
     h += '<button class="hbtn export" data-action="export-word">DOCX</button>';
     h += '<button class="hbtn export" data-action="export-pdf">PDF</button>';
   }
-  // Admin-only version indicator
-  if (S.role === 'admin' && S.deployInfo && S.deployInfo.sha !== 'local') {
-    h += '<span class="deploy-version-pill deploy-env-' + esc(S.deployInfo.env) + '" title="' + esc(S.deployInfo.message) + '">';
-    h += '<code>' + esc(S.deployInfo.shortSha) + '</code>';
-    if (S.deployInfo.prNumber) h += ' #' + esc(S.deployInfo.prNumber);
+  // Environment indicator — visible to all users so everyone knows DEV vs PROD
+  if (S.deployInfo && S.deployInfo.env === 'production' && S.deployInfo.sha !== 'local') {
+    h += '<span class="deploy-version-pill deploy-env-production" title="' + esc(S.deployInfo.message) + '">';
+    h += 'PROD';
+    if (S.role === 'admin') h += ' <code>' + esc(S.deployInfo.shortSha) + '</code>';
     h += '</span>';
-  } else if (S.role === 'admin') {
-    h += '<span class="deploy-version-pill deploy-env-development" title="Local development">DEV</span>';
+  } else {
+    h += '<span class="deploy-version-pill deploy-env-development" title="Development mode — not the live production version">DEV</span>';
   }
   h += '<button class="hbtn" data-action="show-password-change" title="Change Password" style="font-size:12px">Password</button>';
   h += '<button class="hbtn" data-action="logout">Sign Out</button>';
@@ -3580,15 +3581,47 @@ function triggerRollback(sha, reason) {
   });
 }
 
+function triggerProductionDeploy(sha) {
+  setState({ deployDeployBusy: true });
+  var repo = (S.deployInfo && S.deployInfo.repo) || 'clovenbradshaw-ctrl/habeas_app';
+  return fetch('https://api.github.com/repos/' + repo + '/actions/workflows/deploy.yml/dispatches', {
+    method: 'POST',
+    headers: {
+      'Authorization': 'token ' + S.deployGithubToken,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      ref: 'main',
+      inputs: {
+        target_sha: sha || '',
+      }
+    })
+  }).then(function(r) {
+    setState({ deployDeployBusy: false });
+    if (r.status === 204 || r.ok) {
+      toast('Production deploy triggered' + (sha ? ' for ' + sha.substring(0, 7) : '') + '. Users will see the update shortly.', 'success');
+    } else {
+      return r.json().then(function(d) {
+        toast('Deploy failed: ' + (d.message || r.status), 'error');
+      });
+    }
+  }).catch(function(e) {
+    setState({ deployDeployBusy: false });
+    toast('Deploy failed: ' + (e.message || 'Network error'), 'error');
+  });
+}
+
 function renderDeployments() {
   var h = '<div class="dir-section">';
   var info = S.deployInfo;
+  var isProduction = info && info.env === 'production' && info.sha !== 'local';
 
-  // Current version card
-  h += '<div class="dir-head"><h3>Current Deployment</h3></div>';
-  if (info && info.sha !== 'local') {
+  // ── Current Production Version ────────────────────────────────
+  h += '<div class="dir-head"><h3>Production (Live)</h3></div>';
+  if (isProduction) {
     h += '<div class="deploy-current-card">';
-    h += '<div class="deploy-env-badge deploy-env-' + esc(info.env) + '">' + esc(info.env) + '</div>';
+    h += '<div class="deploy-env-badge deploy-env-production">PRODUCTION</div>';
     if (info.rollback) {
       h += '<div class="deploy-rollback-badge">ROLLBACK</div>';
     }
@@ -3601,13 +3634,16 @@ function renderDeployments() {
     h += '<div class="deploy-version"><strong>Deployed:</strong> ' + ts(info.timestamp) + '</div>';
     h += '</div>';
   } else {
-    h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Running in local development mode — no deployment info available.</div>';
+    h += '<div class="deploy-mode-banner deploy-mode-dev">';
+    h += '<div class="deploy-mode-icon">&#9888;</div>';
+    h += '<div><strong>Development Mode</strong><br><span style="font-size:12px;color:var(--muted)">This instance is not running a production deployment. Changes merged to main will NOT go live until an admin triggers a deploy.</span></div>';
+    h += '</div>';
   }
 
-  // GitHub token configuration
+  // ── GitHub token configuration ────────────────────────────────
   h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
   h += '<div class="dir-head"><h3>GitHub Access</h3></div>';
-  h += '<p class="dir-desc">Enter a GitHub personal access token with <code>repo</code> and <code>workflow</code> scopes to view commit history and trigger rollbacks. The token is stored only in your browser session.</p>';
+  h += '<p class="dir-desc">Enter a GitHub personal access token with <code>repo</code> and <code>workflow</code> scopes to manage deployments. The token is stored only in your browser session.</p>';
   h += '<div style="display:flex;gap:8px;align-items:center;max-width:600px">';
   h += '<input class="finp" type="password" value="' + esc(S.deployGithubToken) + '" placeholder="ghp_xxxxxxxxxxxx" data-change="deploy-gh-token" style="flex:1;font-family:monospace">';
   h += '<button class="hbtn accent" data-action="deploy-save-token">' + (S.deployTokenSet ? 'Update' : 'Save') + '</button>';
@@ -3616,43 +3652,111 @@ function renderDeployments() {
   }
   h += '</div></div>';
 
-  // Version history
+  // ── Pending Changes + Deploy to Production ────────────────────
   if (S.deployTokenSet) {
     h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
-    h += '<div class="dir-head"><h3>Version History</h3><div>';
+    h += '<div class="dir-head"><h3>Pending Changes (Dev)</h3><div>';
     h += '<button class="hbtn" data-action="deploy-refresh-history">Refresh</button>';
     h += '</div></div>';
-    h += '<p class="dir-desc">Recent commits on <code>main</code>. Click "Deploy" to roll back production to that version.</p>';
+    h += '<p class="dir-desc">Commits merged to <code>main</code> that are <strong>not yet live in production</strong>. Review these changes, then deploy when ready.</p>';
 
     if (!S.deployHistoryLoaded) {
-      h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Loading version history...</div>';
+      h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Loading commit history...</div>';
     } else if (S.deployHistoryError) {
       h += '<div class="dir-desc" style="color:#b91c1c">' + esc(S.deployHistoryError) + '</div>';
-    } else if (S.deployHistory.length === 0) {
-      h += '<div class="dir-empty">No commits found.</div>';
     } else {
-      h += '<div class="deploy-history-list">';
+      // Split commits into pending (newer than current production) and deployed
+      var pendingCommits = [];
+      var deployedCommits = [];
+      var foundCurrent = false;
       S.deployHistory.forEach(function(entry) {
-        var isCurrent = entry.isCurrent;
-        h += '<div class="deploy-history-item' + (isCurrent ? ' deploy-current' : '') + '">';
-        h += '<div class="deploy-history-main">';
-        h += '<code class="deploy-sha">' + esc(entry.shortSha) + '</code>';
-        if (entry.prNumber) {
-          h += '<span class="deploy-pr-badge">PR #' + esc(entry.prNumber) + '</span>';
-        }
-        h += '<span class="deploy-msg">' + esc(entry.message) + '</span>';
-        h += '</div>';
-        h += '<div class="deploy-history-meta">';
-        h += '<span>' + esc(entry.author) + '</span>';
-        h += '<span>' + timeAgo(entry.date) + '</span>';
-        if (isCurrent) {
-          h += '<span class="deploy-live-badge">LIVE</span>';
+        if (entry.isCurrent) {
+          foundCurrent = true;
+          deployedCommits.push(entry);
+        } else if (!foundCurrent) {
+          pendingCommits.push(entry);
         } else {
-          h += '<button class="hbtn sm deploy-btn" data-action="deploy-rollback" data-sha="' + esc(entry.sha) + '" data-msg="' + esc(entry.message) + '"' + (S.deployRollbackBusy ? ' disabled' : '') + '>Deploy</button>';
+          deployedCommits.push(entry);
         }
-        h += '</div>';
-        h += '</div>';
       });
+
+      // If no current SHA match found (e.g., local dev), all are "pending"
+      if (!isProduction) {
+        pendingCommits = S.deployHistory.slice();
+        deployedCommits = [];
+      }
+
+      // ── Pending changes section ──
+      if (pendingCommits.length > 0) {
+        h += '<div class="deploy-pending-banner">';
+        h += '<strong>' + pendingCommits.length + ' pending change' + (pendingCommits.length === 1 ? '' : 's') + '</strong> merged to main but not yet live.';
+        h += '</div>';
+
+        h += '<div class="deploy-history-list" style="margin-bottom:12px">';
+        pendingCommits.forEach(function(entry) {
+          h += '<div class="deploy-history-item deploy-pending-item">';
+          h += '<div class="deploy-history-main">';
+          h += '<span class="deploy-pending-dot"></span>';
+          h += '<code class="deploy-sha">' + esc(entry.shortSha) + '</code>';
+          if (entry.prNumber) {
+            h += '<span class="deploy-pr-badge">PR #' + esc(entry.prNumber) + '</span>';
+          }
+          h += '<span class="deploy-msg">' + esc(entry.message) + '</span>';
+          h += '</div>';
+          h += '<div class="deploy-history-meta">';
+          h += '<span>' + esc(entry.author) + '</span>';
+          h += '<span>' + timeAgo(entry.date) + '</span>';
+          h += '<span class="deploy-pending-badge">PENDING</span>';
+          h += '</div>';
+          h += '</div>';
+        });
+        h += '</div>';
+
+        // Deploy to production button
+        h += '<div class="deploy-action-bar">';
+        h += '<button class="hbtn accent deploy-production-btn" data-action="deploy-to-production"' + (S.deployDeployBusy ? ' disabled' : '') + '>';
+        h += (S.deployDeployBusy ? 'Deploying...' : 'Deploy to Production');
+        h += '</button>';
+        h += '<span class="deploy-action-desc">This will push the latest <code>main</code> to production. All users will see these changes.</span>';
+        h += '</div>';
+      } else if (isProduction) {
+        h += '<div class="deploy-uptodate-banner">';
+        h += '<span class="deploy-uptodate-icon">&#10003;</span> Production is up to date. No pending changes.';
+        h += '</div>';
+      }
+
+      // ── Previously deployed / version history ──
+      h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
+      h += '<div class="dir-head"><h3>Version History</h3></div>';
+      h += '<p class="dir-desc">All recent commits on <code>main</code>. You can deploy any specific version to production.</p>';
+
+      if (S.deployHistory.length === 0) {
+        h += '<div class="dir-empty">No commits found.</div>';
+      } else {
+        h += '<div class="deploy-history-list">';
+        S.deployHistory.forEach(function(entry) {
+          var isCurrent = entry.isCurrent;
+          h += '<div class="deploy-history-item' + (isCurrent ? ' deploy-current' : '') + '">';
+          h += '<div class="deploy-history-main">';
+          h += '<code class="deploy-sha">' + esc(entry.shortSha) + '</code>';
+          if (entry.prNumber) {
+            h += '<span class="deploy-pr-badge">PR #' + esc(entry.prNumber) + '</span>';
+          }
+          h += '<span class="deploy-msg">' + esc(entry.message) + '</span>';
+          h += '</div>';
+          h += '<div class="deploy-history-meta">';
+          h += '<span>' + esc(entry.author) + '</span>';
+          h += '<span>' + timeAgo(entry.date) + '</span>';
+          if (isCurrent) {
+            h += '<span class="deploy-live-badge">LIVE</span>';
+          } else {
+            h += '<button class="hbtn sm deploy-btn" data-action="deploy-specific" data-sha="' + esc(entry.sha) + '" data-msg="' + esc(entry.message) + '"' + (S.deployDeployBusy || S.deployRollbackBusy ? ' disabled' : '') + '>Deploy</button>';
+          }
+          h += '</div>';
+          h += '</div>';
+        });
+        h += '</div>';
+      }
       h += '</div>';
     }
     h += '</div>';
@@ -5279,11 +5383,29 @@ document.addEventListener('click', function(e) {
     loadDeployHistory();
     return;
   }
+  if (action === 'deploy-to-production') {
+    if (S.deployDeployBusy) return;
+    var pendingCount = 0;
+    var foundCurr = false;
+    S.deployHistory.forEach(function(e) { if (e.isCurrent) foundCurr = true; if (!foundCurr && !e.isCurrent) pendingCount++; });
+    if (!foundCurr) pendingCount = S.deployHistory.length;
+    if (!confirm('Deploy latest main to production?\n\n' + pendingCount + ' pending change(s) will go live for all users.\n\nContinue?')) return;
+    triggerProductionDeploy('');
+    return;
+  }
+  if (action === 'deploy-specific') {
+    if (S.deployDeployBusy) return;
+    var sha = btn.dataset.sha;
+    var msg = btn.dataset.msg;
+    if (!confirm('Deploy version ' + sha.substring(0, 7) + ' to production?\n\n' + msg + '\n\nThis will replace the current live version.')) return;
+    triggerProductionDeploy(sha);
+    return;
+  }
   if (action === 'deploy-rollback') {
     if (S.deployRollbackBusy) return;
     var sha = btn.dataset.sha;
     var msg = btn.dataset.msg;
-    if (!confirm('Deploy version ' + sha.substring(0, 7) + ' to production?\n\n' + msg + '\n\nThis will replace the current live version.')) return;
+    if (!confirm('Rollback to version ' + sha.substring(0, 7) + '?\n\n' + msg + '\n\nThis will replace the current live version.')) return;
     triggerRollback(sha, 'Rollback to ' + sha.substring(0, 7) + ': ' + msg);
     return;
   }
