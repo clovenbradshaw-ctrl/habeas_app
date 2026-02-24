@@ -1597,7 +1597,7 @@ function hydrateFromMatrix() {
           var blocksEvt = matrix.getStateEvent(roomId, EVT_PETITION_BLOCKS, petId);
           var blocks = (blocksEvt && blocksEvt.content && blocksEvt.content.blocks) || [];
           petitions[petId] = {
-            id: petId, clientId: pc.clientId || cid, createdBy: pe.sender || '',
+            id: petId, clientId: pc.clientId || cid, createdBy: pc.createdBy || pe.sender || '',
             stage: migrateStage(pc.stage || 'intake'),
             stageHistory: pc.stageHistory || [{ stage: migrateStage(pc.stage || 'intake'), at: new Date(pe.origin_server_ts).toISOString() }],
             _bodyEdited: !!pc._bodyEdited,
@@ -2520,6 +2520,7 @@ function createClientRoom(clientId) {
     console.error('Failed to create client room:', e);
     delete _pendingRoomCreations[clientId];
     toast('INS \u2295 client room failed', 'error');
+    return null;
   });
   return _pendingRoomCreations[clientId];
 }
@@ -2527,7 +2528,7 @@ function createClientRoom(clientId) {
 function syncPetitionToMatrix(pet, label) {
   if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
   var content = {
-    clientId: pet.clientId, stage: pet.stage, stageHistory: pet.stageHistory,
+    clientId: pet.clientId, createdBy: pet.createdBy, stage: pet.stage, stageHistory: pet.stageHistory,
     district: pet.district, division: pet.division, courtWebsite: pet.courtWebsite || '', caseNumber: pet.caseNumber,
     facilityName: pet.facilityName, facilityCity: pet.facilityCity,
     facilityState: pet.facilityState, warden: pet.warden,
@@ -4937,9 +4938,9 @@ document.addEventListener('click', function(e) {
     if (!pet) return;
     var canArchive = S.role === 'admin' || pet.createdBy === S.currentUser;
     if (!canArchive) return;
-    pet.archived = true;
+    S.petitions[pet.id] = Object.assign({}, pet, { archived: true });
     S.log.push({ op: 'ARCHIVE', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
-    syncPetitionToMatrix(pet, 'archive');
+    syncPetitionToMatrix(S.petitions[pet.id], 'archive');
     setState({});
     return;
   }
@@ -4952,9 +4953,11 @@ document.addEventListener('click', function(e) {
     if (!pet) return;
     var canRecover = S.role === 'admin' || pet.createdBy === S.currentUser;
     if (!canRecover) return;
-    delete pet.archived;
+    var recovered = Object.assign({}, pet);
+    delete recovered.archived;
+    S.petitions[pet.id] = recovered;
     S.log.push({ op: 'RECOVER', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
-    syncPetitionToMatrix(pet, 'recover');
+    syncPetitionToMatrix(S.petitions[pet.id], 'recover');
     setState({});
     return;
   }
@@ -5883,6 +5886,7 @@ document.addEventListener('change', function(e) {
 
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) return;
+  if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
 
   if (action === 'apply-court') {
     var c = S.courts[val];
@@ -6430,6 +6434,9 @@ function flushPendingSyncs() {
   }
   var keys = Object.keys(_syncTimers);
   if (keys.length === 0) return;
+  // Set _flushing = true so fetch uses keepalive (browser won't cancel on unload).
+  // Do NOT reset _flushing to false here — the async fetch calls are still in flight.
+  // It will be reset on next normal API call or page load.
   matrix._flushing = true;
   keys.forEach(function(key) {
     var entry = _syncTimers[key];
@@ -6437,7 +6444,6 @@ function flushPendingSyncs() {
     entry.fn();
   });
   _syncTimers = {};
-  matrix._flushing = false;
 }
 
 document.addEventListener('visibilitychange', function() {
