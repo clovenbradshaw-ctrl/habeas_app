@@ -513,15 +513,10 @@
 
       // ── Bootstrap entry point ────────────────────────────
       document.addEventListener('DOMContentLoaded', function() {
-        // Check for an existing session from a previous login
-        var session = loadSession();
-        if (session && session.accessToken) {
-          loadApp(session.accessToken);
-          return;
-        }
-
-        // No session — show login form and wire handlers
-        showLogin();
+        // Always wire forms up-front so they work if app.js later clears a
+        // session mid-tab (e.g. token expires) and re-shows #amino-login —
+        // in that path the no-session branch below is never reached, so
+        // wireLoginForm() would otherwise never have been called.
         wireLoginForm();
         wireRegisterForm();
 
@@ -531,6 +526,16 @@
         document.getElementById('show-login').addEventListener('click', function(e) {
           e.preventDefault(); showLogin();
         });
+
+        // Check for an existing session from a previous login
+        var session = loadSession();
+        if (session && session.accessToken) {
+          loadApp(session.accessToken);
+          return;
+        }
+
+        // No session — show login form
+        showLogin();
       });
 
     })();
