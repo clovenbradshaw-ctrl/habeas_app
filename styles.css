@@ -1898,3 +1898,240 @@ body,
   font-weight: 700;
   margin-right: 4px;
 }
+
+/* ── Setup note ──────────────────────────────────── */
+.deploy-setup-note {
+  background: #f5f3ff;
+  border: 1px solid #ddd6fe;
+  color: #5b21b6;
+  padding: 10px 16px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+.deploy-setup-note code {
+  font-family: 'JetBrains Mono', monospace;
+  background: #ede9fe;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
+}
+.deploy-setup-note strong {
+  font-weight: 600;
+}
+
+/* ── Review gate ─────────────────────────────────── */
+.deploy-review-gate {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: 4px;
+}
+.deploy-review-gate-icon {
+  font-size: 24px;
+  flex-shrink: 0;
+}
+.deploy-review-gate-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+.deploy-review-gate-text strong {
+  font-size: 13px;
+  color: #1e40af;
+}
+.deploy-review-gate-text span {
+  font-size: 12px;
+  color: #3b82f6;
+}
+.deploy-review-loading {
+  font-size: 13px;
+  color: var(--muted);
+  font-style: italic;
+  padding: 4px 0;
+}
+
+/* ── Review panel ────────────────────────────────── */
+.deploy-review-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+  margin-top: 4px;
+}
+.deploy-review-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.deploy-review-header h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+.deploy-review-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  color: #991b1b;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.deploy-review-stats {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.deploy-stat {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 4px 10px;
+  border-radius: 8px;
+}
+.deploy-stat-warn {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+/* ── Changed files list ──────────────────────────── */
+.deploy-review-files {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.deploy-review-files-header {
+  background: var(--bg);
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid var(--border);
+}
+.deploy-review-file {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.deploy-review-file:last-child {
+  border-bottom: none;
+}
+.deploy-file-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+.deploy-file-added {
+  background: #dcfce7;
+  color: #166534;
+}
+.deploy-file-removed {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.deploy-file-modified {
+  background: #fef3c7;
+  color: #92400e;
+}
+.deploy-file-name {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  text-decoration: none;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.deploy-file-name:hover {
+  text-decoration: underline;
+}
+.deploy-file-changes {
+  display: flex;
+  gap: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  flex-shrink: 0;
+}
+.deploy-file-add {
+  color: #166534;
+}
+.deploy-file-del {
+  color: #991b1b;
+}
+.deploy-github-link {
+  font-size: 12px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.deploy-github-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Approval checkbox ───────────────────────────── */
+.deploy-review-approve {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.deploy-approve-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--fg);
+  line-height: 1.4;
+}
+.deploy-approve-check {
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+  flex-shrink: 0;
+  accent-color: #166534;
+}
+
+/* ── Approved badge ──────────────────────────────── */
+.deploy-review-approved {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+.deploy-approved-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  color: #166534;
+  background: #dcfce7;
+  border: 1px solid #bbf7d0;
+  padding: 4px 12px;
+  border-radius: 8px;
+  letter-spacing: 0.3px;
+}
