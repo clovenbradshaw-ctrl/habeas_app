@@ -4112,6 +4112,27 @@ function renderDeployments() {
   return h;
 }
 
+function renderSynapseAdmin() {
+  var homeserver = encodeURIComponent(CONFIG.MATRIX_SERVER_URL);
+  var accessToken = encodeURIComponent(matrix.accessToken || '');
+  var userId = encodeURIComponent(matrix.userId || '');
+  var autoLoginUrl = 'https://admin.aminoimmigration.com/#/login'
+    + '?homeserver=' + homeserver
+    + '&access_token=' + accessToken
+    + '&user_id=' + userId;
+
+  var h = '<div class="dir-section">';
+  h += '<div class="dir-head"><h3>Server Admin</h3>';
+  h += '<a href="' + autoLoginUrl + '" target="_blank" rel="noopener" class="hbtn sm">Open in new tab \u2197</a>';
+  h += '</div>';
+  h += '<p class="dir-desc">Full Synapse server administration: rooms, devices, media, and users. Powered by Synapse Admin.</p>';
+  h += '<div class="synapse-admin-wrapper">';
+  h += '<iframe src="' + autoLoginUrl + '" class="synapse-admin-frame" title="Synapse Admin" allowfullscreen></iframe>';
+  h += '</div>';
+  h += '</div>';
+  return h;
+}
+
 function renderAdmin() {
   if (S.role !== 'admin') {
     return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
@@ -4120,10 +4141,19 @@ function renderAdmin() {
   var h = '<div class="dir-view"><div class="dir-tabs">';
   h += '<button class="dir-tab' + (S.adminTab === 'users' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="users">User Management</button>';
   h += '<button class="dir-tab' + (S.adminTab === 'deploy' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="deploy">Deployments</button>';
+  if (S.isSynapseAdmin) {
+    h += '<button class="dir-tab' + (S.adminTab === 'synapse' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="synapse">Server Admin</button>';
+  }
   h += '</div><div class="dir-body">';
 
   if (S.adminTab === 'deploy') {
     h += renderDeployments();
+    h += '</div></div>';
+    return h;
+  }
+
+  if (S.adminTab === 'synapse') {
+    h += renderSynapseAdmin();
     h += '</div></div>';
     return h;
   }
