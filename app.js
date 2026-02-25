@@ -1375,7 +1375,7 @@ var S = {
   _forgotPasswordClientSecret: '',
   _forgotPasswordSid: '',
   // Deployment management (admin only)
-  adminTab: 'users',
+  adminTab: 'synapse',
   deployInfo: typeof DEPLOY_INFO !== 'undefined' ? DEPLOY_INFO : null,
   deployHistory: [],
   deployHistoryLoaded: false,
@@ -4154,223 +4154,11 @@ function renderAdmin() {
   }
 
   var h = '<div class="dir-view"><div class="dir-tabs">';
-  h += '<button class="dir-tab' + (S.adminTab === 'users' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="users">User Management</button>';
-  h += '<button class="dir-tab' + (S.adminTab === 'deploy' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="deploy">Deployments</button>';
-  if (S.isSynapseAdmin) {
-    h += '<button class="dir-tab' + (S.adminTab === 'synapse' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="synapse">Server Admin</button>';
-  }
+  h += '<button class="dir-tab' + (S.adminTab === 'synapse' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="synapse">Server Admin</button>';
   h += '</div><div class="dir-body">';
 
-  if (S.adminTab === 'deploy') {
-    h += renderDeployments();
-    h += '</div></div>';
-    return h;
-  }
-
-  if (S.adminTab === 'synapse') {
-    h += renderSynapseAdmin();
-    h += '</div></div>';
-    return h;
-  }
-
-  h += '<div class="dir-section">';
-
-  // Header with create + refresh buttons
-  h += '<div class="dir-head"><h3>Users</h3><div>';
-  h += '<button class="hbtn accent" data-action="admin-show-create">+ Create User</button>';
-  h += '<button class="hbtn" data-action="admin-refresh-users" style="margin-left:8px">Refresh</button>';
-  if (S.isSynapseAdmin) {
-    h += '<button class="hbtn" data-action="admin-sync-threepids" style="margin-left:8px" title="Register user emails with Synapse to enable email-based password reset">Sync Emails to Server</button>';
-  }
+  h += renderSynapseAdmin();
   h += '</div></div>';
-  h += '<p class="dir-desc">Manage user accounts. Creating a user registers them on the Matrix server, sets their role, and invites them to the required rooms.</p>';
-
-  // Show "Send Credentials" prompt if a user was just created with an email
-  if (S._pendingCredentialEmail) {
-    var pc = S._pendingCredentialEmail;
-    h += '<div class="admin-credential-banner">';
-    h += '<span>User <strong>' + esc(pc.displayName) + '</strong> created. Send login credentials to <strong>' + esc(pc.email) + '</strong>?</span>';
-    h += '<button class="hbtn accent sm" data-action="admin-send-credentials">Send Credentials</button>';
-    h += '<button class="hbtn sm" data-action="admin-dismiss-credential-banner">Dismiss</button>';
-    h += '</div>';
-  }
-
-  // Server users loading/error status
-  if (!S.serverUsersLoaded) {
-    h += '<div class="dir-desc" style="color:var(--muted);font-style:italic">Loading server user list...</div>';
-  }
-  if (S.serverUsersError) {
-    h += '<div class="dir-desc" style="color:#b91c1c">' + esc(S.serverUsersError) + '</div>';
-  }
-
-  // Inline create form
-  if (S.adminEditUserId === 'new') {
-    h += '<div class="dir-card editing" style="margin-bottom:16px">';
-    h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">New User</div>';
-    h += '<div class="frow"><label class="flbl">Username</label>';
-    h += '<input class="finp" value="' + esc(S.adminDraft.username || '') + '" placeholder="e.g. jsmith" data-field-key="username" data-change="admin-draft-field"></div>';
-    h += '<div class="frow"><label class="flbl">Display Name</label>';
-    h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" placeholder="Jane Smith" data-field-key="displayName" data-change="admin-draft-field"></div>';
-    h += '<div class="frow"><label class="flbl">Password</label>';
-    h += '<div style="display:flex;gap:8px;align-items:flex-start">';
-    h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Temporary password" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
-    h += '<button class="hbtn sm" type="button" data-action="admin-toggle-password-visible">' + (S.adminDraft.passwordVisible ? 'Hide' : 'Show') + '</button>';
-    h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
-    h += '</div>';
-    if (S.adminDraft.passwordVisible && S.adminDraft.password) {
-      h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
-    }
-    h += '</div>';
-    h += '<div class="frow"><label class="flbl">Email</label>';
-    h += '<input class="finp" type="email" value="' + esc(S.adminDraft.email || '') + '" placeholder="user@example.com" data-field-key="email" data-change="admin-draft-field"></div>';
-    h += '<div class="frow"><label class="flbl">Role</label>';
-    h += '<select class="finp" data-change="admin-draft-role">';
-    h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
-    h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
-    h += '</select></div>';
-    h += '<div id="admin-create-error" class="login-error" style="display:none;margin-top:8px"></div>';
-    h += '<div class="dir-card-actions">';
-    h += '<button class="hbtn accent" data-action="admin-create-user" id="admin-create-btn">Create Account</button>';
-    h += '<button class="hbtn" data-action="admin-cancel-create">Cancel</button></div>';
-    h += '</div>';
-  }
-
-  // Split users into managed and unmanaged
-  var userList = Object.values(S.users);
-  var managedUsers = userList.filter(function(u) { return u.managed !== false; });
-  var unmanagedUsers = userList.filter(function(u) { return u.managed === false; });
-
-  managedUsers.sort(function(a, b) {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    return (a.displayName || '').localeCompare(b.displayName || '');
-  });
-  unmanagedUsers.sort(function(a, b) {
-    if (a.active !== b.active) return a.active ? -1 : 1;
-    return (a.displayName || '').localeCompare(b.displayName || '');
-  });
-
-  // Managed users section
-  h += '<div class="dir-list">';
-  if (managedUsers.length === 0 && unmanagedUsers.length === 0) {
-    h += '<div class="dir-empty">No users found.</div>';
-  }
-  managedUsers.forEach(function(u) {
-    var isEditing = S.adminEditUserId === u.mxid;
-    h += '<div class="dir-card' + (isEditing ? ' editing' : '') + '">';
-    if (isEditing) {
-      h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Edit User</div>';
-      h += '<div class="frow"><label class="flbl">Display Name</label>';
-      h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
-      h += '<div class="frow"><label class="flbl">Email</label>';
-      h += '<input class="finp" type="email" value="' + esc(S.adminDraft.email || '') + '" placeholder="user@example.com" data-field-key="email" data-change="admin-draft-field"></div>';
-      h += '<div class="frow"><label class="flbl">Role</label>';
-      h += '<select class="finp" data-change="admin-draft-role">';
-      h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
-      h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
-      h += '</select></div>';
-      h += '<div class="frow"><label class="flbl">Reset Password</label>';
-      h += '<div style="display:flex;gap:8px;align-items:flex-start">';
-      h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Leave blank to keep current" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
-      h += '<button class="hbtn sm" type="button" data-action="admin-toggle-password-visible">' + (S.adminDraft.passwordVisible ? 'Hide' : 'Show') + '</button>';
-      h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
-      h += '</div>';
-      if (S.adminDraft.passwordVisible && S.adminDraft.password) {
-        h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
-      }
-      h += '</div>';
-      h += '<div id="admin-edit-error" class="login-error" style="display:none;margin-top:8px"></div>';
-      h += '<div class="dir-card-actions">';
-      h += '<button class="hbtn accent" data-action="admin-save-user">Save Changes</button>';
-      h += '<button class="hbtn" data-action="admin-cancel-edit">Cancel</button>';
-      if (u.mxid !== S.currentUser) {
-        h += '<button class="hbtn danger" data-action="admin-deactivate-user" data-mxid="' + esc(u.mxid) + '">Deactivate</button>';
-      }
-      h += '</div>';
-    } else {
-      var roleBadgeColor = u.role === 'admin' ? '#a08540' : '#8a8a9a';
-      h += '<div class="dir-card-head" data-action="admin-edit-user" data-mxid="' + esc(u.mxid) + '">';
-      h += '<strong>' + esc(u.displayName) + '</strong>';
-      h += '<span class="dir-card-sub" style="color:' + roleBadgeColor + ';font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">' + esc(u.role) + '</span>';
-      if (u.synapseAdmin) {
-        h += '<span class="dir-card-sub" style="color:#a08540;font-size:9px;margin-left:6px">SERVER ADMIN</span>';
-      }
-      h += '</div>';
-      h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
-      if (u.email) {
-        h += '<div class="dir-card-detail">' + esc(u.email) + '</div>';
-      }
-      if (!u.active) {
-        h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
-      }
-      h += htmlProvenanceBadge(u);
-      // Password reset and credential buttons
-      if (u.active && u.email) {
-        h += '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">';
-        h += '<button class="hbtn sm accent" data-action="admin-send-reset-email" data-mxid="' + esc(u.mxid) + '">Send Password Reset Email</button>';
-        h += '<button class="hbtn sm" data-action="admin-resend-credentials" data-mxid="' + esc(u.mxid) + '">Email Credentials</button>';
-        h += '</div>';
-      }
-    }
-    h += '</div>';
-  });
-  h += '</div>';
-
-  // Unmanaged server users section
-  if (unmanagedUsers.length > 0) {
-    h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">';
-    h += '<div class="dir-head"><h3>Unmanaged Server Users</h3></div>';
-    h += '<p class="dir-desc">These users exist on the Matrix server but have not been assigned a role in this application. Click to adopt them.</p>';
-    h += '<div class="dir-list">';
-    unmanagedUsers.forEach(function(u) {
-      var isEditing = S.adminEditUserId === u.mxid;
-      h += '<div class="dir-card' + (isEditing ? ' editing' : '') + '">';
-      if (isEditing) {
-        h += '<div class="fg-title" style="margin-bottom:12px;font-weight:600">Adopt User</div>';
-        h += '<div class="frow"><label class="flbl">Display Name</label>';
-        h += '<input class="finp" value="' + esc(S.adminDraft.displayName || '') + '" data-field-key="displayName" data-change="admin-draft-field"></div>';
-        h += '<div class="frow"><label class="flbl">Email</label>';
-        h += '<input class="finp" type="email" value="' + esc(S.adminDraft.email || '') + '" placeholder="user@example.com" data-field-key="email" data-change="admin-draft-field"></div>';
-        h += '<div class="frow"><label class="flbl">Role</label>';
-        h += '<select class="finp" data-change="admin-draft-role">';
-        h += '<option value="attorney"' + (S.adminDraft.role !== 'admin' ? ' selected' : '') + '>Attorney</option>';
-        h += '<option value="admin"' + (S.adminDraft.role === 'admin' ? ' selected' : '') + '>Admin</option>';
-        h += '</select></div>';
-        h += '<div class="frow"><label class="flbl">Set Password</label>';
-        h += '<div style="display:flex;gap:8px;align-items:flex-start">';
-        h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Optional \u2014 generate or type" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
-        h += '<button class="hbtn sm" type="button" data-action="admin-toggle-password-visible">' + (S.adminDraft.passwordVisible ? 'Hide' : 'Show') + '</button>';
-        h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
-        h += '</div>';
-        if (S.adminDraft.passwordVisible && S.adminDraft.password) {
-          h += '<div style="font-size:10px;color:var(--accent);margin-top:4px">Share this password with the user. It will not be shown again.</div>';
-        }
-        h += '</div>';
-        h += '<div id="admin-adopt-error" class="login-error" style="display:none;margin-top:8px"></div>';
-        h += '<div class="dir-card-actions">';
-        h += '<button class="hbtn accent" data-action="admin-adopt-user" data-mxid="' + esc(u.mxid) + '">Adopt User</button>';
-        h += '<button class="hbtn" data-action="admin-cancel-edit">Cancel</button></div>';
-      } else {
-        h += '<div class="dir-card-head" data-action="admin-edit-user" data-mxid="' + esc(u.mxid) + '">';
-        h += '<strong>' + esc(u.displayName) + '</strong>';
-        h += '<span class="dir-card-sub" style="color:#b45309;font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.5px">UNMANAGED</span>';
-        if (u.synapseAdmin) {
-          h += '<span class="dir-card-sub" style="color:#a08540;font-size:9px;margin-left:6px">SERVER ADMIN</span>';
-        }
-        h += '</div>';
-        h += '<div class="dir-card-detail">' + esc(u.mxid) + '</div>';
-        if (!u.active) {
-          h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
-        }
-        if (u.creationTs) {
-          h += '<div class="prov"><span class="prov-item">Created ' + ts(new Date(u.creationTs * 1000).toISOString()) + '</span></div>';
-        }
-      }
-      h += '</div>';
-    });
-    h += '</div></div>';
-  }
-
-  h += '</div></div></div>';
   return h;
 }
 
@@ -5776,9 +5564,6 @@ document.addEventListener('click', function(e) {
   if (action === 'admin-switch-tab') {
     var tab = btn.dataset.tab;
     setState({ adminTab: tab });
-    if (tab === 'deploy' && S.deployTokenSet && !S.deployHistoryLoaded) {
-      loadDeployHistory();
-    }
     return;
   }
 
