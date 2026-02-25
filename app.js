@@ -4136,7 +4136,7 @@ function renderSynapseAdmin() {
     + '&access_token=' + accessToken
     + '&user_id=' + userId;
 
-  var h = '<div class="dir-section">';
+  var h = '<div class="dir-section wide">';
   h += '<div class="dir-head"><h3>Server Admin</h3>';
   h += '<a href="' + autoLoginUrl + '" target="_blank" rel="noopener" class="hbtn sm">Open in new tab \u2197</a>';
   h += '</div>';
