@@ -2277,34 +2277,49 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
       var hasFooter = ps.footerLeft || ps.footerCenter || ps.footerRight;
       var hfCss = '.page-hf{display:flex;justify-content:space-between;font-size:9pt;color:#666;font-family:"Times New Roman",serif}.page-hf span{flex:1}.page-hf span:nth-child(2){text-align:center}.page-hf span:last-child{text-align:right}.page-hdr{margin-bottom:12pt}.page-ftr{margin-top:auto;padding-top:12pt}';
 
+      // msoEls accumulates MSO header/footer element HTML for Word exports
+      var msoEls = '';
+      var msoPageRefs = '';
       if (forWord) {
-        // Word path: inject headers/footers at section boundaries (existing behavior)
+        // Word path: use MSO header/footer elements with Word field codes.
+        // These create real Word headers/footers that repeat on every page,
+        // with automatic PAGE/NUMPAGES fields so numbering is always correct
+        // regardless of how many pages Word reflows the content to.
         if (hasHeader || hasFooter) {
-          html = html.replace('</style>', hfCss + '\n</style>');
-          var pageMatches = html.match(/<section class="page">/g) || [];
-          var totalPages = pageMatches.length;
-
-          var pgIdx = 0;
-          html = html.replace(/<section class="page">/g, function() {
-            pgIdx++;
-            var isFirst = pgIdx === 1;
-            var hdrHtml = '';
-            if (hasHeader && (!isFirst || ps.showHeaderOnFirstPage)) {
-              hdrHtml = '<div class="page-hf page-hdr"><span>' + resolveExpVar(ps.headerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.headerRight, pgIdx, totalPages) + '</span></div>';
+          function resolveExpVarForWord(text) {
+            if (!text) return '';
+            var r = text.replace(/\{\{CASE_NUMBER\}\}/g, esc(caseNo));
+            var pageField = '<span style="mso-field-code:\'PAGE \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
+            var npagesField = '<span style="mso-field-code:\'NUMPAGES \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
+            r = r.replace(/\{\{PAGE\}\}/g, 'Page ' + pageField + ' of ' + npagesField);
+            r = r.replace(/\{\{PAGE_NUM\}\}/g, pageField);
+            r = r.replace(/\{\{TOTAL_PAGES\}\}/g, npagesField);
+            return r;
+          }
+          var cellStyle = 'border:none;font-size:9pt;font-family:\'Times New Roman\',serif;padding:0';
+          function msoHFTable(left, center, right) {
+            return '<table width="100%" style="border:none;border-collapse:collapse"><tr>' +
+              '<td style="' + cellStyle + '">' + resolveExpVarForWord(left) + '</td>' +
+              '<td style="' + cellStyle + ';text-align:center">' + resolveExpVarForWord(center) + '</td>' +
+              '<td style="' + cellStyle + ';text-align:right">' + resolveExpVarForWord(right) + '</td>' +
+              '</tr></table>';
+          }
+          if (hasFooter) {
+            msoEls += '<div style="mso-element:footer" id="ft1">' + msoHFTable(ps.footerLeft, ps.footerCenter, ps.footerRight) + '</div>';
+            msoPageRefs += ' mso-footer: ft1;';
+            if (!ps.showFooterOnFirstPage) {
+              msoEls += '<div style="mso-element:footer-first" id="ftf1"></div>';
+              msoPageRefs += ' mso-first-page-footer: ftf1; mso-title-page: yes;';
             }
-            return '<section class="page">' + hdrHtml;
-          });
-
-          pgIdx = 0;
-          html = html.replace(/<\/section>/g, function() {
-            pgIdx++;
-            var isFirst = pgIdx === 1;
-            var ftrHtml = '';
-            if (hasFooter && (!isFirst || ps.showFooterOnFirstPage)) {
-              ftrHtml = '<div class="page-hf page-ftr"><span>' + resolveExpVar(ps.footerLeft, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerCenter, pgIdx, totalPages) + '</span><span>' + resolveExpVar(ps.footerRight, pgIdx, totalPages) + '</span></div>';
+          }
+          if (hasHeader) {
+            msoEls += '<div style="mso-element:header" id="hd1">' + msoHFTable(ps.headerLeft, ps.headerCenter, ps.headerRight) + '</div>';
+            msoPageRefs += ' mso-header: hd1;';
+            if (!ps.showHeaderOnFirstPage) {
+              msoEls += '<div style="mso-element:header-first" id="hdf1"></div>';
+              msoPageRefs += ' mso-first-page-header: hdf1; mso-title-page: yes;';
             }
-            return ftrHtml + '</section>';
-          });
+          }
         }
       } else {
         // PDF path: embed raw page settings for DOM-based pagination in the print window
@@ -2340,12 +2355,12 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
           '</xml><![endif]-->';
         html = html.replace('<head>', '<head>\n' + wordXml);
         // Add Word-specific page setup CSS
-        var msoCss = '\n  @page WordSection1 { size: 8.5in 11in; margin: 1in; mso-header-margin: 0.5in; mso-footer-margin: 0.5in; mso-paper-source: 0; }' +
+        var msoCss = '\n  @page WordSection1 { size: 8.5in 11in; margin: 1in; mso-header-margin: 0.5in; mso-footer-margin: 0.5in; mso-paper-source: 0;' + msoPageRefs + ' }' +
           '\n  div.WordSection1 { page: WordSection1; }';
         html = html.replace('</style>', msoCss + '\n</style>');
-        // Wrap body content in a WordSection1 div
+        // Wrap body content in a WordSection1 div; prepend MSO element defs before closing
         html = html.replace('<body>', '<body><div class="WordSection1">');
-        html = html.replace('</body>', '</div></body>');
+        html = html.replace('</body>', '</div>' + msoEls + '</body>');
       }
       return html;
     });
