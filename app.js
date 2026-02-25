@@ -1025,6 +1025,104 @@ var matrix = {
     });
   },
 
+  // Request a password reset email from Synapse (unauthenticated — used on login page)
+  requestPasswordResetEmail: function(baseUrl, email) {
+    var clientSecret = 'amino_' + uid() + '_' + Date.now();
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+    return fetch(baseUrl + '/_matrix/client/v3/account/password/email/requestToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: email,
+        client_secret: clientSecret,
+        send_attempt: 1,
+      }),
+      signal: controller.signal,
+    })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.text().then(function(text) {
+          clearTimeout(timeoutId);
+          try {
+            var err = JSON.parse(text);
+            if (!err.status) err.status = r.status;
+            throw err;
+          } catch(e) {
+            if (e instanceof SyntaxError) {
+              throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+            }
+            throw e;
+          }
+        });
+      }
+      return r.json();
+    })
+    .then(function(data) {
+      clearTimeout(timeoutId);
+      data._clientSecret = clientSecret;
+      return data;
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      if (e && e.name === 'AbortError') {
+        throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+      }
+      throw e;
+    });
+  },
+
+  // Submit a new password after email verification (unauthenticated)
+  submitPasswordReset: function(baseUrl, newPassword, clientSecret, sid) {
+    var controller = new AbortController();
+    var timeoutId = setTimeout(function() { controller.abort(); }, 15000);
+    return fetch(baseUrl + '/_matrix/client/v3/account/password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        new_password: newPassword,
+        logout_devices: false,
+        auth: {
+          type: 'm.login.email.identity',
+          threepid_creds: {
+            sid: sid,
+            client_secret: clientSecret,
+          },
+        },
+      }),
+      signal: controller.signal,
+    })
+    .then(function(r) {
+      if (!r.ok) {
+        return r.text().then(function(text) {
+          clearTimeout(timeoutId);
+          try {
+            var err = JSON.parse(text);
+            if (!err.status) err.status = r.status;
+            throw err;
+          } catch(e) {
+            if (e instanceof SyntaxError) {
+              throw { errcode: 'M_UNKNOWN', error: 'Server returned ' + r.status + ' ' + r.statusText, status: r.status };
+            }
+            throw e;
+          }
+        });
+      }
+      clearTimeout(timeoutId);
+      // May return empty body (200 OK with {})
+      return r.text().then(function(text) {
+        try { return JSON.parse(text); } catch(e) { return {}; }
+      });
+    })
+    .catch(function(e) {
+      clearTimeout(timeoutId);
+      if (e && e.name === 'AbortError') {
+        throw { errcode: 'M_NETWORK', error: 'Request timed out', status: 0 };
+      }
+      throw e;
+    });
+  },
+
   saveSession: function() {
     try {
       sessionStorage.setItem('amino_matrix_session', JSON.stringify({
@@ -1269,6 +1367,13 @@ var S = {
   passwordChangeBusy: false,
   // Forced password change on first login (admin-created users)
   mustChangePassword: false,
+  // Forgot password flow (login page, unauthenticated)
+  _showForgotPassword: false,
+  _forgotPasswordStep: 'email', // 'email' | 'check_email' | 'new_password'
+  _forgotPasswordError: '',
+  _forgotPasswordBusy: false,
+  _forgotPasswordClientSecret: '',
+  _forgotPasswordSid: '',
   // Deployment management (admin only)
   adminTab: 'users',
   deployInfo: typeof DEPLOY_INFO !== 'undefined' ? DEPLOY_INFO : null,
@@ -1387,6 +1492,7 @@ function mergeServerUsers(serverUsers) {
         mxid: k,
         displayName: e.content.displayName || k.replace(/@(.+):.*/, '$1'),
         role: e.content.role || 'attorney',
+        email: e.content.email || '',
         active: e.content.active !== false,
         managed: true,
         createdBy: e.sender,
@@ -2835,6 +2941,52 @@ function renderLogin() {
       '<div class="login-server">Allowed domains: ' + esc(domainsStr) + '</div>' +
       '</form></div>';
   }
+  // Forgot password flow
+  if (S._showForgotPassword) {
+    var h = '<div class="login-wrap"><div class="login-box">';
+    h += '<div class="login-brand">Habeas</div>';
+    h += '<div class="login-sub">Amino Immigration</div>';
+    h += '<div class="login-sub" style="margin:-12px 0 16px;font-size:11px;color:var(--accent)">Reset Password</div>';
+
+    if (S._forgotPasswordStep === 'email') {
+      h += '<form id="forgot-pw-form">';
+      h += '<p style="color:var(--fg2);font-size:13px;margin-bottom:16px">Enter the email address associated with your account. We\'ll send you a link to reset your password.</p>';
+      if (S._forgotPasswordError) {
+        h += '<div class="login-error" style="display:block;margin-bottom:12px">' + esc(S._forgotPasswordError) + '</div>';
+      }
+      h += '<div class="frow"><label class="flbl">Email</label>';
+      h += '<input class="finp" type="email" id="forgot-email" placeholder="you@example.com" autofocus required></div>';
+      h += '<button type="submit" class="hbtn accent login-btn" id="forgot-send-btn"' + (S._forgotPasswordBusy ? ' disabled' : '') + '>' + (S._forgotPasswordBusy ? 'Sending...' : 'Send Reset Email') + '</button>';
+      h += '</form>';
+    } else if (S._forgotPasswordStep === 'check_email') {
+      h += '<div style="text-align:center;padding:16px 0">';
+      h += '<div style="font-size:32px;margin-bottom:12px">&#9993;</div>';
+      h += '<p style="color:var(--fg2);font-size:13px;margin-bottom:20px">We\'ve sent a verification email. Please check your inbox and <strong>click the link</strong> in the email, then come back here and click Continue.</p>';
+      if (S._forgotPasswordError) {
+        h += '<div class="login-error" style="display:block;margin-bottom:12px">' + esc(S._forgotPasswordError) + '</div>';
+      }
+      h += '<button class="hbtn accent login-btn" data-action="forgot-password-continue"' + (S._forgotPasswordBusy ? ' disabled' : '') + '>I\'ve clicked the link — Continue</button>';
+      h += '</div>';
+    } else if (S._forgotPasswordStep === 'new_password') {
+      h += '<form id="forgot-pw-newpass-form">';
+      h += '<p style="color:var(--fg2);font-size:13px;margin-bottom:16px">Choose a new password for your account.</p>';
+      if (S._forgotPasswordError) {
+        h += '<div class="login-error" style="display:block;margin-bottom:12px">' + esc(S._forgotPasswordError) + '</div>';
+      }
+      h += '<div class="frow"><label class="flbl">New Password</label>';
+      h += '<input class="finp" type="password" id="forgot-new-pass" minlength="8" autocomplete="new-password" placeholder="At least 8 characters" required></div>';
+      h += '<div class="frow"><label class="flbl">Confirm Password</label>';
+      h += '<input class="finp" type="password" id="forgot-confirm-pass" minlength="8" autocomplete="new-password" placeholder="Confirm new password" required></div>';
+      h += '<button type="submit" class="hbtn accent login-btn" id="forgot-submit-btn"' + (S._forgotPasswordBusy ? ' disabled' : '') + '>' + (S._forgotPasswordBusy ? 'Setting Password...' : 'Set New Password') + '</button>';
+      h += '</form>';
+    }
+
+    h += '<div class="login-toggle"><a href="#" data-action="forgot-password-back">Back to Sign In</a></div>';
+    h += '<div class="login-server">Server: ' + CONFIG.MATRIX_SERVER_URL.replace('https://', '') + '</div>';
+    h += '</div></div>';
+    return h;
+  }
+
   return '<div class="login-wrap"><form class="login-box" id="login-form">' +
     '<div class="login-brand">Habeas</div>' +
     '<div class="login-sub">Amino Immigration</div>' +
@@ -2844,7 +2996,8 @@ function renderLogin() {
     '<div class="frow"><label class="flbl">Password</label>' +
     '<input class="finp" type="password" id="login-pass" placeholder="password"></div>' +
     '<button type="submit" class="hbtn accent login-btn" id="login-btn">Sign In</button>' +
-    '<div class="login-toggle">Need an account? <a href="#" data-action="show-register">Register</a></div>' +
+    '<div class="login-toggle">Need an account? <a href="#" data-action="show-register">Register</a>' +
+    ' | <a href="#" data-action="show-forgot-password">Forgot password?</a></div>' +
     '<div class="login-server">Server: ' + CONFIG.MATRIX_SERVER_URL.replace('https://', '') + '</div>' +
     '</form></div>';
 }
@@ -3981,6 +4134,9 @@ function renderAdmin() {
   h += '<div class="dir-head"><h3>Users</h3><div>';
   h += '<button class="hbtn accent" data-action="admin-show-create">+ Create User</button>';
   h += '<button class="hbtn" data-action="admin-refresh-users" style="margin-left:8px">Refresh</button>';
+  if (S.isSynapseAdmin) {
+    h += '<button class="hbtn" data-action="admin-sync-threepids" style="margin-left:8px" title="Register user emails with Synapse to enable email-based password reset">Sync Emails to Server</button>';
+  }
   h += '</div></div>';
   h += '<p class="dir-desc">Manage user accounts. Creating a user registers them on the Matrix server, sets their role, and invites them to the required rooms.</p>';
 
@@ -4013,6 +4169,7 @@ function renderAdmin() {
     h += '<div class="frow"><label class="flbl">Password</label>';
     h += '<div style="display:flex;gap:8px;align-items:flex-start">';
     h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Temporary password" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+    h += '<button class="hbtn sm" type="button" data-action="admin-toggle-password-visible">' + (S.adminDraft.passwordVisible ? 'Hide' : 'Show') + '</button>';
     h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
     h += '</div>';
     if (S.adminDraft.passwordVisible && S.adminDraft.password) {
@@ -4069,6 +4226,7 @@ function renderAdmin() {
       h += '<div class="frow"><label class="flbl">Reset Password</label>';
       h += '<div style="display:flex;gap:8px;align-items:flex-start">';
       h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Leave blank to keep current" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+      h += '<button class="hbtn sm" type="button" data-action="admin-toggle-password-visible">' + (S.adminDraft.passwordVisible ? 'Hide' : 'Show') + '</button>';
       h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
       h += '</div>';
       if (S.adminDraft.passwordVisible && S.adminDraft.password) {
@@ -4100,9 +4258,12 @@ function renderAdmin() {
         h += '<div class="dir-card-detail" style="color:#b91c1c;font-weight:600">DEACTIVATED</div>';
       }
       h += htmlProvenanceBadge(u);
-      // Send/Resend credentials button
+      // Password reset and credential buttons
       if (u.active && u.email) {
-        h += '<div style="margin-top:6px"><button class="hbtn sm" data-action="admin-resend-credentials" data-mxid="' + esc(u.mxid) + '">Resend Credentials</button></div>';
+        h += '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap">';
+        h += '<button class="hbtn sm accent" data-action="admin-send-reset-email" data-mxid="' + esc(u.mxid) + '">Send Password Reset Email</button>';
+        h += '<button class="hbtn sm" data-action="admin-resend-credentials" data-mxid="' + esc(u.mxid) + '">Email Credentials</button>';
+        h += '</div>';
       }
     }
     h += '</div>';
@@ -4132,6 +4293,7 @@ function renderAdmin() {
         h += '<div class="frow"><label class="flbl">Set Password</label>';
         h += '<div style="display:flex;gap:8px;align-items:flex-start">';
         h += '<input class="finp" type="' + (S.adminDraft.passwordVisible ? 'text' : 'password') + '" value="' + esc(S.adminDraft.password || '') + '" placeholder="Optional \u2014 generate or type" data-field-key="password" data-change="admin-draft-field" style="flex:1">';
+        h += '<button class="hbtn sm" type="button" data-action="admin-toggle-password-visible">' + (S.adminDraft.passwordVisible ? 'Hide' : 'Show') + '</button>';
         h += '<button class="hbtn sm" type="button" data-action="admin-generate-password">Generate</button>';
         h += '</div>';
         if (S.adminDraft.passwordVisible && S.adminDraft.password) {
@@ -4697,6 +4859,21 @@ function render() {
         handleRegister();
       });
     }
+    // Forgot password forms
+    var forgotForm = document.getElementById('forgot-pw-form');
+    if (forgotForm) {
+      forgotForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        handleForgotPasswordRequest();
+      });
+    }
+    var forgotNewPassForm = document.getElementById('forgot-pw-newpass-form');
+    if (forgotNewPassForm) {
+      forgotNewPassForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        handleForgotPasswordSubmit();
+      });
+    }
     return;
   }
 
@@ -5099,8 +5276,11 @@ document.addEventListener('click', function(e) {
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
   if (action === 'show-password-change') { setState({ showPasswordChange: true, passwordChangeError: '', passwordChangeDraft: { currentPassword: '', newPassword: '', confirmPassword: '' } }); return; }
   if (action === 'pw-modal-close') { setState({ showPasswordChange: false, passwordChangeError: '', passwordChangeBusy: false }); return; }
-  if (action === 'show-register') { e.preventDefault(); S._showRegister = true; render(); return; }
-  if (action === 'show-login') { e.preventDefault(); S._showRegister = false; render(); return; }
+  if (action === 'show-register') { e.preventDefault(); S._showRegister = true; S._showForgotPassword = false; render(); return; }
+  if (action === 'show-login') { e.preventDefault(); S._showRegister = false; S._showForgotPassword = false; render(); return; }
+  if (action === 'show-forgot-password') { e.preventDefault(); setState({ _showForgotPassword: true, _showRegister: false, _forgotPasswordStep: 'email', _forgotPasswordError: '', _forgotPasswordBusy: false, _forgotPasswordClientSecret: '', _forgotPasswordSid: '' }); return; }
+  if (action === 'forgot-password-back') { e.preventDefault(); setState({ _showForgotPassword: false, _forgotPasswordStep: 'email', _forgotPasswordError: '', _forgotPasswordBusy: false, _forgotPasswordClientSecret: '', _forgotPasswordSid: '' }); return; }
+  if (action === 'forgot-password-continue') { handleForgotPasswordContinue(); return; }
 
   // Board
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
@@ -5674,6 +5854,71 @@ document.addEventListener('click', function(e) {
     setState({});
     return;
   }
+  if (action === 'admin-toggle-password-visible') {
+    if (S.role !== 'admin') return;
+    S.adminDraft.passwordVisible = !S.adminDraft.passwordVisible;
+    setState({});
+    return;
+  }
+  if (action === 'admin-send-reset-email') {
+    if (S.role !== 'admin') return;
+    var mxid = btn.dataset.mxid;
+    var user = S.users[mxid];
+    if (!user || !user.email) {
+      toast('No email address on file for this user. Edit the user to add one.', 'error');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Sending...';
+    matrix.requestPasswordResetEmail(CONFIG.MATRIX_SERVER_URL, user.email)
+      .then(function() {
+        toast('Password reset email sent to ' + user.email + '. The user can click the link and set a new password.', 'success');
+      })
+      .catch(function(err) {
+        var msg = (err && err.error) || 'Failed to send password reset email.';
+        if (err && err.errcode === 'M_THREEPID_NOT_FOUND') {
+          msg = 'Email not registered with the server. Click "Sync Emails to Server" first, then try again.';
+        } else if (err && err.errcode === 'M_SERVER_NOT_TRUSTED') {
+          msg = 'Email sending is not configured on the server.';
+        }
+        toast(msg, 'error');
+      })
+      .then(function() { render(); });
+    return;
+  }
+  if (action === 'admin-sync-threepids') {
+    if (!S.isSynapseAdmin) { toast('Requires server admin privileges.', 'error'); return; }
+    var usersWithEmail = Object.values(S.users).filter(function(u) {
+      return u.active && u.email && u.managed !== false;
+    });
+    if (usersWithEmail.length === 0) {
+      toast('No users with email addresses to sync.', 'info');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Syncing...';
+    var successes = 0;
+    var failures = 0;
+    var chain = Promise.resolve();
+    usersWithEmail.forEach(function(u) {
+      chain = chain.then(function() {
+        return matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(u.mxid), {
+          threepids: [{ medium: 'email', address: u.email }],
+        }).then(function() { successes++; })
+          .catch(function(e) {
+            failures++;
+            console.warn('3PID sync failed for', u.mxid, e);
+          });
+      });
+    });
+    chain.then(function() {
+      var msg = 'Synced ' + successes + ' email' + (successes !== 1 ? 's' : '') + ' to server';
+      if (failures) msg += ' (' + failures + ' failed)';
+      toast(msg, successes > 0 ? 'success' : 'error');
+      render();
+    });
+    return;
+  }
   if (action === 'admin-edit-user') {
     if (S.role !== 'admin') return;
     var mxid = btn.dataset.mxid;
@@ -6207,6 +6452,92 @@ function handleForcedPasswordChange() {
     });
 }
 
+// ── Forgot Password Handlers ─────────────────────────────────────
+function handleForgotPasswordRequest() {
+  var emailEl = document.getElementById('forgot-email');
+  if (!emailEl) return;
+  var email = emailEl.value.trim();
+  if (!email) {
+    setState({ _forgotPasswordError: 'Please enter your email address.' });
+    return;
+  }
+
+  setState({ _forgotPasswordBusy: true, _forgotPasswordError: '' });
+
+  matrix.requestPasswordResetEmail(CONFIG.MATRIX_SERVER_URL, email)
+    .then(function(data) {
+      setState({
+        _forgotPasswordBusy: false,
+        _forgotPasswordStep: 'check_email',
+        _forgotPasswordClientSecret: data._clientSecret,
+        _forgotPasswordSid: data.sid,
+        _forgotPasswordError: '',
+      });
+    })
+    .catch(function(err) {
+      var msg = 'Failed to send reset email.';
+      if (err && err.errcode === 'M_THREEPID_NOT_FOUND') {
+        msg = 'No account found with that email address. Contact your administrator if you need help.';
+      } else if (err && err.errcode === 'M_SERVER_NOT_TRUSTED') {
+        msg = 'Email sending is not configured on the server. Contact your administrator.';
+      } else if (err && err.error) {
+        msg = err.error;
+      }
+      setState({ _forgotPasswordBusy: false, _forgotPasswordError: msg });
+    });
+}
+
+function handleForgotPasswordContinue() {
+  setState({ _forgotPasswordStep: 'new_password', _forgotPasswordError: '' });
+}
+
+function handleForgotPasswordSubmit() {
+  var newEl = document.getElementById('forgot-new-pass');
+  var confirmEl = document.getElementById('forgot-confirm-pass');
+  if (!newEl || !confirmEl) return;
+
+  var newPw = newEl.value;
+  var confirmPw = confirmEl.value;
+
+  if (!newPw || newPw.length < 8) {
+    setState({ _forgotPasswordError: 'Password must be at least 8 characters.' });
+    return;
+  }
+  if (newPw !== confirmPw) {
+    setState({ _forgotPasswordError: 'Passwords do not match.' });
+    return;
+  }
+
+  setState({ _forgotPasswordBusy: true, _forgotPasswordError: '' });
+
+  matrix.submitPasswordReset(
+    CONFIG.MATRIX_SERVER_URL,
+    newPw,
+    S._forgotPasswordClientSecret,
+    S._forgotPasswordSid
+  )
+    .then(function() {
+      setState({
+        _showForgotPassword: false,
+        _forgotPasswordStep: 'email',
+        _forgotPasswordBusy: false,
+        _forgotPasswordError: '',
+        _forgotPasswordClientSecret: '',
+        _forgotPasswordSid: '',
+      });
+      toast('Password reset successfully. You can now sign in with your new password.', 'success');
+    })
+    .catch(function(err) {
+      var msg = 'Failed to reset password.';
+      if (err && (err.errcode === 'M_UNAUTHORIZED' || err.errcode === 'M_FORBIDDEN')) {
+        msg = 'Email not yet verified. Please click the link in the email first, then try again.';
+      } else if (err && err.error) {
+        msg = err.error;
+      }
+      setState({ _forgotPasswordBusy: false, _forgotPasswordError: msg });
+    });
+}
+
 // Compose and open a mailto: link to send login credentials to a user
 function sendCredentialEmail(email, displayName, username, password) {
   var loginUrl = window.location.origin + window.location.pathname;
@@ -6271,12 +6602,16 @@ function handleAdminCreateUser() {
   }
 
   // Step 1: Create account via Synapse admin API
-  matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+  var createBody = {
     password: d.password,
     displayname: displayName,
     admin: false,
     deactivated: false,
-  })
+  };
+  if (email) {
+    createBody.threepids = [{ medium: 'email', address: email }];
+  }
+  matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), createBody)
   .then(function() {
     // Step 2: Store role in !org room as EVT_USER state event
     // If this fails, try to auto-promote via make_room_admin and retry
@@ -6370,6 +6705,11 @@ function handleAdminSaveUser() {
 
   var resettingPassword = !!(d.password && d.password.trim());
 
+  // Confirm password reset before proceeding
+  if (resettingPassword && !confirm('This will reset the password for ' + displayName + ' and require them to change it on next login. Continue?')) {
+    return;
+  }
+
   // Helper: send the EVT_USER state event
   function setUserRole() {
     var content = {
@@ -6421,13 +6761,24 @@ function handleAdminSaveUser() {
   if (d.password && d.password.trim()) {
     passwordChain = matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
       password: d.password,
+      logout_devices: false,
     }).then(function() {
       passwordResetDone = true;
     });
   }
 
-  // Wait for both operations to settle
-  Promise.all([roleChain, passwordChain.catch(function(e) { return e; })])
+  // Sync email as 3PID with Synapse (enables email-based password reset)
+  var threepidChain = Promise.resolve();
+  if (email) {
+    threepidChain = matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+      threepids: [{ medium: 'email', address: email }],
+    }).catch(function(e) {
+      console.warn('3PID sync failed for', mxid, e);
+    });
+  }
+
+  // Wait for all operations to settle
+  Promise.all([roleChain, passwordChain.catch(function(e) { return e; }), threepidChain])
     .then(function(results) {
       var pwErr = (d.password && d.password.trim() && !passwordResetDone) ? results[1] : null;
 
@@ -6582,12 +6933,23 @@ function handleAdminAdoptUser(mxid) {
   if (d.password && d.password.trim()) {
     passwordChain = matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
       password: d.password,
+      logout_devices: false,
     }).then(function() {
       passwordResetDone = true;
     });
   }
 
-  Promise.all([roleChain, passwordChain.catch(function(e) { return e; })])
+  // Sync email as 3PID with Synapse (enables email-based password reset)
+  var threepidChain = Promise.resolve();
+  if (email) {
+    threepidChain = matrix.adminApi('PUT', '/v2/users/' + encodeURIComponent(mxid), {
+      threepids: [{ medium: 'email', address: email }],
+    }).catch(function(e) {
+      console.warn('3PID sync failed for', mxid, e);
+    });
+  }
+
+  Promise.all([roleChain, passwordChain.catch(function(e) { return e; }), threepidChain])
     .then(function(results) {
       var pwErr = (d.password && d.password.trim() && !passwordResetDone) ? results[1] : null;
 
