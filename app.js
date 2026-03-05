@@ -2480,7 +2480,7 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
         }
       } else {
         // PDF path: embed raw page settings for DOM-based pagination in the print window
-        var printCss = hfCss + '\n@media print{.page{display:flex;flex-direction:column;min-height:9in}}';
+        var printCss = hfCss + '\n@page{size:Letter;margin:0}\n@media print{.page{width:8.5in;height:11in;padding:1in;margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}}';
         html = html.replace('</style>', printCss + '\n</style>');
         var psData = JSON.stringify({
           headerLeft: ps.headerLeft || '',
