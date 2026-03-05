@@ -958,6 +958,34 @@ var matrix = {
     return fetchPage(0);
   },
 
+  joinRoom: function(roomId) {
+    var self = this;
+    return this._api('POST', '/join/' + encodeURIComponent(roomId), {})
+      .then(function(data) { return data.room_id || roomId; });
+  },
+
+  fetchRoomState: function(roomId) {
+    var self = this;
+    return this._api('GET', '/rooms/' + encodeURIComponent(roomId) + '/state')
+      .then(function(events) {
+        if (!self.rooms[roomId]) {
+          self.rooms[roomId] = { stateEvents: {} };
+        }
+        var stateEvents = self.rooms[roomId].stateEvents;
+        events.forEach(function(evt) {
+          if (evt.type && evt.state_key !== undefined) {
+            if (!stateEvents[evt.type]) stateEvents[evt.type] = {};
+            stateEvents[evt.type][evt.state_key] = {
+              content: evt.content,
+              sender: evt.sender,
+              origin_server_ts: evt.origin_server_ts,
+            };
+          }
+        });
+        return roomId;
+      });
+  },
+
   inviteUser: function(roomId, userId) {
     return this._api('POST', '/rooms/' + encodeURIComponent(roomId) + '/invite', { user_id: userId });
   },
@@ -1436,13 +1464,31 @@ function discoverRoomByAlias(alias) {
 
 // ── Room auto-creation ───────────────────────────────────────────
 function ensureRoom(alias, name) {
-  // 1. Check synced data
+  // 1. Check synced data — user is already a member
   var id = discoverRoomByAlias(alias);
   if (id) return Promise.resolve(id);
+
   // 2. Try alias resolution API
   return matrix.resolveAlias(alias)
+    .then(function(roomId) {
+      // Alias resolved — but user may not be a member yet.
+      // If the room isn't in our sync data, try to join it and fetch its state.
+      if (matrix.rooms[roomId]) return roomId;
+      return matrix.joinRoom(roomId)
+        .then(function() {
+          return matrix.fetchRoomState(roomId);
+        })
+        .catch(function(joinErr) {
+          // Join failed (not invited, join_rules forbid it, etc.)
+          // Still return the roomId — state will be empty but at least
+          // the org room is "found". fetchRoomState may work if the user
+          // has peek access.
+          console.warn('Could not join room ' + alias + ':', joinErr);
+          return matrix.fetchRoomState(roomId).catch(function() { return roomId; });
+        });
+    })
     .catch(function() {
-      // 3. Room not found — create it
+      // 3. Alias not found — try to create the room
       var localAlias = alias.replace(/^#/, '').split(':')[0];
       return matrix.createRoom({
         name: name,
