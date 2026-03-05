@@ -558,7 +558,10 @@ var DEFAULT_PAGE_SETTINGS = {
   headerLeft: '', headerCenter: '', headerRight: '',
   footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '{{PAGE}}',
   showHeaderOnFirstPage: false,
-  showFooterOnFirstPage: true
+  showFooterOnFirstPage: true,
+  marginTop: 1, marginBottom: 1, marginLeft: 1, marginRight: 1,
+  pageNumberFormat: 'Page X of Y',
+  startingPageNumber: 1
 };
 
 function buildVarMap(c, p, a1, a2, nat) {
@@ -2205,6 +2208,8 @@ function buildDocHTML(blocks, vars, pageSettings) {
     if (!text) return '';
     return text
       .replace(/\{\{PAGE\}\}/g, '')  // Page numbers not available in single-flow HTML export
+      .replace(/\{\{PAGE_NUM_ONLY\}\}/g, '')
+      .replace(/\{\{PAGE_BARE\}\}/g, '')
       .replace(/\{\{PAGE_NUM\}\}/g, '')
       .replace(/\{\{TOTAL_PAGES\}\}/g, '')
       .replace(/\{\{CASE_NUMBER\}\}/g, caseNo);
@@ -2237,7 +2242,7 @@ function buildDocHTML(blocks, vars, pageSettings) {
     '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
     '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
     '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
-    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
+    '<style>@page WordSection1{size:8.5in 11in;margin:' + (ps.marginTop != null ? ps.marginTop : 1) + 'in ' + (ps.marginRight != null ? ps.marginRight : 1) + 'in ' + (ps.marginBottom != null ? ps.marginBottom : 1) + 'in ' + (ps.marginLeft != null ? ps.marginLeft : 1) + 'in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
 }
 
 function doExportDoc(blocks, vars, name, pageSettings) {
@@ -2404,12 +2409,17 @@ function exportAttorneyProfilesCSV() {
 function buildExportFromTemplate(vars, forWord, pageSettings) {
   var ps = pageSettings || DEFAULT_PAGE_SETTINGS;
   var caseNo = (vars.CASE_NUMBER && vars.CASE_NUMBER.trim()) ? 'C/A No. ' + vars.CASE_NUMBER : '';
+  var startOff = (ps.startingPageNumber != null ? ps.startingPageNumber : 1) - 1;
   function resolveExpVar(text, pgNum, pgTotal) {
     if (!text) return '';
+    var adjPg = pgNum + startOff;
+    var adjTotal = pgTotal + startOff;
     return text
-      .replace(/\{\{PAGE\}\}/g, 'Page ' + pgNum + ' of ' + pgTotal)
-      .replace(/\{\{PAGE_NUM\}\}/g, String(pgNum))
-      .replace(/\{\{TOTAL_PAGES\}\}/g, String(pgTotal))
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + adjPg + ' of ' + adjTotal)
+      .replace(/\{\{PAGE_NUM_ONLY\}\}/g, 'Page ' + adjPg)
+      .replace(/\{\{PAGE_BARE\}\}/g, adjPg + ' of ' + adjTotal)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(adjPg))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(adjTotal))
       .replace(/\{\{CASE_NUMBER\}\}/g, caseNo);
   }
   return fetch('template.html')
@@ -2449,6 +2459,8 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
             var pageField = '<span style="mso-field-code:\'PAGE \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
             var npagesField = '<span style="mso-field-code:\'NUMPAGES \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
             r = r.replace(/\{\{PAGE\}\}/g, 'Page ' + pageField + ' of ' + npagesField);
+            r = r.replace(/\{\{PAGE_NUM_ONLY\}\}/g, 'Page ' + pageField);
+            r = r.replace(/\{\{PAGE_BARE\}\}/g, pageField + ' of ' + npagesField);
             r = r.replace(/\{\{PAGE_NUM\}\}/g, pageField);
             r = r.replace(/\{\{TOTAL_PAGES\}\}/g, npagesField);
             return r;
@@ -2480,7 +2492,11 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
         }
       } else {
         // PDF path: embed raw page settings for DOM-based pagination in the print window
-        var printCss = hfCss + '\n@page{size:Letter;margin:0}\n@media print{.page{width:8.5in;height:11in;padding:1in;margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}}';
+        var mgT = (ps.marginTop != null ? ps.marginTop : 1) + 'in';
+        var mgB = (ps.marginBottom != null ? ps.marginBottom : 1) + 'in';
+        var mgL = (ps.marginLeft != null ? ps.marginLeft : 1) + 'in';
+        var mgR = (ps.marginRight != null ? ps.marginRight : 1) + 'in';
+        var printCss = hfCss + '\n@page{size:Letter;margin:0}\n@media print{.page{width:8.5in;height:11in;padding:' + mgT + ' ' + mgR + ' ' + mgB + ' ' + mgL + ';margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}}';
         html = html.replace('</style>', printCss + '\n</style>');
         var psData = JSON.stringify({
           headerLeft: ps.headerLeft || '',
@@ -2491,7 +2507,12 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
           footerRight: ps.footerRight || '',
           showHeaderOnFirstPage: !!ps.showHeaderOnFirstPage,
           showFooterOnFirstPage: !!ps.showFooterOnFirstPage,
-          caseNo: caseNo
+          caseNo: caseNo,
+          marginTop: ps.marginTop != null ? ps.marginTop : 1,
+          marginBottom: ps.marginBottom != null ? ps.marginBottom : 1,
+          marginLeft: ps.marginLeft != null ? ps.marginLeft : 1,
+          marginRight: ps.marginRight != null ? ps.marginRight : 1,
+          startingPageNumber: ps.startingPageNumber != null ? ps.startingPageNumber : 1
         });
         html = html.replace('<body>', '<body data-page-settings="' + psData.replace(/"/g, '&quot;') + '">');
       }
@@ -2512,7 +2533,11 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
           '</xml><![endif]-->';
         html = html.replace('<head>', '<head>\n' + wordXml);
         // Add Word-specific page setup CSS
-        var msoCss = '\n  @page WordSection1 { size: 8.5in 11in; margin: 1in; mso-header-margin: 0.5in; mso-footer-margin: 0.5in; mso-paper-source: 0;' + msoPageRefs + ' }' +
+        var msoMgT = (ps.marginTop != null ? ps.marginTop : 1) + 'in';
+        var msoMgB = (ps.marginBottom != null ? ps.marginBottom : 1) + 'in';
+        var msoMgL = (ps.marginLeft != null ? ps.marginLeft : 1) + 'in';
+        var msoMgR = (ps.marginRight != null ? ps.marginRight : 1) + 'in';
+        var msoCss = '\n  @page WordSection1 { size: 8.5in 11in; margin: ' + msoMgT + ' ' + msoMgR + ' ' + msoMgB + ' ' + msoMgL + '; mso-header-margin: 0.5in; mso-footer-margin: 0.5in; mso-paper-source: 0;' + msoPageRefs + ' }' +
           '\n  div.WordSection1 { page: WordSection1; }';
         html = html.replace('</style>', msoCss + '\n</style>');
         // Wrap body content in a WordSection1 div; prepend MSO element defs before closing
@@ -2556,9 +2581,11 @@ function paginatePrintWindow(w) {
     });
   });
 
-  // Usable height per page: 11in - 2*1in @page margin = 9in = 864px at 96 DPI
+  // Usable height per page based on custom margins (default 1in each)
+  var mgT = ps.marginTop != null ? ps.marginTop : 1;
+  var mgB = ps.marginBottom != null ? ps.marginBottom : 1;
   // Reserve space for footer (~28px)
-  var USABLE_H = 9 * 96 - 28;
+  var USABLE_H = (11 - mgT - mgB) * 96 - 28;
 
   // Split into page-sized groups
   var pageGroups = [];
@@ -2589,12 +2616,18 @@ function paginatePrintWindow(w) {
 
   var totalPages = pageGroups.length + 1; // +1 for caption page
 
+  var startOffset = (ps.startingPageNumber != null ? ps.startingPageNumber : 1) - 1;
+
   function resolvePageVar(text, pageNum) {
     if (!text) return '';
+    var adjPage = pageNum + startOffset;
+    var adjTotal = totalPages + startOffset;
     return text
-      .replace(/\{\{PAGE\}\}/g, 'Page ' + pageNum + ' of ' + totalPages)
-      .replace(/\{\{PAGE_NUM\}\}/g, String(pageNum))
-      .replace(/\{\{TOTAL_PAGES\}\}/g, String(totalPages))
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + adjPage + ' of ' + adjTotal)
+      .replace(/\{\{PAGE_NUM_ONLY\}\}/g, 'Page ' + adjPage)
+      .replace(/\{\{PAGE_BARE\}\}/g, adjPage + ' of ' + adjTotal)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(adjPage))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(adjTotal))
       .replace(/\{\{CASE_NUMBER\}\}/g, ps.caseNo || '');
   }
 
@@ -4700,6 +4733,36 @@ function renderEditor() {
     h += '</select></div></div>';
 
     h += '<p style="font-size:10px;color:#aaa;margin-top:8px">Variables: <code>{{CASE_NUMBER}}</code> for case no., <code>{{PAGE}}</code> for "Page X of Y", <code>{{PAGE_NUM}}</code> for number only.</p>';
+
+    h += '<div class="fg"><div class="fg-title">Margins (inches)</div>';
+    h += '<div class="frow"><label class="flbl">Top</label>';
+    h += '<input type="number" class="finp" step="0.25" min="0" max="3" value="' + (ps.marginTop != null ? ps.marginTop : 1) + '" data-field-key="marginTop" data-change="page-settings-margin"></div>';
+    h += '<div class="frow"><label class="flbl">Bottom</label>';
+    h += '<input type="number" class="finp" step="0.25" min="0" max="3" value="' + (ps.marginBottom != null ? ps.marginBottom : 1) + '" data-field-key="marginBottom" data-change="page-settings-margin"></div>';
+    h += '<div class="frow"><label class="flbl">Left</label>';
+    h += '<input type="number" class="finp" step="0.25" min="0" max="3" value="' + (ps.marginLeft != null ? ps.marginLeft : 1) + '" data-field-key="marginLeft" data-change="page-settings-margin"></div>';
+    h += '<div class="frow"><label class="flbl">Right</label>';
+    h += '<input type="number" class="finp" step="0.25" min="0" max="3" value="' + (ps.marginRight != null ? ps.marginRight : 1) + '" data-field-key="marginRight" data-change="page-settings-margin"></div>';
+    h += '</div>';
+
+    h += '<div class="fg"><div class="fg-title">Page Numbers</div>';
+    h += '<div class="frow"><label class="flbl">Format</label>';
+    h += '<select class="finp" data-field-key="pageNumberFormat" data-change="page-settings">';
+    var pnfVal = ps.pageNumberFormat || 'Page X of Y';
+    var pnfOpts = [
+      { val: 'Page X of Y', label: 'Page 1 of 5' },
+      { val: 'Page X', label: 'Page 1' },
+      { val: 'X of Y', label: '1 of 5' },
+      { val: 'X', label: '1' },
+      { val: '', label: 'None' }
+    ];
+    pnfOpts.forEach(function(o) {
+      h += '<option value="' + esc(o.val) + '"' + (pnfVal === o.val ? ' selected' : '') + '>' + esc(o.label) + '</option>';
+    });
+    h += '</select></div>';
+    h += '<div class="frow"><label class="flbl">Start at</label>';
+    h += '<input type="number" class="finp" min="1" max="99" value="' + (ps.startingPageNumber != null ? ps.startingPageNumber : 1) + '" data-field-key="startingPageNumber" data-change="page-settings-number" style="width:80px"></div>';
+    h += '</div>';
   }
 
   if (S.editorTab === 'filing') {
@@ -4752,7 +4815,13 @@ function renderPaginatedDoc(blocks, vars, caseNo, pageSettings) {
   var capLBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
   var capRBlocks = blocks.filter(function(b) { return CAP_R.indexOf(b.id) >= 0; });
 
-  var PAGE_W = 816, PAGE_H = 1056, MG = 96;
+  var _ps = pageSettings || DEFAULT_PAGE_SETTINGS;
+  var PAGE_W = 816, PAGE_H = 1056;
+  var MG_T = Math.round((_ps.marginTop != null ? _ps.marginTop : 1) * 96);
+  var MG_B = Math.round((_ps.marginBottom != null ? _ps.marginBottom : 1) * 96);
+  var MG_L = Math.round((_ps.marginLeft != null ? _ps.marginLeft : 1) * 96);
+  var MG_R = Math.round((_ps.marginRight != null ? _ps.marginRight : 1) * 96);
+  var MG = MG_T; // backward compat for measurement box width
 
   function renderBlock(b, editable) {
     var cls = CLS_MAP[b.type] || 'blk-para';
@@ -4775,9 +4844,9 @@ function renderPaginatedDoc(blocks, vars, caseNo, pageSettings) {
 
   // Measurement pass (offscreen) + page shells
   // We do a simple approach: render all blocks then paginate after mount
-  var USABLE_H = PAGE_H - 2 * MG - 28;
+  var USABLE_H = PAGE_H - MG_T - MG_B - 28;
 
-  var h = '<div class="measure-box" id="measure-box" style="width:' + (PAGE_W - 2 * MG) + 'px" aria-hidden="true">';
+  var h = '<div class="measure-box" id="measure-box" style="width:' + (PAGE_W - MG_L - MG_R) + 'px" aria-hidden="true">';
   h += '<div data-mr="cap">' + renderCaption(false) + '</div>';
   h += '<div data-mr="body">';
   body.forEach(function(b) { h += renderBlock(b, false); });
@@ -4787,12 +4856,12 @@ function renderPaginatedDoc(blocks, vars, caseNo, pageSettings) {
   var ips = pageSettings || DEFAULT_PAGE_SETTINGS;
   h += '<div id="pages-container">';
   h += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
-  h += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
+  h += '<div class="page-margin" style="padding:' + MG_T + 'px ' + MG_R + 'px 0 ' + MG_L + 'px">';
   h += renderCaption(true);
   body.forEach(function(b) { h += renderBlock(b, true); });
   h += '</div>';
   if (ips.footerLeft || ips.footerCenter || ips.footerRight) {
-    h += '<div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0"><span>' + esc(caseNo) + '</span><span></span><span>Page 1 of 1</span></div>';
+    h += '<div class="page-foot" style="height:' + MG_B + 'px;padding:12px ' + MG_L + 'px 0"><span>' + esc(caseNo) + '</span><span></span><span>Page 1 of 1</span></div>';
   }
   h += '</div></div>';
   h += '</div>';
@@ -4816,7 +4885,14 @@ function initPagination() {
   var blocks = pet.blocks;
   var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
 
-  var PAGE_W = 816, PAGE_H = 1056, MG = 96, USABLE_H = PAGE_H - 2 * MG - 28;
+  var _ips = pet.pageSettings || DEFAULT_PAGE_SETTINGS;
+  var PAGE_W = 816, PAGE_H = 1056;
+  var MG_T = Math.round((_ips.marginTop != null ? _ips.marginTop : 1) * 96);
+  var MG_B = Math.round((_ips.marginBottom != null ? _ips.marginBottom : 1) * 96);
+  var MG_L = Math.round((_ips.marginLeft != null ? _ips.marginLeft : 1) * 96);
+  var MG_R = Math.round((_ips.marginRight != null ? _ips.marginRight : 1) * 96);
+  var MG = MG_T;
+  var USABLE_H = PAGE_H - MG_T - MG_B - 28;
 
   var capEl = mb.querySelector('[data-mr="cap"]');
   var capH = capEl ? capEl.offsetHeight : 0;
@@ -4885,13 +4961,18 @@ function initPagination() {
   }
 
   var ps = pet.pageSettings || DEFAULT_PAGE_SETTINGS;
+  var edStartOff = (ps.startingPageNumber != null ? ps.startingPageNumber : 1) - 1;
 
   function resolvePageVar(text, pageNum, totalPages, cn) {
     if (!text) return '';
+    var adjPg = pageNum + edStartOff;
+    var adjTotal = totalPages + edStartOff;
     return text
-      .replace(/\{\{PAGE\}\}/g, 'Page ' + pageNum + ' of ' + totalPages)
-      .replace(/\{\{PAGE_NUM\}\}/g, String(pageNum))
-      .replace(/\{\{TOTAL_PAGES\}\}/g, String(totalPages))
+      .replace(/\{\{PAGE\}\}/g, 'Page ' + adjPg + ' of ' + adjTotal)
+      .replace(/\{\{PAGE_NUM_ONLY\}\}/g, 'Page ' + adjPg)
+      .replace(/\{\{PAGE_BARE\}\}/g, adjPg + ' of ' + adjTotal)
+      .replace(/\{\{PAGE_NUM\}\}/g, String(adjPg))
+      .replace(/\{\{TOTAL_PAGES\}\}/g, String(adjTotal))
       .replace(/\{\{CASE_NUMBER\}\}/g, cn);
   }
 
@@ -4908,14 +4989,14 @@ function initPagination() {
     html += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
 
     if (showHeader) {
-      html += '<div class="page-head" style="height:' + MG + 'px;padding:0 ' + MG + 'px 12px">';
+      html += '<div class="page-head" style="height:' + MG_T + 'px;padding:0 ' + MG_L + 'px 12px">';
       html += '<span>' + esc(resolvePageVar(ps.headerLeft, pageNum, total, caseNo)) + '</span>';
       html += '<span>' + esc(resolvePageVar(ps.headerCenter, pageNum, total, caseNo)) + '</span>';
       html += '<span>' + esc(resolvePageVar(ps.headerRight, pageNum, total, caseNo)) + '</span>';
       html += '</div>';
     }
 
-    html += '<div class="page-margin" style="padding:' + MG + 'px;padding-bottom:0">';
+    html += '<div class="page-margin" style="padding:' + MG_T + 'px ' + MG_R + 'px 0 ' + MG_L + 'px">';
     if (pg.first) html += renderCaption(true);
     pg.ids.forEach(function(id) {
       var b = bm[id];
@@ -4924,7 +5005,7 @@ function initPagination() {
     html += '</div>';
 
     if (showFooter) {
-      html += '<div class="page-foot" style="height:' + MG + 'px;padding:12px ' + MG + 'px 0">';
+      html += '<div class="page-foot" style="height:' + MG_B + 'px;padding:12px ' + MG_L + 'px 0">';
       html += '<span>' + esc(resolvePageVar(ps.footerLeft, pageNum, total, caseNo)) + '</span>';
       html += '<span>' + esc(resolvePageVar(ps.footerCenter, pageNum, total, caseNo)) + '</span>';
       html += '<span>' + esc(resolvePageVar(ps.footerRight, pageNum, total, caseNo)) + '</span>';
@@ -5021,6 +5102,72 @@ function renderForcedPasswordChange() {
   return h;
 }
 
+// ── Print Customization Modal ────────────────────────────────────
+function renderPrintModal() {
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) return '';
+  var ps = pet.pageSettings || Object.assign({}, DEFAULT_PAGE_SETTINGS);
+  var mt = ps.marginTop != null ? ps.marginTop : 1;
+  var mb = ps.marginBottom != null ? ps.marginBottom : 1;
+  var ml = ps.marginLeft != null ? ps.marginLeft : 1;
+  var mr = ps.marginRight != null ? ps.marginRight : 1;
+  var pnf = ps.pageNumberFormat || 'Page X of Y';
+  var spn = ps.startingPageNumber != null ? ps.startingPageNumber : 1;
+  var exportType = S._printExportType || 'pdf';
+  var typeLabel = exportType === 'export-word' ? 'DOCX' : 'PDF';
+
+  var h = '<div class="print-modal-overlay" data-action="print-modal-close">';
+  h += '<div class="print-modal" onclick="event.stopPropagation()">';
+  h += '<div class="print-modal-title">Print Settings</div>';
+  h += '<div class="print-modal-subtitle">Customize layout before exporting as ' + typeLabel + '</div>';
+
+  // Margins section
+  h += '<div class="print-modal-section">';
+  h += '<div class="print-modal-section-title">Page Margins (inches)</div>';
+  h += '<div class="print-margin-grid">';
+  h += '<div class="print-margin-field"><label>Top</label><input type="number" class="finp print-margin-input" step="0.25" min="0" max="3" value="' + mt + '" data-margin-key="marginTop"></div>';
+  h += '<div class="print-margin-field"><label>Bottom</label><input type="number" class="finp print-margin-input" step="0.25" min="0" max="3" value="' + mb + '" data-margin-key="marginBottom"></div>';
+  h += '<div class="print-margin-field"><label>Left</label><input type="number" class="finp print-margin-input" step="0.25" min="0" max="3" value="' + ml + '" data-margin-key="marginLeft"></div>';
+  h += '<div class="print-margin-field"><label>Right</label><input type="number" class="finp print-margin-input" step="0.25" min="0" max="3" value="' + mr + '" data-margin-key="marginRight"></div>';
+  h += '</div>';
+
+  // Margin preview
+  h += '<div class="print-margin-preview">';
+  h += '<div class="print-margin-preview-page" id="margin-preview-page">';
+  h += '<div class="print-margin-preview-inner" id="margin-preview-inner" style="top:' + (mt / 11 * 100) + '%;bottom:' + (mb / 11 * 100) + '%;left:' + (ml / 8.5 * 100) + '%;right:' + (mr / 8.5 * 100) + '%"></div>';
+  h += '</div></div>';
+  h += '</div>';
+
+  // Page numbering section
+  h += '<div class="print-modal-section">';
+  h += '<div class="print-modal-section-title">Page Numbers</div>';
+  h += '<div class="frow"><label class="flbl">Format</label>';
+  h += '<select class="finp" id="print-pn-format">';
+  var formats = [
+    { val: 'Page X of Y', label: 'Page 1 of 5' },
+    { val: 'Page X', label: 'Page 1' },
+    { val: 'X of Y', label: '1 of 5' },
+    { val: 'X', label: '1' },
+    { val: '', label: 'None' }
+  ];
+  formats.forEach(function(f) {
+    h += '<option value="' + esc(f.val) + '"' + (pnf === f.val ? ' selected' : '') + '>' + esc(f.label) + '</option>';
+  });
+  h += '</select></div>';
+  h += '<div class="frow"><label class="flbl">Start numbering at</label>';
+  h += '<input type="number" class="finp" id="print-pn-start" min="1" max="99" value="' + spn + '" style="width:80px"></div>';
+  h += '</div>';
+
+  // Action buttons
+  h += '<div class="print-modal-actions">';
+  h += '<button class="hbtn accent" data-action="print-modal-export">Export ' + typeLabel + '</button>';
+  h += '<button class="hbtn" data-action="print-modal-close">Cancel</button>';
+  h += '</div>';
+
+  h += '</div></div>';
+  return h;
+}
+
 // ── Main Render ──────────────────────────────────────────────────
 function render() {
   var root = document.getElementById('root');
@@ -5090,6 +5237,8 @@ function render() {
   else if (S.currentView === 'editor') h += renderEditor();
   // Password change modal overlay
   if (S.showPasswordChange) h += renderPasswordChangeModal();
+  // Print customization modal overlay
+  if (S.showPrintModal) h += renderPrintModal();
   h += '</div>';
   root.innerHTML = h;
   // Post-render: wire up password change form submit
@@ -5101,6 +5250,25 @@ function render() {
         handlePasswordChange();
       });
     }
+  }
+
+  // Post-render: print modal margin preview live update
+  if (S.showPrintModal) {
+    var marginInputs = document.querySelectorAll('.print-margin-input');
+    marginInputs.forEach(function(inp) {
+      inp.addEventListener('input', function() {
+        var inner = document.getElementById('margin-preview-inner');
+        if (!inner) return;
+        var mT = parseFloat(document.querySelector('[data-margin-key="marginTop"]').value) || 0;
+        var mB = parseFloat(document.querySelector('[data-margin-key="marginBottom"]').value) || 0;
+        var mL = parseFloat(document.querySelector('[data-margin-key="marginLeft"]').value) || 0;
+        var mR = parseFloat(document.querySelector('[data-margin-key="marginRight"]').value) || 0;
+        inner.style.top = (mT / 11 * 100) + '%';
+        inner.style.bottom = (mB / 11 * 100) + '%';
+        inner.style.left = (mL / 8.5 * 100) + '%';
+        inner.style.right = (mR / 8.5 * 100) + '%';
+      });
+    });
   }
 
   // Post-render: pagination for editor
@@ -5706,10 +5874,58 @@ document.addEventListener('click', function(e) {
     return;
   }
 
-  // Export
+  // Export — show print customization modal
   if (action === 'export-word' || action === 'export-pdf') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
+    setState({ showPrintModal: true, _printExportType: action });
+    return;
+  }
+
+  // Print modal actions
+  if (action === 'print-modal-close') {
+    setState({ showPrintModal: false, _printExportType: null });
+    return;
+  }
+  if (action === 'print-modal-export') {
+    var exportAction = S._printExportType;
+    // Read margin and page number values from the modal inputs
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (!pet.pageSettings) pet.pageSettings = Object.assign({}, DEFAULT_PAGE_SETTINGS);
+    var modalEl = document.querySelector('.print-modal');
+    if (modalEl) {
+      var marginInputs = modalEl.querySelectorAll('.print-margin-input');
+      marginInputs.forEach(function(inp) {
+        var mKey = inp.dataset.marginKey;
+        var mVal = parseFloat(inp.value);
+        if (!isNaN(mVal) && mVal >= 0 && mVal <= 3) {
+          pet.pageSettings[mKey] = mVal;
+        }
+      });
+      var pnFormatEl = document.getElementById('print-pn-format');
+      if (pnFormatEl) pet.pageSettings.pageNumberFormat = pnFormatEl.value;
+      var pnStartEl = document.getElementById('print-pn-start');
+      if (pnStartEl) {
+        var sv = parseInt(pnStartEl.value, 10);
+        if (!isNaN(sv) && sv >= 1) pet.pageSettings.startingPageNumber = sv;
+      }
+    }
+    // Update the page number footer based on format selection
+    var pnf = pet.pageSettings.pageNumberFormat;
+    if (pnf === 'Page X of Y') pet.pageSettings.footerRight = '{{PAGE}}';
+    else if (pnf === 'Page X') pet.pageSettings.footerRight = '{{PAGE_NUM_ONLY}}';
+    else if (pnf === 'X of Y') pet.pageSettings.footerRight = '{{PAGE_BARE}}';
+    else if (pnf === 'X') pet.pageSettings.footerRight = '{{PAGE_NUM}}';
+    else pet.pageSettings.footerRight = '';
+
+    S.log.push({ op: 'FILL', target: 'petition.pageSettings', payload: 'print settings', frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+
+    // Close modal
+    S.showPrintModal = false;
+    S._printExportType = null;
+
     // Track that document has been exported for filing readiness
     if (!pet._exported) {
       pet._exported = true;
@@ -5722,7 +5938,7 @@ document.addEventListener('click', function(e) {
     var a1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
     var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
     var vars = buildVarMap(cl, pet, a1 || {}, a2 || {}, S.national);
-    if (action === 'export-word') {
+    if (exportAction === 'export-word') {
       // Use proper .docx generation if library loaded, else fall back to HTML .doc
       if (typeof docx !== 'undefined' && docx.Packer) {
         doExportDocx(pet.blocks, vars, cl.name);
@@ -5761,6 +5977,7 @@ document.addEventListener('click', function(e) {
           doExportPDF(pet.blocks, vars, pet.pageSettings);
         });
     }
+    render();
     return;
   }
 
@@ -6492,8 +6709,42 @@ function dispatchFieldChange(action, key, val, formId) {
     if (!pet.pageSettings) pet.pageSettings = Object.assign({}, DEFAULT_PAGE_SETTINGS);
     if (key === 'showHeaderOnFirstPage' || key === 'showFooterOnFirstPage') {
       pet.pageSettings[key] = (val === 'true');
+    } else if (key === 'pageNumberFormat') {
+      pet.pageSettings[key] = val;
+      // Update footer right based on format
+      if (val === 'Page X of Y') pet.pageSettings.footerRight = '{{PAGE}}';
+      else if (val === 'Page X') pet.pageSettings.footerRight = '{{PAGE_NUM_ONLY}}';
+      else if (val === 'X of Y') pet.pageSettings.footerRight = '{{PAGE_BARE}}';
+      else if (val === 'X') pet.pageSettings.footerRight = '{{PAGE_NUM}}';
+      else pet.pageSettings.footerRight = '';
     } else {
       pet.pageSettings[key] = val;
+    }
+    S.log.push({ op: 'FILL', target: 'petition.pageSettings.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+    setState({});
+    return;
+  }
+  if (action === 'page-settings-margin') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (!pet.pageSettings) pet.pageSettings = Object.assign({}, DEFAULT_PAGE_SETTINGS);
+    var numVal = parseFloat(val);
+    if (!isNaN(numVal) && numVal >= 0 && numVal <= 3) {
+      pet.pageSettings[key] = numVal;
+    }
+    S.log.push({ op: 'FILL', target: 'petition.pageSettings.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
+    debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
+    setState({});
+    return;
+  }
+  if (action === 'page-settings-number') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (!pet.pageSettings) pet.pageSettings = Object.assign({}, DEFAULT_PAGE_SETTINGS);
+    var numVal = parseInt(val, 10);
+    if (!isNaN(numVal) && numVal >= 1) {
+      pet.pageSettings[key] = numVal;
     }
     S.log.push({ op: 'FILL', target: 'petition.pageSettings.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet); });
