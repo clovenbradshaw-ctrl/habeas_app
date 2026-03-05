@@ -563,7 +563,7 @@ var DEFAULT_PAGE_SETTINGS = {
 
 function buildVarMap(c, p, a1, a2, nat) {
   c = c || {}; p = p || {}; a1 = a1 || {}; a2 = a2 || {}; nat = nat || {};
-  return {
+  var vars = {
     COURT_DISTRICT: p.district || '', COURT_DIVISION: p.division || '', COURT_WEBSITE: p.courtWebsite || '',
     CASE_NUMBER: p.caseNumber || '',
     PETITIONER_FULL_NAME: c.name || '', PETITIONER_COUNTRY: c.country || '',
@@ -593,6 +593,18 @@ function buildVarMap(c, p, a1, a2, nat) {
     ATTORNEY2_PHONE: a2.phone || '', ATTORNEY2_EMAIL: a2.email || '',
     ATTORNEY2_PRO_HAC: a2.proHacVice || '',
   };
+  // Merge form-derived variables from client forms data
+  var forms = c._forms || {};
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    var formData = forms[form.id] || {};
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      var field = form.fields[fj];
+      var varName = form.varPrefix + field.key.replace(/([A-Z])/g, '_$1').toUpperCase();
+      vars[varName] = formData[field.key] || '';
+    }
+  }
+  return vars;
 }
 
 // ── Default Template Blocks ──────────────────────────────────────
@@ -728,6 +740,95 @@ var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
 var EVT_OP       = 'com.amino.op';
 var EVT_GITHUB   = 'com.amino.config.github';
 var EVT_TEAM     = 'com.amino.team';
+var EVT_CLIENT_FORMS = 'com.amino.client.forms';
+
+// ── Client Form Definitions ──────────────────────────────────────
+// Each form has an id, title, and fields. Each field has a key that becomes
+// a template variable (uppercased, prefixed with the form's varPrefix).
+// Form data is stored per-client and flows into buildVarMap.
+var CLIENT_FORMS = [
+  {
+    id: 'family',
+    title: 'Family Information',
+    varPrefix: 'FAMILY_',
+    fields: [
+      { key: 'spouseName', label: 'Spouse Name', ph: 'Maria Rivera' },
+      { key: 'spouseStatus', label: 'Spouse Immigration Status', ph: 'U.S. citizen', type: 'enum-or-custom', options: ['U.S. citizen', 'Lawful permanent resident', 'DACA recipient', 'Pending asylum', 'Undocumented'] },
+      { key: 'childrenCount', label: 'Number of Children', ph: '3', validate: VALIDATORS.numeric },
+      { key: 'childrenAges', label: 'Children Ages', ph: '5, 8, 12' },
+      { key: 'childrenCitizenship', label: 'Children Citizenship', ph: 'All U.S. citizens', type: 'enum-or-custom', options: ['All U.S. citizens', 'All lawful permanent residents', 'Mixed status'] },
+      { key: 'dependents', label: 'Dependents Description', ph: 'three U.S. citizen children and a lawful permanent resident spouse' },
+      { key: 'familyHardship', label: 'Family Hardship if Detained', ph: 'family will lose sole breadwinner and children will suffer emotional and financial hardship' },
+    ]
+  },
+  {
+    id: 'employment',
+    title: 'Employment & Financial',
+    varPrefix: 'EMPLOY_',
+    fields: [
+      { key: 'employer', label: 'Current/Last Employer', ph: 'ABC Construction' },
+      { key: 'occupation', label: 'Occupation', ph: 'construction worker' },
+      { key: 'yearsEmployed', label: 'Years Employed', ph: '8' },
+      { key: 'isProvider', label: 'Primary Provider', ph: 'is the sole financial provider for his family', type: 'enum-or-custom', options: ['is the sole financial provider for his family', 'is a primary financial provider for his family', 'contributes financially to his family'] },
+      { key: 'taxFiling', label: 'Tax Filing History', ph: 'has filed federal and state taxes every year since 2015' },
+      { key: 'propertyOwner', label: 'Property/Assets', ph: 'owns a home in Nashville, Tennessee' },
+    ]
+  },
+  {
+    id: 'immigration',
+    title: 'Immigration History',
+    varPrefix: 'IMMIG_',
+    fields: [
+      { key: 'aNumber', label: 'A-Number', ph: '123-456-789' },
+      { key: 'ntaDate', label: 'NTA Date', ph: 'January 20, 2026', type: 'date' },
+      { key: 'ntaCharges', label: 'NTA Charges', ph: 'INA § 212(a)(6)(A)(i)' },
+      { key: 'hearingDate', label: 'Next Hearing Date', ph: 'March 15, 2026', type: 'date' },
+      { key: 'hearingLocation', label: 'Hearing Location', ph: 'Nashville Immigration Court' },
+      { key: 'ijName', label: 'Immigration Judge', ph: 'Judge Smith' },
+      { key: 'priorOrders', label: 'Prior Removal Orders', ph: 'has no prior removal orders', type: 'enum-or-custom', options: ['has no prior removal orders', 'has a prior removal order from [year]', 'has a prior voluntary departure order'] },
+      { key: 'asylumFiled', label: 'Asylum Application', ph: 'has a pending asylum application', type: 'enum-or-custom', options: ['has a pending asylum application', 'has not filed an asylum application', 'asylum application was denied on [date]'] },
+      { key: 'bondHistory', label: 'Bond History', ph: 'was denied a bond hearing under § 1225(b)(2)' },
+    ]
+  },
+  {
+    id: 'health',
+    title: 'Health & Conditions of Confinement',
+    varPrefix: 'HEALTH_',
+    fields: [
+      { key: 'medicalConditions', label: 'Medical Conditions', ph: 'suffers from diabetes and hypertension' },
+      { key: 'medications', label: 'Medications Needed', ph: 'insulin and blood pressure medication' },
+      { key: 'mentalHealth', label: 'Mental Health', ph: 'has experienced anxiety and depression due to prolonged detention' },
+      { key: 'detentionConditions', label: 'Conditions of Confinement', ph: 'has been held in a facility with inadequate medical care' },
+      { key: 'covidRisk', label: 'COVID/Health Risk Factors', ph: 'is at heightened risk due to underlying conditions' },
+    ]
+  },
+  {
+    id: 'community',
+    title: 'Community & Character',
+    varPrefix: 'COMMUNITY_',
+    fields: [
+      { key: 'yearsInCommunity', label: 'Years in Community', ph: '12' },
+      { key: 'churchMember', label: 'Religious Community', ph: 'is an active member of St. Mary\'s Catholic Church' },
+      { key: 'communityOrgs', label: 'Community Organizations', ph: 'volunteers with local food bank' },
+      { key: 'characterRefs', label: 'Character References', ph: 'has letters of support from his pastor, employer, and neighbors' },
+      { key: 'flightRisk', label: 'Flight Risk Assessment', ph: 'has deep roots in the community, has no incentive to flee, and has always appeared at all immigration hearings' },
+      { key: 'dangerAssessment', label: 'Danger to Community', ph: 'poses no danger to the community' },
+    ]
+  },
+  {
+    id: 'custom',
+    title: 'Additional Facts',
+    varPrefix: 'CUSTOM_',
+    fields: [
+      { key: 'fact1', label: 'Additional Fact 1', ph: '' },
+      { key: 'fact2', label: 'Additional Fact 2', ph: '' },
+      { key: 'fact3', label: 'Additional Fact 3', ph: '' },
+      { key: 'fact4', label: 'Additional Fact 4', ph: '' },
+      { key: 'fact5', label: 'Additional Fact 5', ph: '' },
+      { key: 'fact6', label: 'Additional Fact 6', ph: '' },
+    ]
+  }
+];
 
 // ── Matrix REST Client ───────────────────────────────────────────
 var matrix = {
@@ -1380,6 +1481,9 @@ var S = {
   selectedClientId: null,
   selectedPetitionId: null,
   editorTab: 'client',
+  _expandedForm: null,
+  _clientFormsExpanded: false,
+  _expandedClientForm: null,
   dirTab: 'facilities',
   editId: null,
   draft: {},
@@ -1835,7 +1939,14 @@ function hydrateFromMatrix() {
           archived: !!cc.archived,
           createdAt: new Date(clientEvt.origin_server_ts).toISOString(),
           roomId: roomId,
+          _forms: {},
         };
+
+        // Client forms data
+        var formsEvt = matrix.getStateEvent(roomId, EVT_CLIENT_FORMS, '');
+        if (formsEvt && formsEvt.content && formsEvt.content.forms) {
+          clients[cid]._forms = formsEvt.content.forms;
+        }
 
         // Petitions in this room
         var petEvents = matrix.getStateEvents(roomId, EVT_PETITION);
@@ -2459,7 +2570,7 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
         }
       } else {
         // PDF path: embed raw page settings for DOM-based pagination in the print window
-        var printCss = hfCss + '\n@media print{.page{display:flex;flex-direction:column;min-height:9in}}';
+        var printCss = hfCss + '\n@page{size:Letter;margin:0}\n@media print{.page{width:8.5in;height:11in;padding:1in;margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}}';
         html = html.replace('</style>', printCss + '\n</style>');
         var psData = JSON.stringify({
           headerLeft: ps.headerLeft || '',
@@ -2641,7 +2752,7 @@ function debouncedSync(key, fn) {
 }
 
 // Actions that should only save on blur (field exit), not every keystroke
-var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1 };
+var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1, 'editor-form-field': 1, 'client-form-field': 1 };
 
 // Update only the in-memory state for a field (no log entry, no Matrix sync).
 // Called on every keystroke to keep the UI responsive; the actual save
@@ -2684,6 +2795,35 @@ function updateFieldLocally(action, key, val) {
     refreshVariableSpans();
     return;
   }
+  if (action === 'editor-form-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    var client = S.clients[pet.clientId];
+    if (!client) return;
+    var formId = arguments[3]; // extra arg for form ID
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    refreshVariableSpans();
+    return;
+  }
+  if (action === 'client-form-field') {
+    var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+    if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
+    var formId = arguments[3];
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    refreshVariableSpans();
+    return;
+  }
   if (action === 'filing-case-number') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
@@ -2707,6 +2847,17 @@ function syncClientToMatrix(client, label) {
     if (label) toast('CON \u22C8 ' + label, 'success');
     return data;
   }).catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
+}
+
+function syncClientFormsToMatrix(client) {
+  if (!matrix.isReady() || !client.roomId) return Promise.resolve();
+  var formsData = client._forms || {};
+  return matrix.sendStateEvent(client.roomId, EVT_CLIENT_FORMS, {
+    forms: formsData,
+  }, '').then(function(data) {
+    toast('CON \u22C8 forms', 'success');
+    return data;
+  }).catch(function(e) { console.error('Forms sync failed:', e); toast('ALT \u21CC forms sync failed', 'error'); });
 }
 
 // Create a Matrix room for a client and sync initial data
@@ -3227,7 +3378,16 @@ function renderBoard() {
     });
     clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
   }
-  if (S.boardAddingMatter && clientList.length > 0) {
+  if (S.boardAddingMatter === 'new') {
+    h += '<div class="board-add-matter">';
+    h += '<input class="finp board-new-client-name" type="text" placeholder="Client name\u2026" data-action="board-new-client-input" autofocus />';
+    h += '<button class="hbtn accent" data-action="board-create-new-client">Create &amp; Open</button>';
+    if (clientList.length > 0) {
+      h += '<button class="hbtn" data-action="board-show-existing">Existing Client</button>';
+    }
+    h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
+    h += '</div>';
+  } else if (S.boardAddingMatter === 'existing') {
     h += '<div class="board-add-matter">';
     h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
     h += '<option value="">Select client\u2026</option>';
@@ -3235,6 +3395,7 @@ function renderBoard() {
       h += '<option value="' + c.id + '">' + esc(c.name || 'Unnamed') + '</option>';
     });
     h += '</select>';
+    h += '<button class="hbtn" data-action="board-show-new">New Client</button>';
     h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
     h += '</div>';
   } else {
@@ -3607,6 +3768,7 @@ function renderClients() {
     }
     h += '</div>';
     h += htmlFieldGroup('Client Information', CLIENT_FIELDS, client, 'client-field');
+    h += renderClientFormsSection(client);
     if (clientPets.length > 0) {
       h += '<div class="fg"><div class="fg-title">Matters</div>';
       clientPets.forEach(function(p) {
@@ -4494,6 +4656,149 @@ function renderFilingPanel(pet, client) {
   return h;
 }
 
+function renderClientFormsSection(client) {
+  var forms = client._forms || {};
+  var totalFilled = 0;
+  var totalFields = 0;
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    var formData = forms[form.id] || {};
+    totalFields += form.fields.length;
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      if (formData[form.fields[fj].key] && formData[form.fields[fj].key].trim()) totalFilled++;
+    }
+  }
+  var h = '<div class="fg"><div class="fg-title form-toggle" data-action="toggle-client-forms">';
+  h += '<span class="form-arrow">' + (S._clientFormsExpanded ? '\u25BE' : '\u25B8') + '</span> ';
+  h += 'Client Forms';
+  if (totalFilled > 0) h += ' <span class="form-count">' + totalFilled + '/' + totalFields + '</span>';
+  h += '</div>';
+  if (S._clientFormsExpanded) {
+    for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+      var form = CLIENT_FORMS[fi];
+      var formData = forms[form.id] || {};
+      var filledCount = 0;
+      for (var fj = 0; fj < form.fields.length; fj++) {
+        if (formData[form.fields[fj].key] && formData[form.fields[fj].key].trim()) filledCount++;
+      }
+      var isExpanded = S._expandedClientForm === form.id;
+      var badge = filledCount > 0 ? ' <span class="form-count">' + filledCount + '/' + form.fields.length + '</span>' : '';
+      h += '<div class="fg form-section" style="margin-left:8px">';
+      h += '<div class="fg-title form-toggle" data-action="toggle-client-form" data-form-id="' + form.id + '">';
+      h += '<span class="form-arrow">' + (isExpanded ? '\u25BE' : '\u25B8') + '</span> ';
+      h += esc(form.title) + badge + '</div>';
+      if (isExpanded) {
+        form.fields.forEach(function(f) {
+          var val = formData[f.key] || '';
+          var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+          h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
+          h += htmlFormFieldInput(f, val, form.id, 'client-form-field');
+          h += '</div>';
+        });
+      }
+      h += '</div>';
+    }
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderFormsTab(client, pet) {
+  var forms = client._forms || {};
+  var h = '';
+
+  // Show variable reference toggle
+  h += '<div class="forms-header">';
+  h += '<p style="font-size:11px;color:var(--muted);margin-bottom:8px">Fill out forms to create variables for your petition. Use <code>{{VARIABLE_NAME}}</code> in the document body.</p>';
+  h += '</div>';
+
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    var formData = forms[form.id] || {};
+    var filledCount = 0;
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      if (formData[form.fields[fj].key] && formData[form.fields[fj].key].trim()) filledCount++;
+    }
+    var isExpanded = S._expandedForm === form.id;
+    var badge = filledCount > 0 ? ' <span class="form-count">' + filledCount + '/' + form.fields.length + '</span>' : '';
+
+    h += '<div class="fg form-section">';
+    h += '<div class="fg-title form-toggle" data-action="toggle-form" data-form-id="' + form.id + '">';
+    h += '<span class="form-arrow">' + (isExpanded ? '\u25BE' : '\u25B8') + '</span> ';
+    h += esc(form.title) + badge + '</div>';
+
+    if (isExpanded) {
+      form.fields.forEach(function(f) {
+        var val = formData[f.key] || '';
+        var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+        var vErr = '';
+        if (f.validate && val && val.trim()) {
+          var err = f.validate(val);
+          if (err) {
+            vErr = '<span class="fval-err">' + esc(err) + '</span>';
+            chk = '<span class="fval-warn">&#9888;</span>';
+          }
+        }
+        var varName = form.varPrefix + f.key.replace(/([A-Z])/g, '_$1').toUpperCase();
+        h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
+        h += htmlFormFieldInput(f, val, form.id);
+        h += vErr;
+        h += '<div class="fvar-hint">{{' + varName + '}}</div>';
+        h += '</div>';
+      });
+    }
+    h += '</div>';
+  }
+
+  return h;
+}
+
+function htmlFormFieldInput(f, val, formId, changeAction) {
+  changeAction = changeAction || 'editor-form-field';
+  var changeAttr = 'data-change="' + changeAction + '" data-form-id="' + formId + '"';
+  if (f.type === 'enum') {
+    var h = '<select class="finp" data-field-key="' + f.key + '" ' + changeAttr + '>';
+    h += '<option value="">\u2014 Select \u2014</option>';
+    var foundVal = false;
+    for (var i = 0; i < f.options.length; i++) {
+      var opt = f.options[i];
+      if (opt === '---') { h += '<option disabled>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</option>'; continue; }
+      var sel = (opt === val) ? ' selected' : '';
+      if (opt === val) foundVal = true;
+      h += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+    }
+    if (val && val.trim() && !foundVal) {
+      h += '<option value="' + esc(val) + '" selected>' + esc(val) + ' (custom)</option>';
+    }
+    h += '</select>';
+    return h;
+  }
+  if (f.type === 'enum-or-custom') {
+    var isPreset = false;
+    for (var i = 0; i < f.options.length; i++) {
+      if (f.options[i] === val) { isPreset = true; break; }
+    }
+    var isEmpty = !val || !val.trim();
+    var isCustom = !isEmpty && !isPreset;
+    var h = '<select class="finp enum-custom-sel" data-field-key="' + f.key + '" ' + changeAttr.replace(changeAction, changeAction + '-enum') + '>';
+    for (var i = 0; i < f.options.length; i++) {
+      var opt = f.options[i];
+      var sel = (opt === val) ? ' selected' : '';
+      h += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+    }
+    h += '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Other (custom)</option>';
+    h += '</select>';
+    var display = isCustom ? '' : ' style="display:none"';
+    h += '<input type="text" class="finp enum-custom-inp" value="' + (isCustom ? esc(val) : '') + '"' +
+         ' placeholder="Enter custom value..." data-field-key="' + f.key + '" ' + changeAttr.replace(changeAction, changeAction + '-custom') + display + '>';
+    return h;
+  }
+  if (f.type === 'date') {
+    return '<input type="text" class="finp date-pick" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" ' + changeAttr + ' data-flatpickr="1">';
+  }
+  return '<input type="text" class="finp" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" ' + changeAttr + '>';
+}
+
 function renderEditor() {
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) {
@@ -4506,13 +4811,17 @@ function renderEditor() {
   var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
 
   var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
-  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['details','Details'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+  [['client','Client'],['forms','Forms'],['court','Court + Facility'],['atty','Attorneys'],['details','Details'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div><div class="ed-fields">';
 
   if (S.editorTab === 'client' && client) {
     h += htmlFieldGroup('Client (shared)', CLIENT_FIELDS, client, 'editor-client-field');
+  }
+
+  if (S.editorTab === 'forms' && client) {
+    h += renderFormsTab(client, pet);
   }
 
   if (S.editorTab === 'court') {
@@ -5001,6 +5310,11 @@ function render() {
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
   }
+  // Post-render: focus new-client name input on board
+  if (S.currentView === 'board' && S.boardAddingMatter === 'new') {
+    var ncInput = document.querySelector('.board-new-client-name');
+    if (ncInput) ncInput.focus();
+  }
   // Post-render: initialize kanban drag-and-drop
   if (S.currentView === 'board' && S.boardMode === 'kanban') {
     requestAnimationFrame(function() { initKanbanDragDrop(); });
@@ -5368,15 +5682,53 @@ document.addEventListener('click', function(e) {
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
   if (action === 'toggle-show-all-filed') { setState({ boardShowAllFiled: !S.boardShowAllFiled }); return; }
   if (action === 'board-add-matter') {
-    var clientList = Object.values(S.clients);
-    if (clientList.length === 0) {
-      setState({ currentView: 'clients' });
-    } else {
-      setState({ boardAddingMatter: true });
+    // Default to new client since it's the more common case
+    setState({ boardAddingMatter: 'new' });
+    return;
+  }
+  if (action === 'board-show-existing') { setState({ boardAddingMatter: 'existing' }); return; }
+  if (action === 'board-show-new') { setState({ boardAddingMatter: 'new' }); return; }
+  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
+  if (action === 'board-create-new-client') {
+    var nameInput = document.querySelector('.board-new-client-name');
+    var clientName = nameInput ? nameInput.value.trim() : '';
+    if (!clientName) { if (nameInput) nameInput.focus(); return; }
+    var cid = uid();
+    S.clients[cid] = { id: cid, name: clientName, country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
+    S.log.push({ op: 'CREATE', target: cid, payload: null, frame: { t: now(), entity: 'client' } });
+    createClientRoom(cid).then(function(roomId) {
+      if (roomId) toast('INS \u2295 client', 'success');
+    });
+    // Now create the petition for this client
+    var pid = uid();
+    var clientRoomId = '';
+    S.petitions[pid] = {
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
+      stageHistory: [{ stage: 'intake', at: now() }],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
+      facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
+      filingDate: '', filingDay: '', filingMonthYear: '',
+      _bodyEdited: false, _exported: false,
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
+      createdAt: now(), roomId: clientRoomId,
+    };
+    S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    setState({ selectedClientId: cid, selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
+    // Sync petition once room is ready
+    if (_pendingRoomCreations[cid]) {
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
-  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
   if (action === 'toggle-board-archived') { setState({ boardShowArchived: !S.boardShowArchived }); return; }
   if (action === 'archive-petition') {
     var pet = S.petitions[btn.dataset.id];
@@ -5448,6 +5800,12 @@ document.addEventListener('click', function(e) {
   // Clients
   if (action === 'select-client') { setState({ selectedClientId: btn.dataset.id }); return; }
   if (action === 'toggle-clients-archived') { setState({ clientsShowArchived: !S.clientsShowArchived }); return; }
+  if (action === 'toggle-client-forms') { setState({ _clientFormsExpanded: !S._clientFormsExpanded }); return; }
+  if (action === 'toggle-client-form') {
+    var formId = btn.dataset.formId;
+    setState({ _expandedClientForm: S._expandedClientForm === formId ? null : formId });
+    return;
+  }
   if (action === 'archive-client') {
     var id = btn.dataset.id;
     var cl = S.clients[id];
@@ -6190,6 +6548,11 @@ document.addEventListener('click', function(e) {
 
   // Editor tabs
   if (action === 'ed-tab') { cleanupInlineAdd(); setState({ editorTab: btn.dataset.tab, inlineAdd: null, draft: {} }); return; }
+  if (action === 'toggle-form') {
+    var formId = btn.dataset.formId;
+    setState({ _expandedForm: S._expandedForm === formId ? null : formId });
+    return;
+  }
   if (action === 'goto-directory') { setState({ currentView: 'directory', inlineAdd: null, draft: {} }); return; }
 
   // ── Inline Add-to-Directory from Editor ───────────────────────
@@ -6305,7 +6668,7 @@ document.addEventListener('click', function(e) {
 });
 
 // ── Input/Change Event Handling ──────────────────────────────────
-function dispatchFieldChange(action, key, val) {
+function dispatchFieldChange(action, key, val, formId) {
   if (action === 'draft-field') {
     S.draft[key] = val;
     return;
@@ -6402,6 +6765,41 @@ function dispatchFieldChange(action, key, val) {
     render();
     return;
   }
+  if (action === 'editor-form-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    var client = S.clients[pet.clientId];
+    if (!client) return;
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    S.log.push({ op: 'FILL', target: 'form.' + formId + '.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    debouncedSync('client-forms-' + client.id, function() {
+      syncClientFormsToMatrix(client);
+    });
+    refreshVariableSpans();
+    return;
+  }
+  if (action === 'client-form-field') {
+    var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+    if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    S.log.push({ op: 'FILL', target: 'form.' + formId + '.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    debouncedSync('client-forms-' + client.id, function() {
+      syncClientFormsToMatrix(client);
+    });
+    refreshVariableSpans();
+    return;
+  }
   if (action === 'page-settings') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
@@ -6424,16 +6822,26 @@ document.addEventListener('input', function(e) {
   var action = el.dataset.change;
   var key = el.dataset.fieldKey;
   var val = el.value;
+  var formId = el.dataset.formId || null;
   if (action.match(/-custom$/)) {
     action = action.replace(/-custom$/, '');
   }
   // For text fields with blur-save actions, only update local state on input;
   // the full save (log + sync) happens on the 'change' event (fires on blur).
   if (BLUR_SAVE_ACTIONS[action]) {
-    updateFieldLocally(action, key, val);
+    updateFieldLocally(action, key, val, formId);
     return;
   }
-  dispatchFieldChange(action, key, val);
+  dispatchFieldChange(action, key, val, formId);
+});
+
+// Enter key on board new-client name input triggers create
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.target.classList.contains('board-new-client-name')) {
+    e.preventDefault();
+    var createBtn = document.querySelector('[data-action="board-create-new-client"]');
+    if (createBtn) createBtn.click();
+  }
 });
 
 document.addEventListener('change', function(e) {
@@ -6441,6 +6849,7 @@ document.addEventListener('change', function(e) {
   if (!el.dataset || !el.dataset.change) return;
   var action = el.dataset.change;
   var val = el.value;
+  var formId = el.dataset.formId || null;
 
   // Enum-or-custom dropdown changed
   if (action.match(/-enum$/)) {
@@ -6453,21 +6862,21 @@ document.addEventListener('change', function(e) {
     } else {
       var customInp = el.parentNode.querySelector('.enum-custom-inp');
       if (customInp) customInp.style.display = 'none';
-      dispatchFieldChange(baseAction, key, val);
+      dispatchFieldChange(baseAction, key, val, formId);
       return;
     }
   }
 
   // Pure enum selects (type: 'enum') and date pickers fire 'change'
   if (el.tagName === 'SELECT' && el.dataset.fieldKey && !action.match(/^apply-/)) {
-    dispatchFieldChange(action, el.dataset.fieldKey, val);
+    dispatchFieldChange(action, el.dataset.fieldKey, val, formId);
     return;
   }
 
   // Text inputs with blur-save actions: full save on blur (change fires when field loses focus)
   var blurAction = action.match(/-custom$/) ? action.replace(/-custom$/, '') : action;
   if (el.dataset.fieldKey && BLUR_SAVE_ACTIONS[blurAction]) {
-    dispatchFieldChange(blurAction, el.dataset.fieldKey, val);
+    dispatchFieldChange(blurAction, el.dataset.fieldKey, val, formId);
     return;
   }
 

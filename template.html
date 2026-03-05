@@ -8,7 +8,7 @@
   /* Page setup */
   @page {
     size: Letter;
-    margin: 1in;
+    margin: 0;
   }
   html, body {
     background: #fff;
@@ -25,16 +25,21 @@
     width: 8.5in;
     min-height: 11in;
     margin: 0 auto;
-    padding: 0;
+    padding: 1in;
     box-sizing: border-box;
     page-break-after: always;
   }
   .page:last-child { page-break-after: auto; }
 
-  /* Screen-only padding so template preview still looks right in browser */
-  @media screen {
+  /* Print: fixed page dimensions so content fills the full page */
+  @media print {
     .page {
+      width: 8.5in;
+      height: 11in;
       padding: 1in;
+      margin: 0;
+      box-sizing: border-box;
+      overflow: hidden;
     }
   }
 

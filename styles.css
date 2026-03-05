@@ -640,6 +640,13 @@ body,
   font-size: 11px !important;
   display: inline-block !important;
 }
+.board-new-client-name {
+  width: auto !important;
+  min-width: 200px;
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  display: inline-block !important;
+}
 
 /* ── Kanban card enhancements ──────────────────────── */
 .kb-card-att {
@@ -2255,4 +2262,52 @@ body,
 .hbtn.danger:hover {
   background: #8b2500;
   color: #fff;
+}
+
+/* ── Forms Tab ──────────────────────────────────────── */
+.forms-header {
+  margin-bottom: 4px;
+}
+.forms-header code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: rgba(0,0,0,0.05);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+.form-section {
+  margin-bottom: 2px;
+}
+.form-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.form-toggle:hover {
+  color: var(--accent);
+}
+.form-arrow {
+  font-size: 11px;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.form-count {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--green);
+  background: rgba(90,158,111,0.1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+.fvar-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  opacity: 0.6;
+  margin-top: 1px;
+  letter-spacing: -0.2px;
 }
