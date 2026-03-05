@@ -640,6 +640,13 @@ body,
   font-size: 11px !important;
   display: inline-block !important;
 }
+.board-new-client-name {
+  width: auto !important;
+  min-width: 200px;
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  display: inline-block !important;
+}
 
 /* ── Kanban card enhancements ──────────────────────── */
 .kb-card-att {
