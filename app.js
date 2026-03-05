@@ -3289,7 +3289,16 @@ function renderBoard() {
     });
     clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
   }
-  if (S.boardAddingMatter && clientList.length > 0) {
+  if (S.boardAddingMatter === 'new') {
+    h += '<div class="board-add-matter">';
+    h += '<input class="finp board-new-client-name" type="text" placeholder="Client name\u2026" data-action="board-new-client-input" autofocus />';
+    h += '<button class="hbtn accent" data-action="board-create-new-client">Create &amp; Open</button>';
+    if (clientList.length > 0) {
+      h += '<button class="hbtn" data-action="board-show-existing">Existing Client</button>';
+    }
+    h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
+    h += '</div>';
+  } else if (S.boardAddingMatter === 'existing') {
     h += '<div class="board-add-matter">';
     h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
     h += '<option value="">Select client\u2026</option>';
@@ -3297,6 +3306,7 @@ function renderBoard() {
       h += '<option value="' + c.id + '">' + esc(c.name || 'Unnamed') + '</option>';
     });
     h += '</select>';
+    h += '<button class="hbtn" data-action="board-show-new">New Client</button>';
     h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
     h += '</div>';
   } else {
@@ -5097,6 +5107,11 @@ function render() {
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
   }
+  // Post-render: focus new-client name input on board
+  if (S.currentView === 'board' && S.boardAddingMatter === 'new') {
+    var ncInput = document.querySelector('.board-new-client-name');
+    if (ncInput) ncInput.focus();
+  }
   // Post-render: initialize kanban drag-and-drop
   if (S.currentView === 'board' && S.boardMode === 'kanban') {
     requestAnimationFrame(function() { initKanbanDragDrop(); });
@@ -5464,15 +5479,53 @@ document.addEventListener('click', function(e) {
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
   if (action === 'toggle-show-all-filed') { setState({ boardShowAllFiled: !S.boardShowAllFiled }); return; }
   if (action === 'board-add-matter') {
-    var clientList = Object.values(S.clients);
-    if (clientList.length === 0) {
-      setState({ currentView: 'clients' });
-    } else {
-      setState({ boardAddingMatter: true });
+    // Default to new client since it's the more common case
+    setState({ boardAddingMatter: 'new' });
+    return;
+  }
+  if (action === 'board-show-existing') { setState({ boardAddingMatter: 'existing' }); return; }
+  if (action === 'board-show-new') { setState({ boardAddingMatter: 'new' }); return; }
+  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
+  if (action === 'board-create-new-client') {
+    var nameInput = document.querySelector('.board-new-client-name');
+    var clientName = nameInput ? nameInput.value.trim() : '';
+    if (!clientName) { if (nameInput) nameInput.focus(); return; }
+    var cid = uid();
+    S.clients[cid] = { id: cid, name: clientName, country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
+    S.log.push({ op: 'CREATE', target: cid, payload: null, frame: { t: now(), entity: 'client' } });
+    createClientRoom(cid).then(function(roomId) {
+      if (roomId) toast('INS \u2295 client', 'success');
+    });
+    // Now create the petition for this client
+    var pid = uid();
+    var clientRoomId = '';
+    S.petitions[pid] = {
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
+      stageHistory: [{ stage: 'intake', at: now() }],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
+      facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
+      filingDate: '', filingDay: '', filingMonthYear: '',
+      _bodyEdited: false, _exported: false,
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
+      createdAt: now(), roomId: clientRoomId,
+    };
+    S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    setState({ selectedClientId: cid, selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
+    // Sync petition once room is ready
+    if (_pendingRoomCreations[cid]) {
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
-  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
   if (action === 'toggle-board-archived') { setState({ boardShowArchived: !S.boardShowArchived }); return; }
   if (action === 'archive-petition') {
     var pet = S.petitions[btn.dataset.id];
@@ -6466,6 +6519,15 @@ document.addEventListener('input', function(e) {
     return;
   }
   dispatchFieldChange(action, key, val, formId);
+});
+
+// Enter key on board new-client name input triggers create
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.target.classList.contains('board-new-client-name')) {
+    e.preventDefault();
+    var createBtn = document.querySelector('[data-action="board-create-new-client"]');
+    if (createBtn) createBtn.click();
+  }
 });
 
 document.addEventListener('change', function(e) {
