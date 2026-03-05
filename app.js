@@ -727,6 +727,7 @@ var EVT_PETITION = 'com.amino.petition';
 var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
 var EVT_OP       = 'com.amino.op';
 var EVT_GITHUB   = 'com.amino.config.github';
+var EVT_TEAM     = 'com.amino.team';
 
 // ── Matrix REST Client ───────────────────────────────────────────
 var matrix = {
@@ -1364,6 +1365,9 @@ var S = {
   clients: {},
   petitions: {},
   users: {},
+  teams: {},
+  teamEditId: null,
+  teamDraft: {},
   serverUsersLoaded: false,
   serverUsersError: '',
   log: [],
@@ -1598,6 +1602,76 @@ function inviteAdminsToRoom(roomId) {
   });
 }
 
+// ── Team Helpers ─────────────────────────────────────────────────
+// Returns true if the current user can see data owned by ownerMxid
+function canSeeUserData(ownerMxid) {
+  if (S.role === 'admin') return true;
+  if (ownerMxid === S.currentUser) return true;
+  // Check if ownerMxid shares any team with current user
+  var teams = S.teams;
+  for (var tid in teams) {
+    var t = teams[tid];
+    if (t.members && t.members.indexOf(S.currentUser) !== -1 && t.members.indexOf(ownerMxid) !== -1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Returns array of MXIDs that share any team with the given user (excluding the user themselves)
+function getTeammateMxids(mxid) {
+  var mates = {};
+  var teams = S.teams;
+  for (var tid in teams) {
+    var t = teams[tid];
+    if (t.members && t.members.indexOf(mxid) !== -1) {
+      t.members.forEach(function(m) {
+        if (m !== mxid && S.users[m] && S.users[m].active !== false) {
+          mates[m] = true;
+        }
+      });
+    }
+  }
+  return Object.keys(mates);
+}
+
+// Invite all teammates of the current user to a room
+function inviteTeamToRoom(roomId) {
+  var mates = getTeammateMxids(S.currentUser);
+  mates.forEach(function(mxid) {
+    matrix.inviteUser(roomId, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(roomId, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite/set PL for teammate', mxid, 'in room', roomId, e);
+      });
+  });
+}
+
+// When a user is added to a team, invite them to all existing client rooms of team members
+function inviteUserToTeamRooms(mxid, teamId) {
+  var team = S.teams[teamId];
+  if (!team || !team.members) return;
+  // Find all client rooms owned by any team member
+  var teamMemberPetitions = Object.values(S.petitions).filter(function(p) {
+    return team.members.indexOf(p.createdBy) !== -1;
+  });
+  var roomIds = {};
+  teamMemberPetitions.forEach(function(p) {
+    if (p.roomId) roomIds[p.roomId] = true;
+  });
+  Object.keys(roomIds).forEach(function(rid) {
+    matrix.inviteUser(rid, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(rid, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite', mxid, 'to team room', rid, e);
+      });
+  });
+}
+
 // ── Hydration from Matrix ────────────────────────────────────────
 function hydrateFromMatrix() {
   // Discover or auto-create org and templates rooms
@@ -1726,6 +1800,22 @@ function hydrateFromMatrix() {
         }
       });
 
+      // Teams
+      var teamEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_TEAM);
+      var teams = {};
+      Object.keys(teamEvents).forEach(function(k) {
+        var e = teamEvents[k];
+        if (k && e.content && e.content.name && !e.content.deleted) {
+          teams[k] = {
+            id: k,
+            name: e.content.name,
+            members: e.content.members || [],
+            createdBy: e.sender,
+            updatedAt: new Date(e.origin_server_ts).toISOString(),
+          };
+        }
+      });
+
       // Client rooms + petitions
       var clients = {};
       var petitions = {};
@@ -1802,7 +1892,7 @@ function hydrateFromMatrix() {
       setState({
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
-        users: users, role: role, currentUser: matrix.userId, syncError: syncError,
+        users: users, teams: teams, role: role, currentUser: matrix.userId, syncError: syncError,
         mustChangePassword: mustChangePassword,
       });
 
@@ -2180,7 +2270,7 @@ function downloadCSV(csvString, filename) {
 
 function exportPetitionsCSV() {
   var all = Object.values(S.petitions).filter(function(p) { return !p.archived; });
-  var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  var vis = all.filter(function(p) { return canSeeUserData(p.createdBy); });
   vis.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
 
   var headers = ['Client Name', 'Case Number', 'Stage', 'Readiness %', 'District', 'Division',
@@ -2228,7 +2318,7 @@ function exportClientsCSV() {
   } else {
     var myClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
-      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+      if (canSeeUserData(p.createdBy)) myClientIds[p.clientId] = true;
     });
     clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
   }
@@ -2568,12 +2658,10 @@ function updateFieldLocally(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
-    if (S.role !== 'admin') {
-      var hasOwnership = Object.values(S.petitions).some(function(p) {
-        return p.clientId === client.id && p.createdBy === S.currentUser;
-      });
-      if (!hasOwnership) return;
-    }
+    var hasOwnership = Object.values(S.petitions).some(function(p) {
+      return p.clientId === client.id && canSeeUserData(p.createdBy);
+    });
+    if (!hasOwnership) return;
     client[key] = val;
     refreshVariableSpans();
     return;
@@ -2581,7 +2669,7 @@ function updateFieldLocally(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
@@ -2591,7 +2679,7 @@ function updateFieldLocally(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     pet[key] = val;
     refreshVariableSpans();
     return;
@@ -2687,6 +2775,7 @@ function createClientRoom(clientId) {
     console.log('Created Matrix room for client', clientId, '→', roomId);
     if (matrix.isReady()) {
       inviteAdminsToRoom(roomId);
+      inviteTeamToRoom(roomId);
     }
     delete _pendingRoomCreations[clientId];
     return roomId;
@@ -3068,7 +3157,7 @@ function renderHeader() {
   var petClient = pet ? S.clients[pet.clientId] : null;
   var h = '<header class="hdr"><div class="hdr-left">';
   h += '<span class="hdr-brand">Habeas</span><nav class="hdr-nav">';
-  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory']];
+  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory'],['teams','Teams']];
   if (S.role === 'admin') tabs.push(['admin','Admin']);
   if (pet) tabs.push(['editor','Editor']);
   tabs.forEach(function(t) {
@@ -3099,7 +3188,7 @@ function renderHeader() {
 
 function renderBoard() {
   var all = Object.values(S.petitions);
-  var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  var vis = all.filter(function(p) { return canSeeUserData(p.createdBy); });
   // Filter archived petitions unless toggle is active
   vis = vis.filter(function(p) { return S.boardShowArchived || !p.archived; });
 
@@ -3134,7 +3223,7 @@ function renderBoard() {
   if (S.role !== 'admin') {
     var myBoardClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
-      if (p.createdBy === S.currentUser) myBoardClientIds[p.clientId] = true;
+      if (canSeeUserData(p.createdBy)) myBoardClientIds[p.clientId] = true;
     });
     clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
   }
@@ -3222,7 +3311,7 @@ function renderBoardKanban(vis) {
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
       var attNames = petAttorneyNames(p);
-      var canArchivePet = S.role === 'admin' || p.createdBy === S.currentUser;
+      var canArchivePet = canSeeUserData(p.createdBy);
       var rdns = computeReadiness(p, cl || {});
       var pctW = Math.round(rdns.score * 100);
       h += '<div class="kb-card' + (p.archived ? ' archived' : '') + '" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
@@ -3472,7 +3561,7 @@ function renderClients() {
   } else {
     var myClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
-      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+      if (canSeeUserData(p.createdBy)) myClientIds[p.clientId] = true;
     });
     clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
   }
@@ -3507,7 +3596,7 @@ function renderClients() {
   h += '</div></div>';
   h += '<div class="cv-detail">';
   if (client) {
-    var canArchiveClient = S.role === 'admin' || clientPets.some(function(p) { return p.createdBy === S.currentUser; });
+    var canArchiveClient = clientPets.some(function(p) { return canSeeUserData(p.createdBy); });
     h += '<div class="cv-detail-head"><h2>' + esc(client.name || 'New Client') + '</h2>';
     if (client.archived) {
       h += '<span class="archived-badge">Archived</span>';
@@ -4194,6 +4283,119 @@ function renderSynapseAdmin() {
   return h;
 }
 
+// ── Teams View ───────────────────────────────────────────────────
+function renderTeams() {
+  var h = '<div class="dir-view"><div class="dir-body">';
+  h += '<div class="dir-section wide">';
+  h += '<div class="dir-head"><h3>Teams</h3>';
+  h += '<button class="hbtn sm accent" data-action="team-create">+ New Team</button>';
+  h += '</div>';
+  h += '<p class="dir-desc">Teams let members share clients, petitions, and attorney profiles with each other. Create a team and add members to start collaborating.</p>';
+
+  var teamList = Object.values(S.teams);
+  // Get teams the current user is a member of or created
+  var myTeams = teamList.filter(function(t) {
+    return t.members.indexOf(S.currentUser) !== -1 || t.createdBy === S.currentUser || S.role === 'admin';
+  });
+
+  if (myTeams.length === 0 && !S.teamEditId) {
+    h += '<div class="dir-empty">No teams yet. Create one to start sharing data with other users.</div>';
+  }
+
+  // Team create/edit form
+  if (S.teamEditId) {
+    var isNew = S.teamEditId === 'new';
+    var d = S.teamDraft;
+    h += '<div class="edit-form team-edit-form">';
+    h += '<div class="fg-title">' + (isNew ? 'Create Team' : 'Edit Team') + '</div>';
+    h += '<label class="flbl">Team Name</label>';
+    h += '<input class="finp" data-change="team-field" data-field-key="name" value="' + esc(d.name || '') + '" placeholder="e.g. Texas Office">';
+
+    // Member list
+    h += '<label class="flbl" style="margin-top:12px">Members</label>';
+    var allUsers = Object.values(S.users).filter(function(u) { return u.active !== false; });
+    var members = d.members || [];
+
+    // Current members
+    if (members.length > 0) {
+      h += '<div class="team-member-list">';
+      members.forEach(function(mxid) {
+        var user = S.users[mxid];
+        var name = user ? (user.displayName || mxid) : mxid;
+        h += '<div class="team-member-chip">';
+        h += '<span>' + esc(name) + '</span>';
+        h += '<button class="team-member-remove" data-action="team-remove-member" data-mxid="' + esc(mxid) + '" title="Remove">&times;</button>';
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+
+    // Add member dropdown
+    var available = allUsers.filter(function(u) { return members.indexOf(u.mxid) === -1; });
+    if (available.length > 0) {
+      h += '<select class="finp" data-change="team-add-member">';
+      h += '<option value="">Add member\u2026</option>';
+      available.forEach(function(u) {
+        h += '<option value="' + esc(u.mxid) + '">' + esc(u.displayName || u.mxid) + '</option>';
+      });
+      h += '</select>';
+    }
+
+    h += '<div class="edit-btns" style="margin-top:12px">';
+    h += '<button class="hbtn accent" data-action="team-save">' + (isNew ? 'Create' : 'Save') + '</button>';
+    h += '<button class="hbtn" data-action="team-cancel">Cancel</button>';
+    if (!isNew) {
+      h += '<button class="hbtn danger" data-action="team-delete" data-id="' + esc(S.teamEditId) + '" style="margin-left:auto">Delete Team</button>';
+    }
+    h += '</div>';
+    h += '</div>';
+  }
+
+  // List of teams
+  myTeams.forEach(function(team) {
+    if (S.teamEditId === team.id) return; // skip if currently editing this team
+    var isMember = team.members.indexOf(S.currentUser) !== -1;
+    var isCreator = team.createdBy === S.currentUser;
+    var canEdit = isCreator || S.role === 'admin';
+
+    h += '<div class="team-card">';
+    h += '<div class="team-card-header">';
+    h += '<div class="team-card-name">' + esc(team.name) + '</div>';
+    h += '<div class="team-card-actions">';
+    if (canEdit) {
+      h += '<button class="hbtn sm" data-action="team-edit" data-id="' + esc(team.id) + '">Edit</button>';
+    }
+    if (!isMember) {
+      h += '<button class="hbtn sm accent" data-action="team-join" data-id="' + esc(team.id) + '">Join</button>';
+    } else if (!isCreator) {
+      h += '<button class="hbtn sm" data-action="team-leave" data-id="' + esc(team.id) + '">Leave</button>';
+    }
+    h += '</div>';
+    h += '</div>';
+
+    // Member avatars
+    h += '<div class="team-members">';
+    h += '<span class="team-members-label">' + team.members.length + ' member' + (team.members.length !== 1 ? 's' : '') + ':</span> ';
+    team.members.forEach(function(mxid) {
+      var user = S.users[mxid];
+      var name = user ? (user.displayName || mxid) : mxid;
+      h += '<span class="team-member-badge' + (mxid === S.currentUser ? ' team-member-you' : '') + '">' + esc(name) + '</span>';
+    });
+    h += '</div>';
+
+    if (team.createdBy) {
+      var creator = S.users[team.createdBy];
+      var creatorName = creator ? (creator.displayName || team.createdBy) : team.createdBy;
+      h += '<div class="team-meta">Created by ' + esc(creatorName) + ' &middot; ' + timeAgo(team.updatedAt) + '</div>';
+    }
+
+    h += '</div>';
+  });
+
+  h += '</div></div></div>';
+  return h;
+}
+
 function renderAdmin() {
   if (S.role !== 'admin') {
     return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
@@ -4343,7 +4545,7 @@ function renderEditor() {
   if (S.editorTab === 'atty') {
     var attDisplayFn = function(a) { return a.name + ' \u2014 ' + a.firm; };
     var attAll = Object.values(S.attProfiles).filter(function(a) { return !a.archived; });
-    var attFiltered = S.role === 'admin' ? attAll : attAll.filter(function(a) { return a.createdBy === S.currentUser; });
+    var attFiltered = attAll.filter(function(a) { return canSeeUserData(a.createdBy); });
     var attList = sortByFrequency(attFiltered, countAttorneyUsage(), attDisplayFn);
     h += htmlPicker('Attorney 1', attList, attDisplayFn, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
     if (S.inlineAdd && S.inlineAdd.type === 'att1') {
@@ -4415,7 +4617,7 @@ function renderEditor() {
   }
 
   // Archive/recover button for petition
-  var canArchivePet = S.role === 'admin' || pet.createdBy === S.currentUser;
+  var canArchivePet = canSeeUserData(pet.createdBy);
   if (canArchivePet) {
     h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">';
     if (pet.archived) {
@@ -4643,7 +4845,7 @@ function attachBlockListeners() {
       var bid = el.dataset.blockId;
       var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
       if (!pet) return;
-      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+      if (!canSeeUserData(pet.createdBy)) return;
       var block = pet.blocks.find(function(b) { return b.id === bid; });
       if (!block) return;
       var nc = extractBlockContent(el);
@@ -4777,6 +4979,7 @@ function render() {
   if (S.currentView === 'board') h += renderBoard();
   else if (S.currentView === 'clients') h += renderClients();
   else if (S.currentView === 'directory') h += renderDirectory();
+  else if (S.currentView === 'teams') h += renderTeams();
   else if (S.currentView === 'admin') h += renderAdmin();
   else if (S.currentView === 'editor') h += renderEditor();
   // Password change modal overlay
@@ -4858,7 +5061,7 @@ function initKanbanDragDrop() {
       var pet = S.petitions[petId];
       if (!pet) return;
       if (pet.stage === newStage) return; // dropped in same column
-      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+      if (!canSeeUserData(pet.createdBy)) return;
 
       // Stage gate: check requirements for advancing
       var oldIdx = STAGES.indexOf(pet.stage);
@@ -5178,7 +5381,7 @@ document.addEventListener('click', function(e) {
   if (action === 'archive-petition') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
-    var canArchive = S.role === 'admin' || pet.createdBy === S.currentUser;
+    var canArchive = canSeeUserData(pet.createdBy);
     if (!canArchive) return;
     S.petitions[pet.id] = Object.assign({}, pet, { archived: true });
     S.log.push({ op: 'ARCHIVE', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
@@ -5193,7 +5396,7 @@ document.addEventListener('click', function(e) {
   if (action === 'recover-petition') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
-    var canRecover = S.role === 'admin' || pet.createdBy === S.currentUser;
+    var canRecover = canSeeUserData(pet.createdBy);
     if (!canRecover) return;
     var recovered = Object.assign({}, pet);
     delete recovered.archived;
@@ -5217,7 +5420,7 @@ document.addEventListener('click', function(e) {
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     var idx = STAGES.indexOf(pet.stage);
     var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
     if (ni < 0 || ni >= STAGES.length) return;
@@ -5249,7 +5452,7 @@ document.addEventListener('click', function(e) {
     var id = btn.dataset.id;
     var cl = S.clients[id];
     if (!cl) return;
-    var canArchive = S.role === 'admin' || Object.values(S.petitions).some(function(p) { return p.clientId === id && p.createdBy === S.currentUser; });
+    var canArchive = Object.values(S.petitions).some(function(p) { return p.clientId === id && canSeeUserData(p.createdBy); });
     if (!canArchive) return;
     cl.archived = true;
     S.log.push({ op: 'ARCHIVE', target: id, payload: cl.name, frame: { t: now(), entity: 'client' } });
@@ -5275,7 +5478,7 @@ document.addEventListener('click', function(e) {
     var id = btn.dataset.id;
     var cl = S.clients[id];
     if (!cl) return;
-    var canRecover = S.role === 'admin' || Object.values(S.petitions).some(function(p) { return p.clientId === id && p.createdBy === S.currentUser; });
+    var canRecover = Object.values(S.petitions).some(function(p) { return p.clientId === id && canSeeUserData(p.createdBy); });
     if (!canRecover) return;
     delete cl.archived;
     S.log.push({ op: 'RECOVER', target: id, payload: cl.name, frame: { t: now(), entity: 'client' } });
@@ -5603,6 +5806,114 @@ document.addEventListener('click', function(e) {
         .catch(function(e) { console.error(e); toast('Recover attorney failed', 'error'); });
     }
     setState({ editId: null, draft: {} });
+    return;
+  }
+
+  // ── Team actions ──────────────────────────────────────────────
+  if (action === 'team-create') {
+    setState({ teamEditId: 'new', teamDraft: { name: '', members: [S.currentUser] } });
+    return;
+  }
+  if (action === 'team-edit') {
+    var id = btn.dataset.id;
+    var team = S.teams[id];
+    if (!team) return;
+    setState({ teamEditId: id, teamDraft: { name: team.name, members: (team.members || []).slice() } });
+    return;
+  }
+  if (action === 'team-cancel') {
+    setState({ teamEditId: null, teamDraft: {} });
+    return;
+  }
+  if (action === 'team-save') {
+    var d = S.teamDraft;
+    if (!d.name || !d.name.trim()) { toast('Team name is required', 'error'); return; }
+    var isNew = S.teamEditId === 'new';
+    var id = isNew ? uid() : S.teamEditId;
+    var members = d.members || [];
+    var oldTeam = isNew ? null : S.teams[id];
+    var newMembers = [];
+    if (oldTeam) {
+      // Find newly added members
+      members.forEach(function(m) {
+        if (oldTeam.members.indexOf(m) === -1) newMembers.push(m);
+      });
+    }
+    S.teams[id] = {
+      id: id,
+      name: d.name.trim(),
+      members: members,
+      createdBy: isNew ? S.currentUser : (S.teams[id] ? S.teams[id].createdBy : S.currentUser),
+      updatedAt: now(),
+    };
+    S.log.push({ op: isNew ? 'CREATE' : 'UPDATE', target: id, payload: d.name.trim(), frame: { t: now(), entity: 'team' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { name: d.name.trim(), members: members }, id)
+        .then(function() {
+          toast(isNew ? 'Team created' : 'Team updated', 'success');
+          // Invite new members to existing client rooms of all team members
+          newMembers.forEach(function(mxid) {
+            inviteUserToTeamRooms(mxid, id);
+          });
+        })
+        .catch(function(e) { console.error(e); toast('Team save failed', 'error'); });
+    }
+    setState({ teamEditId: null, teamDraft: {} });
+    return;
+  }
+  if (action === 'team-delete') {
+    var id = btn.dataset.id;
+    if (!id || !confirm('Delete this team? Members will lose shared access to each other\'s data.')) return;
+    S.teams[id] = Object.assign({}, S.teams[id], { deleted: true });
+    delete S.teams[id];
+    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'team' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { deleted: true }, id)
+        .then(function() { toast('Team deleted', 'success'); })
+        .catch(function(e) { console.error(e); toast('Team delete failed', 'error'); });
+    }
+    setState({ teamEditId: null, teamDraft: {} });
+    return;
+  }
+  if (action === 'team-remove-member') {
+    var mxid = btn.dataset.mxid;
+    if (S.teamDraft.members) {
+      S.teamDraft.members = S.teamDraft.members.filter(function(m) { return m !== mxid; });
+      setState({});
+    }
+    return;
+  }
+  if (action === 'team-join') {
+    var id = btn.dataset.id;
+    var team = S.teams[id];
+    if (!team) return;
+    if (team.members.indexOf(S.currentUser) !== -1) return;
+    team.members.push(S.currentUser);
+    team.updatedAt = now();
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { name: team.name, members: team.members }, id)
+        .then(function() {
+          toast('Joined team: ' + team.name, 'success');
+          // Get access to team rooms
+          inviteUserToTeamRooms(S.currentUser, id);
+        })
+        .catch(function(e) { console.error(e); toast('Join failed', 'error'); });
+    }
+    setState({});
+    return;
+  }
+  if (action === 'team-leave') {
+    var id = btn.dataset.id;
+    var team = S.teams[id];
+    if (!team) return;
+    team.members = team.members.filter(function(m) { return m !== S.currentUser; });
+    team.updatedAt = now();
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { name: team.name, members: team.members }, id)
+        .then(function() { toast('Left team: ' + team.name, 'info'); })
+        .catch(function(e) { console.error(e); toast('Leave failed', 'error'); });
+    }
+    setState({});
     return;
   }
 
@@ -6005,6 +6316,11 @@ function dispatchFieldChange(action, key, val) {
     return;
   }
 
+  if (action === 'team-field') {
+    S.teamDraft[key] = val;
+    return;
+  }
+
   if (action === 'national-field') {
     if (S.role !== 'admin') return;
     S.national[key] = val;
@@ -6023,12 +6339,10 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
-    if (S.role !== 'admin') {
-      var hasOwnership = Object.values(S.petitions).some(function(p) {
-        return p.clientId === client.id && p.createdBy === S.currentUser;
-      });
-      if (!hasOwnership) return;
-    }
+    var hasOwnership = Object.values(S.petitions).some(function(p) {
+      return p.clientId === client.id && canSeeUserData(p.createdBy);
+    });
+    if (!hasOwnership) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
@@ -6048,7 +6362,7 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
@@ -6070,7 +6384,7 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
@@ -6172,6 +6486,17 @@ document.addEventListener('change', function(e) {
     return;
   }
 
+  // Team member add (select dropdown)
+  if (action === 'team-add-member') {
+    if (val && S.teamDraft.members) {
+      if (S.teamDraft.members.indexOf(val) === -1) {
+        S.teamDraft.members.push(val);
+      }
+      setState({});
+    }
+    return;
+  }
+
   if (action === 'board-table-group') {
     setState({ boardTableGroup: val });
     return;
@@ -6216,7 +6541,7 @@ document.addEventListener('change', function(e) {
 
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) return;
-  if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+  if (!canSeeUserData(pet.createdBy)) return;
 
   if (action === 'apply-court') {
     var c = S.courts[val];
