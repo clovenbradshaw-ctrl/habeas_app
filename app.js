@@ -557,14 +557,14 @@ var NATIONAL_OVERRIDE_FIELDS = [
 
 var DEFAULT_PAGE_SETTINGS = {
   headerLeft: '', headerCenter: '', headerRight: '',
-  footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '{{PAGE}}',
+  footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '',
   showHeaderOnFirstPage: false,
   showFooterOnFirstPage: true
 };
 
 function buildVarMap(c, p, a1, a2, nat) {
   c = c || {}; p = p || {}; a1 = a1 || {}; a2 = a2 || {}; nat = nat || {};
-  return {
+  var vars = {
     COURT_DISTRICT: p.district || '', COURT_DIVISION: p.division || '', COURT_WEBSITE: p.courtWebsite || '',
     CASE_NUMBER: p.caseNumber || '',
     PETITIONER_FULL_NAME: c.name || '', PETITIONER_COUNTRY: c.country || '',
@@ -594,6 +594,18 @@ function buildVarMap(c, p, a1, a2, nat) {
     ATTORNEY2_PHONE: a2.phone || '', ATTORNEY2_EMAIL: a2.email || '',
     ATTORNEY2_PRO_HAC: a2.proHacVice || '',
   };
+  // Merge form-derived variables from client forms data
+  var forms = c._forms || {};
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    var formData = forms[form.id] || {};
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      var field = form.fields[fj];
+      var varName = form.varPrefix + field.key.replace(/([A-Z])/g, '_$1').toUpperCase();
+      vars[varName] = formData[field.key] || '';
+    }
+  }
+  return vars;
 }
 
 // ── Default Template Blocks ──────────────────────────────────────
@@ -729,6 +741,96 @@ var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
 var EVT_OP       = 'com.amino.op';
 var EVT_GITHUB   = 'com.amino.config.github';
 var EVT_SUBMISSION = 'com.amino.submission';
+var EVT_TEAM     = 'com.amino.team';
+var EVT_CLIENT_FORMS = 'com.amino.client.forms';
+
+// ── Client Form Definitions ──────────────────────────────────────
+// Each form has an id, title, and fields. Each field has a key that becomes
+// a template variable (uppercased, prefixed with the form's varPrefix).
+// Form data is stored per-client and flows into buildVarMap.
+var CLIENT_FORMS = [
+  {
+    id: 'family',
+    title: 'Family Information',
+    varPrefix: 'FAMILY_',
+    fields: [
+      { key: 'spouseName', label: 'Spouse Name', ph: 'Maria Rivera' },
+      { key: 'spouseStatus', label: 'Spouse Immigration Status', ph: 'U.S. citizen', type: 'enum-or-custom', options: ['U.S. citizen', 'Lawful permanent resident', 'DACA recipient', 'Pending asylum', 'Undocumented'] },
+      { key: 'childrenCount', label: 'Number of Children', ph: '3', validate: VALIDATORS.numeric },
+      { key: 'childrenAges', label: 'Children Ages', ph: '5, 8, 12' },
+      { key: 'childrenCitizenship', label: 'Children Citizenship', ph: 'All U.S. citizens', type: 'enum-or-custom', options: ['All U.S. citizens', 'All lawful permanent residents', 'Mixed status'] },
+      { key: 'dependents', label: 'Dependents Description', ph: 'three U.S. citizen children and a lawful permanent resident spouse' },
+      { key: 'familyHardship', label: 'Family Hardship if Detained', ph: 'family will lose sole breadwinner and children will suffer emotional and financial hardship' },
+    ]
+  },
+  {
+    id: 'employment',
+    title: 'Employment & Financial',
+    varPrefix: 'EMPLOY_',
+    fields: [
+      { key: 'employer', label: 'Current/Last Employer', ph: 'ABC Construction' },
+      { key: 'occupation', label: 'Occupation', ph: 'construction worker' },
+      { key: 'yearsEmployed', label: 'Years Employed', ph: '8' },
+      { key: 'isProvider', label: 'Primary Provider', ph: 'is the sole financial provider for his family', type: 'enum-or-custom', options: ['is the sole financial provider for his family', 'is a primary financial provider for his family', 'contributes financially to his family'] },
+      { key: 'taxFiling', label: 'Tax Filing History', ph: 'has filed federal and state taxes every year since 2015' },
+      { key: 'propertyOwner', label: 'Property/Assets', ph: 'owns a home in Nashville, Tennessee' },
+    ]
+  },
+  {
+    id: 'immigration',
+    title: 'Immigration History',
+    varPrefix: 'IMMIG_',
+    fields: [
+      { key: 'aNumber', label: 'A-Number', ph: '123-456-789' },
+      { key: 'ntaDate', label: 'NTA Date', ph: 'January 20, 2026', type: 'date' },
+      { key: 'ntaCharges', label: 'NTA Charges', ph: 'INA § 212(a)(6)(A)(i)' },
+      { key: 'hearingDate', label: 'Next Hearing Date', ph: 'March 15, 2026', type: 'date' },
+      { key: 'hearingLocation', label: 'Hearing Location', ph: 'Nashville Immigration Court' },
+      { key: 'ijName', label: 'Immigration Judge', ph: 'Judge Smith' },
+      { key: 'priorOrders', label: 'Prior Removal Orders', ph: 'has no prior removal orders', type: 'enum-or-custom', options: ['has no prior removal orders', 'has a prior removal order from [year]', 'has a prior voluntary departure order'] },
+      { key: 'asylumFiled', label: 'Asylum Application', ph: 'has a pending asylum application', type: 'enum-or-custom', options: ['has a pending asylum application', 'has not filed an asylum application', 'asylum application was denied on [date]'] },
+      { key: 'bondHistory', label: 'Bond History', ph: 'was denied a bond hearing under § 1225(b)(2)' },
+    ]
+  },
+  {
+    id: 'health',
+    title: 'Health & Conditions of Confinement',
+    varPrefix: 'HEALTH_',
+    fields: [
+      { key: 'medicalConditions', label: 'Medical Conditions', ph: 'suffers from diabetes and hypertension' },
+      { key: 'medications', label: 'Medications Needed', ph: 'insulin and blood pressure medication' },
+      { key: 'mentalHealth', label: 'Mental Health', ph: 'has experienced anxiety and depression due to prolonged detention' },
+      { key: 'detentionConditions', label: 'Conditions of Confinement', ph: 'has been held in a facility with inadequate medical care' },
+      { key: 'covidRisk', label: 'COVID/Health Risk Factors', ph: 'is at heightened risk due to underlying conditions' },
+    ]
+  },
+  {
+    id: 'community',
+    title: 'Community & Character',
+    varPrefix: 'COMMUNITY_',
+    fields: [
+      { key: 'yearsInCommunity', label: 'Years in Community', ph: '12' },
+      { key: 'churchMember', label: 'Religious Community', ph: 'is an active member of St. Mary\'s Catholic Church' },
+      { key: 'communityOrgs', label: 'Community Organizations', ph: 'volunteers with local food bank' },
+      { key: 'characterRefs', label: 'Character References', ph: 'has letters of support from his pastor, employer, and neighbors' },
+      { key: 'flightRisk', label: 'Flight Risk Assessment', ph: 'has deep roots in the community, has no incentive to flee, and has always appeared at all immigration hearings' },
+      { key: 'dangerAssessment', label: 'Danger to Community', ph: 'poses no danger to the community' },
+    ]
+  },
+  {
+    id: 'custom',
+    title: 'Additional Facts',
+    varPrefix: 'CUSTOM_',
+    fields: [
+      { key: 'fact1', label: 'Additional Fact 1', ph: '' },
+      { key: 'fact2', label: 'Additional Fact 2', ph: '' },
+      { key: 'fact3', label: 'Additional Fact 3', ph: '' },
+      { key: 'fact4', label: 'Additional Fact 4', ph: '' },
+      { key: 'fact5', label: 'Additional Fact 5', ph: '' },
+      { key: 'fact6', label: 'Additional Fact 6', ph: '' },
+    ]
+  }
+];
 
 // ── Matrix REST Client ───────────────────────────────────────────
 var matrix = {
@@ -1380,6 +1482,9 @@ var S = {
   clients: {},
   petitions: {},
   users: {},
+  teams: {},
+  teamEditId: null,
+  teamDraft: {},
   serverUsersLoaded: false,
   serverUsersError: '',
   log: [],
@@ -1392,6 +1497,9 @@ var S = {
   selectedClientId: null,
   selectedPetitionId: null,
   editorTab: 'client',
+  _expandedForm: null,
+  _clientFormsExpanded: false,
+  _expandedClientForm: null,
   dirTab: 'facilities',
   editId: null,
   draft: {},
@@ -1617,6 +1725,76 @@ function inviteAdminsToRoom(roomId) {
   });
 }
 
+// ── Team Helpers ─────────────────────────────────────────────────
+// Returns true if the current user can see data owned by ownerMxid
+function canSeeUserData(ownerMxid) {
+  if (S.role === 'admin') return true;
+  if (ownerMxid === S.currentUser) return true;
+  // Check if ownerMxid shares any team with current user
+  var teams = S.teams;
+  for (var tid in teams) {
+    var t = teams[tid];
+    if (t.members && t.members.indexOf(S.currentUser) !== -1 && t.members.indexOf(ownerMxid) !== -1) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Returns array of MXIDs that share any team with the given user (excluding the user themselves)
+function getTeammateMxids(mxid) {
+  var mates = {};
+  var teams = S.teams;
+  for (var tid in teams) {
+    var t = teams[tid];
+    if (t.members && t.members.indexOf(mxid) !== -1) {
+      t.members.forEach(function(m) {
+        if (m !== mxid && S.users[m] && S.users[m].active !== false) {
+          mates[m] = true;
+        }
+      });
+    }
+  }
+  return Object.keys(mates);
+}
+
+// Invite all teammates of the current user to a room
+function inviteTeamToRoom(roomId) {
+  var mates = getTeammateMxids(S.currentUser);
+  mates.forEach(function(mxid) {
+    matrix.inviteUser(roomId, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(roomId, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite/set PL for teammate', mxid, 'in room', roomId, e);
+      });
+  });
+}
+
+// When a user is added to a team, invite them to all existing client rooms of team members
+function inviteUserToTeamRooms(mxid, teamId) {
+  var team = S.teams[teamId];
+  if (!team || !team.members) return;
+  // Find all client rooms owned by any team member
+  var teamMemberPetitions = Object.values(S.petitions).filter(function(p) {
+    return team.members.indexOf(p.createdBy) !== -1;
+  });
+  var roomIds = {};
+  teamMemberPetitions.forEach(function(p) {
+    if (p.roomId) roomIds[p.roomId] = true;
+  });
+  Object.keys(roomIds).forEach(function(rid) {
+    matrix.inviteUser(rid, mxid)
+      .then(function() {
+        return matrix.setPowerLevel(rid, mxid, 50);
+      })
+      .catch(function(e) {
+        console.warn('Failed to invite', mxid, 'to team room', rid, e);
+      });
+  });
+}
+
 // ── Hydration from Matrix ────────────────────────────────────────
 function hydrateFromMatrix() {
   // Discover or auto-create org and templates rooms
@@ -1750,6 +1928,22 @@ function hydrateFromMatrix() {
         }
       });
 
+      // Teams
+      var teamEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_TEAM);
+      var teams = {};
+      Object.keys(teamEvents).forEach(function(k) {
+        var e = teamEvents[k];
+        if (k && e.content && e.content.name && !e.content.deleted) {
+          teams[k] = {
+            id: k,
+            name: e.content.name,
+            members: e.content.members || [],
+            createdBy: e.sender,
+            updatedAt: new Date(e.origin_server_ts).toISOString(),
+          };
+        }
+      });
+
       // Client rooms + petitions
       var clients = {};
       var petitions = {};
@@ -1769,7 +1963,14 @@ function hydrateFromMatrix() {
           archived: !!cc.archived,
           createdAt: new Date(clientEvt.origin_server_ts).toISOString(),
           roomId: roomId,
+          _forms: {},
         };
+
+        // Client forms data
+        var formsEvt = matrix.getStateEvent(roomId, EVT_CLIENT_FORMS, '');
+        if (formsEvt && formsEvt.content && formsEvt.content.forms) {
+          clients[cid]._forms = formsEvt.content.forms;
+        }
 
         // Petitions in this room
         var petEvents = matrix.getStateEvents(roomId, EVT_PETITION);
@@ -1826,7 +2027,7 @@ function hydrateFromMatrix() {
       setState({
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
-        users: users, role: role, currentUser: matrix.userId, syncError: syncError,
+        users: users, teams: teams, role: role, currentUser: matrix.userId, syncError: syncError,
         mustChangePassword: mustChangePassword,
       });
 
@@ -2150,7 +2351,7 @@ function buildDocHTML(blocks, vars, pageSettings) {
     '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
     '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
     '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
-    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
+    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0;border:none}table.c td{vertical-align:top;padding:0 4pt;border:none}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
 }
 
 function doExportDoc(blocks, vars, name, pageSettings) {
@@ -2204,7 +2405,7 @@ function downloadCSV(csvString, filename) {
 
 function exportPetitionsCSV() {
   var all = Object.values(S.petitions).filter(function(p) { return !p.archived; });
-  var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  var vis = all.filter(function(p) { return canSeeUserData(p.createdBy); });
   vis.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
 
   var headers = ['Client Name', 'Case Number', 'Stage', 'Readiness %', 'District', 'Division',
@@ -2252,7 +2453,7 @@ function exportClientsCSV() {
   } else {
     var myClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
-      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+      if (canSeeUserData(p.createdBy)) myClientIds[p.clientId] = true;
     });
     clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
   }
@@ -2359,11 +2560,10 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
           function resolveExpVarForWord(text) {
             if (!text) return '';
             var r = text.replace(/\{\{CASE_NUMBER\}\}/g, esc(caseNo));
-            var pageField = '<span style="mso-field-code:\'PAGE \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
-            var npagesField = '<span style="mso-field-code:\'NUMPAGES \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
-            r = r.replace(/\{\{PAGE\}\}/g, 'Page ' + pageField + ' of ' + npagesField);
-            r = r.replace(/\{\{PAGE_NUM\}\}/g, pageField);
-            r = r.replace(/\{\{TOTAL_PAGES\}\}/g, npagesField);
+            // Strip page number variables — page numbers are not included in Word export
+            r = r.replace(/\{\{PAGE\}\}/g, '');
+            r = r.replace(/\{\{PAGE_NUM\}\}/g, '');
+            r = r.replace(/\{\{TOTAL_PAGES\}\}/g, '');
             return r;
           }
           var cellStyle = 'border:none;font-size:9pt;font-family:\'Times New Roman\',serif;padding:0';
@@ -2393,7 +2593,7 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
         }
       } else {
         // PDF path: embed raw page settings for DOM-based pagination in the print window
-        var printCss = hfCss + '\n@media print{.page{display:flex;flex-direction:column;min-height:9in}}';
+        var printCss = hfCss + '\n@page{size:Letter;margin:0}\n@media print{.page{width:8.5in;height:11in;padding:1in;margin:0;box-sizing:border-box;display:flex;flex-direction:column;overflow:hidden}}';
         html = html.replace('</style>', printCss + '\n</style>');
         var psData = JSON.stringify({
           headerLeft: ps.headerLeft || '',
@@ -2575,7 +2775,7 @@ function debouncedSync(key, fn) {
 }
 
 // Actions that should only save on blur (field exit), not every keystroke
-var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1 };
+var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1, 'editor-form-field': 1, 'client-form-field': 1 };
 
 // Update only the in-memory state for a field (no log entry, no Matrix sync).
 // Called on every keystroke to keep the UI responsive; the actual save
@@ -2592,12 +2792,10 @@ function updateFieldLocally(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
-    if (S.role !== 'admin') {
-      var hasOwnership = Object.values(S.petitions).some(function(p) {
-        return p.clientId === client.id && p.createdBy === S.currentUser;
-      });
-      if (!hasOwnership) return;
-    }
+    var hasOwnership = Object.values(S.petitions).some(function(p) {
+      return p.clientId === client.id && canSeeUserData(p.createdBy);
+    });
+    if (!hasOwnership) return;
     client[key] = val;
     refreshVariableSpans();
     return;
@@ -2605,7 +2803,7 @@ function updateFieldLocally(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
@@ -2615,8 +2813,37 @@ function updateFieldLocally(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     pet[key] = val;
+    refreshVariableSpans();
+    return;
+  }
+  if (action === 'editor-form-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    var client = S.clients[pet.clientId];
+    if (!client) return;
+    var formId = arguments[3]; // extra arg for form ID
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    refreshVariableSpans();
+    return;
+  }
+  if (action === 'client-form-field') {
+    var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+    if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
+    var formId = arguments[3];
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
     refreshVariableSpans();
     return;
   }
@@ -2643,6 +2870,17 @@ function syncClientToMatrix(client, label) {
     if (label) toast('CON \u22C8 ' + label, 'success');
     return data;
   }).catch(function(e) { console.error('Client sync failed:', e); toast('ALT \u21CC client sync failed', 'error'); });
+}
+
+function syncClientFormsToMatrix(client) {
+  if (!matrix.isReady() || !client.roomId) return Promise.resolve();
+  var formsData = client._forms || {};
+  return matrix.sendStateEvent(client.roomId, EVT_CLIENT_FORMS, {
+    forms: formsData,
+  }, '').then(function(data) {
+    toast('CON \u22C8 forms', 'success');
+    return data;
+  }).catch(function(e) { console.error('Forms sync failed:', e); toast('ALT \u21CC forms sync failed', 'error'); });
 }
 
 // Create a Matrix room for a client and sync initial data
@@ -2711,6 +2949,7 @@ function createClientRoom(clientId) {
     console.log('Created Matrix room for client', clientId, '→', roomId);
     if (matrix.isReady()) {
       inviteAdminsToRoom(roomId);
+      inviteTeamToRoom(roomId);
     }
     delete _pendingRoomCreations[clientId];
     return roomId;
@@ -3169,7 +3408,7 @@ function renderHeader() {
   var petClient = pet ? S.clients[pet.clientId] : null;
   var h = '<header class="hdr"><div class="hdr-left">';
   h += '<span class="hdr-brand">Habeas</span><nav class="hdr-nav">';
-  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory']];
+  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory'],['teams','Teams']];
   if (S.role === 'admin') tabs.push(['admin','Admin']);
   if (pet) tabs.push(['editor','Editor']);
   tabs.forEach(function(t) {
@@ -3200,7 +3439,7 @@ function renderHeader() {
 
 function renderBoard() {
   var all = Object.values(S.petitions);
-  var vis = S.role === 'admin' ? all : all.filter(function(p) { return p.createdBy === S.currentUser; });
+  var vis = all.filter(function(p) { return canSeeUserData(p.createdBy); });
   // Filter archived petitions unless toggle is active
   vis = vis.filter(function(p) { return S.boardShowArchived || !p.archived; });
 
@@ -3235,11 +3474,20 @@ function renderBoard() {
   if (S.role !== 'admin') {
     var myBoardClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
-      if (p.createdBy === S.currentUser) myBoardClientIds[p.clientId] = true;
+      if (canSeeUserData(p.createdBy)) myBoardClientIds[p.clientId] = true;
     });
     clientList = clientList.filter(function(c) { return myBoardClientIds[c.id]; });
   }
-  if (S.boardAddingMatter && clientList.length > 0) {
+  if (S.boardAddingMatter === 'new') {
+    h += '<div class="board-add-matter">';
+    h += '<input class="finp board-new-client-name" type="text" placeholder="Client name\u2026" data-action="board-new-client-input" autofocus />';
+    h += '<button class="hbtn accent" data-action="board-create-new-client">Create &amp; Open</button>';
+    if (clientList.length > 0) {
+      h += '<button class="hbtn" data-action="board-show-existing">Existing Client</button>';
+    }
+    h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
+    h += '</div>';
+  } else if (S.boardAddingMatter === 'existing') {
     h += '<div class="board-add-matter">';
     h += '<select class="finp board-add-matter-sel" data-change="board-create-matter">';
     h += '<option value="">Select client\u2026</option>';
@@ -3247,6 +3495,7 @@ function renderBoard() {
       h += '<option value="' + c.id + '">' + esc(c.name || 'Unnamed') + '</option>';
     });
     h += '</select>';
+    h += '<button class="hbtn" data-action="board-show-new">New Client</button>';
     h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
     h += '</div>';
   } else {
@@ -3323,7 +3572,7 @@ function renderBoardKanban(vis) {
       var cl = S.clients[p.clientId];
       var si = STAGES.indexOf(p.stage);
       var attNames = petAttorneyNames(p);
-      var canArchivePet = S.role === 'admin' || p.createdBy === S.currentUser;
+      var canArchivePet = canSeeUserData(p.createdBy);
       var rdns = computeReadiness(p, cl || {});
       var pctW = Math.round(rdns.score * 100);
       h += '<div class="kb-card' + (p.archived ? ' archived' : '') + '" draggable="true" data-drag-id="' + p.id + '" style="border-left-color:' + m.color + ';' + fadeStyle + '" data-action="open-petition" data-id="' + p.id + '">';
@@ -3573,7 +3822,7 @@ function renderClients() {
   } else {
     var myClientIds = {};
     Object.values(S.petitions).forEach(function(p) {
-      if (p.createdBy === S.currentUser) myClientIds[p.clientId] = true;
+      if (canSeeUserData(p.createdBy)) myClientIds[p.clientId] = true;
     });
     clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
   }
@@ -3608,7 +3857,7 @@ function renderClients() {
   h += '</div></div>';
   h += '<div class="cv-detail">';
   if (client) {
-    var canArchiveClient = S.role === 'admin' || clientPets.some(function(p) { return p.createdBy === S.currentUser; });
+    var canArchiveClient = clientPets.some(function(p) { return canSeeUserData(p.createdBy); });
     h += '<div class="cv-detail-head"><h2>' + esc(client.name || 'New Client') + '</h2>';
     if (client.archived) {
       h += '<span class="archived-badge">Archived</span>';
@@ -3619,6 +3868,7 @@ function renderClients() {
     }
     h += '</div>';
     h += htmlFieldGroup('Client Information', CLIENT_FIELDS, client, 'client-field');
+    h += renderClientFormsSection(client);
     if (clientPets.length > 0) {
       h += '<div class="fg"><div class="fg-title">Matters</div>';
       clientPets.forEach(function(p) {
@@ -4295,6 +4545,7 @@ function renderSynapseAdmin() {
   return h;
 }
 
+
 function renderSubmissionsReview() {
   var h = '<div class="dir-section"><div class="dir-head"><h3>Public Directory Submissions</h3>';
   h += '<button class="hbtn sm" data-action="load-submissions">Refresh</button></div>';
@@ -4359,6 +4610,113 @@ function renderSubmissionsReview() {
   h += '</div></div>';
   return h;
 }
+
+// ── Teams View ───────────────────────────────────────────────────
+function renderTeams() {
+  var h = '<div class="dir-view"><div class="dir-body">';
+  h += '<div class="dir-section wide">';
+  h += '<div class="dir-head"><h3>Teams</h3>';
+  h += '<button class="hbtn sm accent" data-action="team-create">+ New Team</button>';
+  h += '</div>';
+  h += '<p class="dir-desc">Teams let members share clients, petitions, and attorney profiles with each other. Create a team and add members to start collaborating.</p>';
+
+  var teamList = Object.values(S.teams);
+  var myTeams = teamList.filter(function(t) {
+    return t.members.indexOf(S.currentUser) !== -1 || t.createdBy === S.currentUser || S.role === 'admin';
+  });
+
+  if (myTeams.length === 0 && !S.teamEditId) {
+    h += '<div class="dir-empty">No teams yet. Create one to start sharing data with other users.</div>';
+  }
+
+  if (S.teamEditId) {
+    var isNew = S.teamEditId === 'new';
+    var d = S.teamDraft;
+    h += '<div class="edit-form team-edit-form">';
+    h += '<div class="fg-title">' + (isNew ? 'Create Team' : 'Edit Team') + '</div>';
+    h += '<label class="flbl">Team Name</label>';
+    h += '<input class="finp" data-change="team-field" data-field-key="name" value="' + esc(d.name || '') + '" placeholder="e.g. Texas Office">';
+
+    h += '<label class="flbl" style="margin-top:12px">Members</label>';
+    var allUsers = Object.values(S.users).filter(function(u) { return u.active !== false; });
+    var members = d.members || [];
+
+    if (members.length > 0) {
+      h += '<div class="team-member-list">';
+      members.forEach(function(mxid) {
+        var user = S.users[mxid];
+        var name = user ? (user.displayName || mxid) : mxid;
+        h += '<div class="team-member-chip">';
+        h += '<span>' + esc(name) + '</span>';
+        h += '<button class="team-member-remove" data-action="team-remove-member" data-mxid="' + esc(mxid) + '" title="Remove">&times;</button>';
+        h += '</div>';
+      });
+      h += '</div>';
+    }
+
+    var available = allUsers.filter(function(u) { return members.indexOf(u.mxid) === -1; });
+    if (available.length > 0) {
+      h += '<select class="finp" data-change="team-add-member">';
+      h += '<option value="">Add member\u2026</option>';
+      available.forEach(function(u) {
+        h += '<option value="' + esc(u.mxid) + '">' + esc(u.displayName || u.mxid) + '</option>';
+      });
+      h += '</select>';
+    }
+
+    h += '<div class="edit-btns" style="margin-top:12px">';
+    h += '<button class="hbtn accent" data-action="team-save">' + (isNew ? 'Create' : 'Save') + '</button>';
+    h += '<button class="hbtn" data-action="team-cancel">Cancel</button>';
+    if (!isNew) {
+      h += '<button class="hbtn danger" data-action="team-delete" data-id="' + esc(S.teamEditId) + '" style="margin-left:auto">Delete Team</button>';
+    }
+    h += '</div>';
+    h += '</div>';
+  }
+
+  myTeams.forEach(function(team) {
+    if (S.teamEditId === team.id) return;
+    var isMember = team.members.indexOf(S.currentUser) !== -1;
+    var isCreator = team.createdBy === S.currentUser;
+    var canEdit = isCreator || S.role === 'admin';
+
+    h += '<div class="team-card">';
+    h += '<div class="team-card-header">';
+    h += '<div class="team-card-name">' + esc(team.name) + '</div>';
+    h += '<div class="team-card-actions">';
+    if (canEdit) {
+      h += '<button class="hbtn sm" data-action="team-edit" data-id="' + esc(team.id) + '">Edit</button>';
+    }
+    if (!isMember) {
+      h += '<button class="hbtn sm accent" data-action="team-join" data-id="' + esc(team.id) + '">Join</button>';
+    } else if (!isCreator) {
+      h += '<button class="hbtn sm" data-action="team-leave" data-id="' + esc(team.id) + '">Leave</button>';
+    }
+    h += '</div>';
+    h += '</div>';
+
+    h += '<div class="team-members">';
+    h += '<span class="team-members-label">' + team.members.length + ' member' + (team.members.length !== 1 ? 's' : '') + ':</span> ';
+    team.members.forEach(function(mxid) {
+      var user = S.users[mxid];
+      var name = user ? (user.displayName || mxid) : mxid;
+      h += '<span class="team-member-badge' + (mxid === S.currentUser ? ' team-member-you' : '') + '">' + esc(name) + '</span>';
+    });
+    h += '</div>';
+
+    if (team.createdBy) {
+      var creator = S.users[team.createdBy];
+      var creatorName = creator ? (creator.displayName || team.createdBy) : team.createdBy;
+      h += '<div class="team-meta">Created by ' + esc(creatorName) + ' &middot; ' + timeAgo(team.updatedAt) + '</div>';
+    }
+
+    h += '</div>';
+  });
+
+  h += '</div></div></div>';
+  return h;
+}
+
 
 function renderAdmin() {
   if (S.role !== 'admin') {
@@ -4463,6 +4821,149 @@ function renderFilingPanel(pet, client) {
   return h;
 }
 
+function renderClientFormsSection(client) {
+  var forms = client._forms || {};
+  var totalFilled = 0;
+  var totalFields = 0;
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    var formData = forms[form.id] || {};
+    totalFields += form.fields.length;
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      if (formData[form.fields[fj].key] && formData[form.fields[fj].key].trim()) totalFilled++;
+    }
+  }
+  var h = '<div class="fg"><div class="fg-title form-toggle" data-action="toggle-client-forms">';
+  h += '<span class="form-arrow">' + (S._clientFormsExpanded ? '\u25BE' : '\u25B8') + '</span> ';
+  h += 'Client Forms';
+  if (totalFilled > 0) h += ' <span class="form-count">' + totalFilled + '/' + totalFields + '</span>';
+  h += '</div>';
+  if (S._clientFormsExpanded) {
+    for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+      var form = CLIENT_FORMS[fi];
+      var formData = forms[form.id] || {};
+      var filledCount = 0;
+      for (var fj = 0; fj < form.fields.length; fj++) {
+        if (formData[form.fields[fj].key] && formData[form.fields[fj].key].trim()) filledCount++;
+      }
+      var isExpanded = S._expandedClientForm === form.id;
+      var badge = filledCount > 0 ? ' <span class="form-count">' + filledCount + '/' + form.fields.length + '</span>' : '';
+      h += '<div class="fg form-section" style="margin-left:8px">';
+      h += '<div class="fg-title form-toggle" data-action="toggle-client-form" data-form-id="' + form.id + '">';
+      h += '<span class="form-arrow">' + (isExpanded ? '\u25BE' : '\u25B8') + '</span> ';
+      h += esc(form.title) + badge + '</div>';
+      if (isExpanded) {
+        form.fields.forEach(function(f) {
+          var val = formData[f.key] || '';
+          var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+          h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
+          h += htmlFormFieldInput(f, val, form.id, 'client-form-field');
+          h += '</div>';
+        });
+      }
+      h += '</div>';
+    }
+  }
+  h += '</div>';
+  return h;
+}
+
+function renderFormsTab(client, pet) {
+  var forms = client._forms || {};
+  var h = '';
+
+  // Show variable reference toggle
+  h += '<div class="forms-header">';
+  h += '<p style="font-size:11px;color:var(--muted);margin-bottom:8px">Fill out forms to create variables for your petition. Use <code>{{VARIABLE_NAME}}</code> in the document body.</p>';
+  h += '</div>';
+
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    var formData = forms[form.id] || {};
+    var filledCount = 0;
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      if (formData[form.fields[fj].key] && formData[form.fields[fj].key].trim()) filledCount++;
+    }
+    var isExpanded = S._expandedForm === form.id;
+    var badge = filledCount > 0 ? ' <span class="form-count">' + filledCount + '/' + form.fields.length + '</span>' : '';
+
+    h += '<div class="fg form-section">';
+    h += '<div class="fg-title form-toggle" data-action="toggle-form" data-form-id="' + form.id + '">';
+    h += '<span class="form-arrow">' + (isExpanded ? '\u25BE' : '\u25B8') + '</span> ';
+    h += esc(form.title) + badge + '</div>';
+
+    if (isExpanded) {
+      form.fields.forEach(function(f) {
+        var val = formData[f.key] || '';
+        var chk = val && val.trim() ? '<span class="fchk">&#10003;</span>' : '';
+        var vErr = '';
+        if (f.validate && val && val.trim()) {
+          var err = f.validate(val);
+          if (err) {
+            vErr = '<span class="fval-err">' + esc(err) + '</span>';
+            chk = '<span class="fval-warn">&#9888;</span>';
+          }
+        }
+        var varName = form.varPrefix + f.key.replace(/([A-Z])/g, '_$1').toUpperCase();
+        h += '<div class="frow"><label class="flbl">' + esc(f.label) + chk + '</label>';
+        h += htmlFormFieldInput(f, val, form.id);
+        h += vErr;
+        h += '<div class="fvar-hint">{{' + varName + '}}</div>';
+        h += '</div>';
+      });
+    }
+    h += '</div>';
+  }
+
+  return h;
+}
+
+function htmlFormFieldInput(f, val, formId, changeAction) {
+  changeAction = changeAction || 'editor-form-field';
+  var changeAttr = 'data-change="' + changeAction + '" data-form-id="' + formId + '"';
+  if (f.type === 'enum') {
+    var h = '<select class="finp" data-field-key="' + f.key + '" ' + changeAttr + '>';
+    h += '<option value="">\u2014 Select \u2014</option>';
+    var foundVal = false;
+    for (var i = 0; i < f.options.length; i++) {
+      var opt = f.options[i];
+      if (opt === '---') { h += '<option disabled>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</option>'; continue; }
+      var sel = (opt === val) ? ' selected' : '';
+      if (opt === val) foundVal = true;
+      h += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+    }
+    if (val && val.trim() && !foundVal) {
+      h += '<option value="' + esc(val) + '" selected>' + esc(val) + ' (custom)</option>';
+    }
+    h += '</select>';
+    return h;
+  }
+  if (f.type === 'enum-or-custom') {
+    var isPreset = false;
+    for (var i = 0; i < f.options.length; i++) {
+      if (f.options[i] === val) { isPreset = true; break; }
+    }
+    var isEmpty = !val || !val.trim();
+    var isCustom = !isEmpty && !isPreset;
+    var h = '<select class="finp enum-custom-sel" data-field-key="' + f.key + '" ' + changeAttr.replace(changeAction, changeAction + '-enum') + '>';
+    for (var i = 0; i < f.options.length; i++) {
+      var opt = f.options[i];
+      var sel = (opt === val) ? ' selected' : '';
+      h += '<option value="' + esc(opt) + '"' + sel + '>' + esc(opt) + '</option>';
+    }
+    h += '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Other (custom)</option>';
+    h += '</select>';
+    var display = isCustom ? '' : ' style="display:none"';
+    h += '<input type="text" class="finp enum-custom-inp" value="' + (isCustom ? esc(val) : '') + '"' +
+         ' placeholder="Enter custom value..." data-field-key="' + f.key + '" ' + changeAttr.replace(changeAction, changeAction + '-custom') + display + '>';
+    return h;
+  }
+  if (f.type === 'date') {
+    return '<input type="text" class="finp date-pick" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" ' + changeAttr + ' data-flatpickr="1">';
+  }
+  return '<input type="text" class="finp" value="' + esc(val) + '" placeholder="' + esc(f.ph || '') + '" data-field-key="' + f.key + '" ' + changeAttr + '>';
+}
+
 function renderEditor() {
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) {
@@ -4475,13 +4976,17 @@ function renderEditor() {
   var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
 
   var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
-  [['client','Client'],['court','Court + Facility'],['atty','Attorneys'],['details','Details'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+  [['client','Client'],['forms','Forms'],['court','Court + Facility'],['atty','Attorneys'],['details','Details'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div><div class="ed-fields">';
 
   if (S.editorTab === 'client' && client) {
     h += htmlFieldGroup('Client (shared)', CLIENT_FIELDS, client, 'editor-client-field');
+  }
+
+  if (S.editorTab === 'forms' && client) {
+    h += renderFormsTab(client, pet);
   }
 
   if (S.editorTab === 'court') {
@@ -4514,7 +5019,7 @@ function renderEditor() {
   if (S.editorTab === 'atty') {
     var attDisplayFn = function(a) { return a.name + ' \u2014 ' + a.firm; };
     var attAll = Object.values(S.attProfiles).filter(function(a) { return !a.archived; });
-    var attFiltered = S.role === 'admin' ? attAll : attAll.filter(function(a) { return a.createdBy === S.currentUser; });
+    var attFiltered = attAll.filter(function(a) { return canSeeUserData(a.createdBy); });
     var attList = sortByFrequency(attFiltered, countAttorneyUsage(), attDisplayFn);
     h += htmlPicker('Attorney 1', attList, attDisplayFn, pet._att1Id || '', 'apply-att1', 'inline-add-att1');
     if (S.inlineAdd && S.inlineAdd.type === 'att1') {
@@ -4586,7 +5091,7 @@ function renderEditor() {
   }
 
   // Archive/recover button for petition
-  var canArchivePet = S.role === 'admin' || pet.createdBy === S.currentUser;
+  var canArchivePet = canSeeUserData(pet.createdBy);
   if (canArchivePet) {
     h += '<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">';
     if (pet.archived) {
@@ -4814,7 +5319,7 @@ function attachBlockListeners() {
       var bid = el.dataset.blockId;
       var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
       if (!pet) return;
-      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+      if (!canSeeUserData(pet.createdBy)) return;
       var block = pet.blocks.find(function(b) { return b.id === bid; });
       if (!block) return;
       var nc = extractBlockContent(el);
@@ -4948,6 +5453,7 @@ function render() {
   if (S.currentView === 'board') h += renderBoard();
   else if (S.currentView === 'clients') h += renderClients();
   else if (S.currentView === 'directory') h += renderDirectory();
+  else if (S.currentView === 'teams') h += renderTeams();
   else if (S.currentView === 'admin') h += renderAdmin();
   else if (S.currentView === 'editor') h += renderEditor();
   // Password change modal overlay
@@ -4968,6 +5474,11 @@ function render() {
   // Post-render: pagination for editor
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
+  }
+  // Post-render: focus new-client name input on board
+  if (S.currentView === 'board' && S.boardAddingMatter === 'new') {
+    var ncInput = document.querySelector('.board-new-client-name');
+    if (ncInput) ncInput.focus();
   }
   // Post-render: initialize kanban drag-and-drop
   if (S.currentView === 'board' && S.boardMode === 'kanban') {
@@ -5029,7 +5540,7 @@ function initKanbanDragDrop() {
       var pet = S.petitions[petId];
       if (!pet) return;
       if (pet.stage === newStage) return; // dropped in same column
-      if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+      if (!canSeeUserData(pet.createdBy)) return;
 
       // Stage gate: check requirements for advancing
       var oldIdx = STAGES.indexOf(pet.stage);
@@ -5336,20 +5847,58 @@ document.addEventListener('click', function(e) {
   if (action === 'board-mode') { setState({ boardMode: btn.dataset.mode }); return; }
   if (action === 'toggle-show-all-filed') { setState({ boardShowAllFiled: !S.boardShowAllFiled }); return; }
   if (action === 'board-add-matter') {
-    var clientList = Object.values(S.clients);
-    if (clientList.length === 0) {
-      setState({ currentView: 'clients' });
-    } else {
-      setState({ boardAddingMatter: true });
+    // Default to new client since it's the more common case
+    setState({ boardAddingMatter: 'new' });
+    return;
+  }
+  if (action === 'board-show-existing') { setState({ boardAddingMatter: 'existing' }); return; }
+  if (action === 'board-show-new') { setState({ boardAddingMatter: 'new' }); return; }
+  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
+  if (action === 'board-create-new-client') {
+    var nameInput = document.querySelector('.board-new-client-name');
+    var clientName = nameInput ? nameInput.value.trim() : '';
+    if (!clientName) { if (nameInput) nameInput.focus(); return; }
+    var cid = uid();
+    S.clients[cid] = { id: cid, name: clientName, country: '', yearsInUS: '', entryDate: '', entryMethod: 'without inspection', apprehensionLocation: '', apprehensionDate: '', criminalHistory: 'has no criminal record', communityTies: '', createdAt: now(), roomId: '' };
+    S.log.push({ op: 'CREATE', target: cid, payload: null, frame: { t: now(), entity: 'client' } });
+    createClientRoom(cid).then(function(roomId) {
+      if (roomId) toast('INS \u2295 client', 'success');
+    });
+    // Now create the petition for this client
+    var pid = uid();
+    var clientRoomId = '';
+    S.petitions[pid] = {
+      id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
+      stageHistory: [{ stage: 'intake', at: now() }],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
+      facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
+      natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
+      filingDate: '', filingDay: '', filingMonthYear: '',
+      _bodyEdited: false, _exported: false,
+      pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
+      createdAt: now(), roomId: clientRoomId,
+    };
+    S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    setState({ selectedClientId: cid, selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
+    // Sync petition once room is ready
+    if (_pendingRoomCreations[cid]) {
+      _pendingRoomCreations[cid].then(function(roomId) {
+        if (roomId && S.petitions[pid]) {
+          S.petitions[pid].roomId = roomId;
+          syncPetitionToMatrix(S.petitions[pid], 'petition');
+          matrix.sendStateEvent(roomId, EVT_PETITION_BLOCKS, { blocks: S.petitions[pid].blocks }, pid)
+            .catch(function(e) { console.error('Block sync failed:', e); toast('ALT \u21CC block sync failed', 'error'); });
+        }
+      });
     }
     return;
   }
-  if (action === 'board-cancel-add-matter') { setState({ boardAddingMatter: false }); return; }
   if (action === 'toggle-board-archived') { setState({ boardShowArchived: !S.boardShowArchived }); return; }
   if (action === 'archive-petition') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
-    var canArchive = S.role === 'admin' || pet.createdBy === S.currentUser;
+    var canArchive = canSeeUserData(pet.createdBy);
     if (!canArchive) return;
     S.petitions[pet.id] = Object.assign({}, pet, { archived: true });
     S.log.push({ op: 'ARCHIVE', target: pet.id, payload: pet.caseNumber, frame: { t: now(), entity: 'petition' } });
@@ -5364,7 +5913,7 @@ document.addEventListener('click', function(e) {
   if (action === 'recover-petition') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
-    var canRecover = S.role === 'admin' || pet.createdBy === S.currentUser;
+    var canRecover = canSeeUserData(pet.createdBy);
     if (!canRecover) return;
     var recovered = Object.assign({}, pet);
     delete recovered.archived;
@@ -5388,7 +5937,7 @@ document.addEventListener('click', function(e) {
   if (action === 'stage-change') {
     var pet = S.petitions[btn.dataset.id];
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     var idx = STAGES.indexOf(pet.stage);
     var ni = btn.dataset.dir === 'advance' ? idx + 1 : idx - 1;
     if (ni < 0 || ni >= STAGES.length) return;
@@ -5416,11 +5965,17 @@ document.addEventListener('click', function(e) {
   // Clients
   if (action === 'select-client') { setState({ selectedClientId: btn.dataset.id }); return; }
   if (action === 'toggle-clients-archived') { setState({ clientsShowArchived: !S.clientsShowArchived }); return; }
+  if (action === 'toggle-client-forms') { setState({ _clientFormsExpanded: !S._clientFormsExpanded }); return; }
+  if (action === 'toggle-client-form') {
+    var formId = btn.dataset.formId;
+    setState({ _expandedClientForm: S._expandedClientForm === formId ? null : formId });
+    return;
+  }
   if (action === 'archive-client') {
     var id = btn.dataset.id;
     var cl = S.clients[id];
     if (!cl) return;
-    var canArchive = S.role === 'admin' || Object.values(S.petitions).some(function(p) { return p.clientId === id && p.createdBy === S.currentUser; });
+    var canArchive = Object.values(S.petitions).some(function(p) { return p.clientId === id && canSeeUserData(p.createdBy); });
     if (!canArchive) return;
     cl.archived = true;
     S.log.push({ op: 'ARCHIVE', target: id, payload: cl.name, frame: { t: now(), entity: 'client' } });
@@ -5446,7 +6001,7 @@ document.addEventListener('click', function(e) {
     var id = btn.dataset.id;
     var cl = S.clients[id];
     if (!cl) return;
-    var canRecover = S.role === 'admin' || Object.values(S.petitions).some(function(p) { return p.clientId === id && p.createdBy === S.currentUser; });
+    var canRecover = Object.values(S.petitions).some(function(p) { return p.clientId === id && canSeeUserData(p.createdBy); });
     if (!canRecover) return;
     delete cl.archived;
     S.log.push({ op: 'RECOVER', target: id, payload: cl.name, frame: { t: now(), entity: 'client' } });
@@ -5777,6 +6332,114 @@ document.addEventListener('click', function(e) {
     return;
   }
 
+  // ── Team actions ──────────────────────────────────────────────
+  if (action === 'team-create') {
+    setState({ teamEditId: 'new', teamDraft: { name: '', members: [S.currentUser] } });
+    return;
+  }
+  if (action === 'team-edit') {
+    var id = btn.dataset.id;
+    var team = S.teams[id];
+    if (!team) return;
+    setState({ teamEditId: id, teamDraft: { name: team.name, members: (team.members || []).slice() } });
+    return;
+  }
+  if (action === 'team-cancel') {
+    setState({ teamEditId: null, teamDraft: {} });
+    return;
+  }
+  if (action === 'team-save') {
+    var d = S.teamDraft;
+    if (!d.name || !d.name.trim()) { toast('Team name is required', 'error'); return; }
+    var isNew = S.teamEditId === 'new';
+    var id = isNew ? uid() : S.teamEditId;
+    var members = d.members || [];
+    var oldTeam = isNew ? null : S.teams[id];
+    var newMembers = [];
+    if (oldTeam) {
+      // Find newly added members
+      members.forEach(function(m) {
+        if (oldTeam.members.indexOf(m) === -1) newMembers.push(m);
+      });
+    }
+    S.teams[id] = {
+      id: id,
+      name: d.name.trim(),
+      members: members,
+      createdBy: isNew ? S.currentUser : (S.teams[id] ? S.teams[id].createdBy : S.currentUser),
+      updatedAt: now(),
+    };
+    S.log.push({ op: isNew ? 'CREATE' : 'UPDATE', target: id, payload: d.name.trim(), frame: { t: now(), entity: 'team' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { name: d.name.trim(), members: members }, id)
+        .then(function() {
+          toast(isNew ? 'Team created' : 'Team updated', 'success');
+          // Invite new members to existing client rooms of all team members
+          newMembers.forEach(function(mxid) {
+            inviteUserToTeamRooms(mxid, id);
+          });
+        })
+        .catch(function(e) { console.error(e); toast('Team save failed', 'error'); });
+    }
+    setState({ teamEditId: null, teamDraft: {} });
+    return;
+  }
+  if (action === 'team-delete') {
+    var id = btn.dataset.id;
+    if (!id || !confirm('Delete this team? Members will lose shared access to each other\'s data.')) return;
+    S.teams[id] = Object.assign({}, S.teams[id], { deleted: true });
+    delete S.teams[id];
+    S.log.push({ op: 'DELETE', target: id, payload: null, frame: { t: now(), entity: 'team' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { deleted: true }, id)
+        .then(function() { toast('Team deleted', 'success'); })
+        .catch(function(e) { console.error(e); toast('Team delete failed', 'error'); });
+    }
+    setState({ teamEditId: null, teamDraft: {} });
+    return;
+  }
+  if (action === 'team-remove-member') {
+    var mxid = btn.dataset.mxid;
+    if (S.teamDraft.members) {
+      S.teamDraft.members = S.teamDraft.members.filter(function(m) { return m !== mxid; });
+      setState({});
+    }
+    return;
+  }
+  if (action === 'team-join') {
+    var id = btn.dataset.id;
+    var team = S.teams[id];
+    if (!team) return;
+    if (team.members.indexOf(S.currentUser) !== -1) return;
+    team.members.push(S.currentUser);
+    team.updatedAt = now();
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { name: team.name, members: team.members }, id)
+        .then(function() {
+          toast('Joined team: ' + team.name, 'success');
+          // Get access to team rooms
+          inviteUserToTeamRooms(S.currentUser, id);
+        })
+        .catch(function(e) { console.error(e); toast('Join failed', 'error'); });
+    }
+    setState({});
+    return;
+  }
+  if (action === 'team-leave') {
+    var id = btn.dataset.id;
+    var team = S.teams[id];
+    if (!team) return;
+    team.members = team.members.filter(function(m) { return m !== S.currentUser; });
+    team.updatedAt = now();
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_TEAM, { name: team.name, members: team.members }, id)
+        .then(function() { toast('Left team: ' + team.name, 'info'); })
+        .catch(function(e) { console.error(e); toast('Leave failed', 'error'); });
+    }
+    setState({});
+    return;
+  }
+
   // Admin tab switching
   if (action === 'admin-switch-tab') {
     var tab = btn.dataset.tab;
@@ -6080,6 +6743,11 @@ document.addEventListener('click', function(e) {
 
   // Editor tabs
   if (action === 'ed-tab') { cleanupInlineAdd(); setState({ editorTab: btn.dataset.tab, inlineAdd: null, draft: {} }); return; }
+  if (action === 'toggle-form') {
+    var formId = btn.dataset.formId;
+    setState({ _expandedForm: S._expandedForm === formId ? null : formId });
+    return;
+  }
   if (action === 'goto-directory') { setState({ currentView: 'directory', inlineAdd: null, draft: {} }); return; }
 
   // ── Inline Add-to-Directory from Editor ───────────────────────
@@ -6195,7 +6863,7 @@ document.addEventListener('click', function(e) {
 });
 
 // ── Input/Change Event Handling ──────────────────────────────────
-function dispatchFieldChange(action, key, val) {
+function dispatchFieldChange(action, key, val, formId) {
   if (action === 'draft-field') {
     S.draft[key] = val;
     return;
@@ -6203,6 +6871,11 @@ function dispatchFieldChange(action, key, val) {
 
   if (action === 'admin-draft-field') {
     S.adminDraft[key] = val;
+    return;
+  }
+
+  if (action === 'team-field') {
+    S.teamDraft[key] = val;
     return;
   }
 
@@ -6224,12 +6897,10 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
-    if (S.role !== 'admin') {
-      var hasOwnership = Object.values(S.petitions).some(function(p) {
-        return p.clientId === client.id && p.createdBy === S.currentUser;
-      });
-      if (!hasOwnership) return;
-    }
+    var hasOwnership = Object.values(S.petitions).some(function(p) {
+      return p.clientId === client.id && canSeeUserData(p.createdBy);
+    });
+    if (!hasOwnership) return;
     client[key] = val;
     S.log.push({ op: 'FILL', target: 'client.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
     debouncedSync('client-' + client.id, function() {
@@ -6249,7 +6920,7 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-client-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     var client = S.clients[pet.clientId];
     if (!client) return;
     client[key] = val;
@@ -6271,7 +6942,7 @@ function dispatchFieldChange(action, key, val) {
   if (action === 'editor-pet-field') {
     var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
     if (!pet) return;
-    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    if (!canSeeUserData(pet.createdBy)) return;
     pet[key] = val;
     S.log.push({ op: 'FILL', target: 'petition.' + key, payload: val, frame: { t: now(), entity: 'petition', id: pet.id } });
     debouncedSync('petition-' + pet.id, function() { syncPetitionToMatrix(pet, 'petition'); });
@@ -6287,6 +6958,41 @@ function dispatchFieldChange(action, key, val) {
     refreshVariableSpans();
     // Re-render filing panel to update Mark as Filed button state
     render();
+    return;
+  }
+  if (action === 'editor-form-field') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet) return;
+    if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+    var client = S.clients[pet.clientId];
+    if (!client) return;
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    S.log.push({ op: 'FILL', target: 'form.' + formId + '.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    debouncedSync('client-forms-' + client.id, function() {
+      syncClientFormsToMatrix(client);
+    });
+    refreshVariableSpans();
+    return;
+  }
+  if (action === 'client-form-field') {
+    var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
+    if (!client) return;
+    if (S.role !== 'admin') {
+      var hasOwnership = Object.values(S.petitions).some(function(p) {
+        return p.clientId === client.id && p.createdBy === S.currentUser;
+      });
+      if (!hasOwnership) return;
+    }
+    if (!client._forms) client._forms = {};
+    if (!client._forms[formId]) client._forms[formId] = {};
+    client._forms[formId][key] = val;
+    S.log.push({ op: 'FILL', target: 'form.' + formId + '.' + key, payload: val, frame: { t: now(), entity: 'client', id: client.id } });
+    debouncedSync('client-forms-' + client.id, function() {
+      syncClientFormsToMatrix(client);
+    });
+    refreshVariableSpans();
     return;
   }
   if (action === 'page-settings') {
@@ -6311,16 +7017,26 @@ document.addEventListener('input', function(e) {
   var action = el.dataset.change;
   var key = el.dataset.fieldKey;
   var val = el.value;
+  var formId = el.dataset.formId || null;
   if (action.match(/-custom$/)) {
     action = action.replace(/-custom$/, '');
   }
   // For text fields with blur-save actions, only update local state on input;
   // the full save (log + sync) happens on the 'change' event (fires on blur).
   if (BLUR_SAVE_ACTIONS[action]) {
-    updateFieldLocally(action, key, val);
+    updateFieldLocally(action, key, val, formId);
     return;
   }
-  dispatchFieldChange(action, key, val);
+  dispatchFieldChange(action, key, val, formId);
+});
+
+// Enter key on board new-client name input triggers create
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter' && e.target.classList.contains('board-new-client-name')) {
+    e.preventDefault();
+    var createBtn = document.querySelector('[data-action="board-create-new-client"]');
+    if (createBtn) createBtn.click();
+  }
 });
 
 document.addEventListener('change', function(e) {
@@ -6328,6 +7044,7 @@ document.addEventListener('change', function(e) {
   if (!el.dataset || !el.dataset.change) return;
   var action = el.dataset.change;
   var val = el.value;
+  var formId = el.dataset.formId || null;
 
   // Enum-or-custom dropdown changed
   if (action.match(/-enum$/)) {
@@ -6340,21 +7057,21 @@ document.addEventListener('change', function(e) {
     } else {
       var customInp = el.parentNode.querySelector('.enum-custom-inp');
       if (customInp) customInp.style.display = 'none';
-      dispatchFieldChange(baseAction, key, val);
+      dispatchFieldChange(baseAction, key, val, formId);
       return;
     }
   }
 
   // Pure enum selects (type: 'enum') and date pickers fire 'change'
   if (el.tagName === 'SELECT' && el.dataset.fieldKey && !action.match(/^apply-/)) {
-    dispatchFieldChange(action, el.dataset.fieldKey, val);
+    dispatchFieldChange(action, el.dataset.fieldKey, val, formId);
     return;
   }
 
   // Text inputs with blur-save actions: full save on blur (change fires when field loses focus)
   var blurAction = action.match(/-custom$/) ? action.replace(/-custom$/, '') : action;
   if (el.dataset.fieldKey && BLUR_SAVE_ACTIONS[blurAction]) {
-    dispatchFieldChange(blurAction, el.dataset.fieldKey, val);
+    dispatchFieldChange(blurAction, el.dataset.fieldKey, val, formId);
     return;
   }
 
@@ -6369,6 +7086,17 @@ document.addEventListener('change', function(e) {
       approveDeployReview();
     } else {
       setState({ deployReviewState: 'reviewing' });
+    }
+    return;
+  }
+
+  // Team member add (select dropdown)
+  if (action === 'team-add-member') {
+    if (val && S.teamDraft.members) {
+      if (S.teamDraft.members.indexOf(val) === -1) {
+        S.teamDraft.members.push(val);
+      }
+      setState({});
     }
     return;
   }
@@ -6417,7 +7145,7 @@ document.addEventListener('change', function(e) {
 
   var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
   if (!pet) return;
-  if (S.role !== 'admin' && pet.createdBy !== S.currentUser) return;
+  if (!canSeeUserData(pet.createdBy)) return;
 
   if (action === 'apply-court') {
     var c = S.courts[val];

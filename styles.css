@@ -640,6 +640,13 @@ body,
   font-size: 11px !important;
   display: inline-block !important;
 }
+.board-new-client-name {
+  width: auto !important;
+  min-width: 200px;
+  padding: 5px 10px !important;
+  font-size: 11px !important;
+  display: inline-block !important;
+}
 
 /* ── Kanban card enhancements ──────────────────────── */
 .kb-card-att {
@@ -2217,4 +2224,152 @@ body,
   color: var(--ink);
   margin: 8px 0;
   font-style: italic;
+}
+
+/* ═══════════════════════════════════════════════════════
+   Teams View
+   ═══════════════════════════════════════════════════════ */
+.team-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+.team-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.team-card-name {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.team-card-actions {
+  display: flex;
+  gap: 6px;
+}
+.team-members {
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+.team-members-label {
+  font-weight: 500;
+  margin-right: 2px;
+}
+.team-member-badge {
+  display: inline-block;
+  background: #f0ede6;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--ink);
+}
+.team-member-badge.team-member-you {
+  background: #e8e0d0;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.team-meta {
+  font-size: 12px;
+  color: var(--muted);
+}
+.team-edit-form {
+  background: var(--panel);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.team-member-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.team-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #f0ede6;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 3px 10px;
+  font-size: 13px;
+}
+.team-member-remove {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--muted);
+  padding: 0 2px;
+  line-height: 1;
+}
+.team-member-remove:hover {
+  color: var(--accent2);
+}
+.hbtn.danger {
+  color: #8b2500;
+  border-color: #8b2500;
+}
+.hbtn.danger:hover {
+  background: #8b2500;
+  color: #fff;
+}
+
+/* ── Forms Tab ──────────────────────────────────────── */
+.forms-header {
+  margin-bottom: 4px;
+}
+.forms-header code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  background: rgba(0,0,0,0.05);
+  padding: 1px 4px;
+  border-radius: 2px;
+}
+.form-section {
+  margin-bottom: 2px;
+}
+.form-toggle {
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.form-toggle:hover {
+  color: var(--accent);
+}
+.form-arrow {
+  font-size: 11px;
+  width: 12px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.form-count {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--green);
+  background: rgba(90,158,111,0.1);
+  padding: 1px 6px;
+  border-radius: 8px;
+  margin-left: 4px;
+}
+.fvar-hint {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  color: var(--muted);
+  opacity: 0.6;
+  margin-top: 1px;
+  letter-spacing: -0.2px;
 }
