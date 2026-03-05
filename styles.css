@@ -2156,3 +2156,65 @@ body,
   border-radius: 8px;
   letter-spacing: 0.3px;
 }
+
+/* ── Public Directory Link (Login Page) ──────────────── */
+.login-public-link {
+  display: block;
+  text-align: center;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+}
+.login-public-link:hover {
+  text-decoration: underline;
+}
+
+/* ── Submissions Review (Admin Panel) ───────────────── */
+.sub-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 10px;
+  letter-spacing: 0.3px;
+}
+.sub-new {
+  background: #eaf5ee;
+  color: #2d6a4f;
+}
+.sub-edit {
+  background: #e8f0fa;
+  color: #4a7ab5;
+}
+.sub-submitter {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0 2px;
+}
+.sub-date {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+.sub-fields {
+  background: var(--bg);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.sub-field {
+  margin-bottom: 2px;
+}
+.sub-field-label {
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: capitalize;
+}
+.sub-notes {
+  font-size: 12px;
+  color: var(--ink);
+  margin: 8px 0;
+  font-style: italic;
+}
