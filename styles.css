@@ -1663,6 +1663,99 @@ body,
   margin-bottom: 16px;
 }
 
+/* ── Print Customization Modal ────────────────────────────────── */
+.print-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.print-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px 28px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.print-modal-title {
+  font-family: 'Source Serif 4', serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.print-modal-subtitle {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+.print-modal-section {
+  margin-bottom: 20px;
+}
+.print-modal-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--accent);
+  margin-bottom: 10px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+}
+.print-margin-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+.print-margin-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.print-margin-field label {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+.print-margin-input {
+  width: 100%;
+  text-align: center;
+  font-size: 13px;
+}
+.print-margin-preview {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+.print-margin-preview-page {
+  width: 85px;
+  height: 110px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: #fff;
+  position: relative;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+}
+.print-margin-preview-inner {
+  position: absolute;
+  background: var(--accent);
+  opacity: 0.12;
+  border-radius: 1px;
+  transition: all 0.15s ease;
+}
+.print-modal-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 /* ── Deployment Panel ──────────────────────────────────────────── */
 .deploy-version-pill {
   display: inline-flex;
