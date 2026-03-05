@@ -556,7 +556,7 @@ var NATIONAL_OVERRIDE_FIELDS = [
 
 var DEFAULT_PAGE_SETTINGS = {
   headerLeft: '', headerCenter: '', headerRight: '',
-  footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '{{PAGE}}',
+  footerLeft: '{{CASE_NUMBER}}', footerCenter: '', footerRight: '',
   showHeaderOnFirstPage: false,
   showFooterOnFirstPage: true
 };
@@ -2237,7 +2237,7 @@ function buildDocHTML(blocks, vars, pageSettings) {
     '<!--[if gte mso 9]><xml><o:OfficeDocumentSettings><o:AllowPNG/><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml>' +
     '<xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom><w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
     '<meta http-equiv="Content-Type" content="text/html; charset=utf-8">' +
-    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0}table.c td{vertical-align:top;padding:0 4pt}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
+    '<style>@page WordSection1{size:8.5in 11in;margin:1in;mso-header-margin:.5in;mso-footer-margin:.5in;mso-paper-source:0}div.WordSection1{page:WordSection1}body{font-family:"Times New Roman",serif;font-size:12pt;line-height:1.35}.title{text-align:center;font-weight:bold;margin:0}.heading{font-weight:bold;text-transform:uppercase;margin:18pt 0 6pt}.para{margin:0 0 10pt;text-align:justify}.sig{white-space:pre-line;margin:0 0 10pt}.sig-label{font-style:italic}table.c{width:100%;border-collapse:collapse;margin:18pt 0;border:none}table.c td{vertical-align:top;padding:0 4pt;border:none}.cl{width:55%}.cm{width:5%;text-align:center}.cr{width:40%}.cn{text-align:center;font-weight:bold}.cc{text-align:center;margin:10pt 0}.rr{margin:0 0 8pt}.ck{margin:0 0 12pt}.cd{font-weight:bold}' + hfCss + '</style></head><body><div class="WordSection1">' + headerHtml + titles + '<table class="c"><tr><td class="cl">' + capLeft + '</td><td class="cm">' + parens + '</td><td class="cr">' + capRight + '</td></tr></table>' + body + footerHtml + '</div></body></html>';
 }
 
 function doExportDoc(blocks, vars, name, pageSettings) {
@@ -2446,11 +2446,10 @@ function buildExportFromTemplate(vars, forWord, pageSettings) {
           function resolveExpVarForWord(text) {
             if (!text) return '';
             var r = text.replace(/\{\{CASE_NUMBER\}\}/g, esc(caseNo));
-            var pageField = '<span style="mso-field-code:\'PAGE \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
-            var npagesField = '<span style="mso-field-code:\'NUMPAGES \\* MERGEFORMAT \'"><span style="mso-no-proof:yes">1</span></span>';
-            r = r.replace(/\{\{PAGE\}\}/g, 'Page ' + pageField + ' of ' + npagesField);
-            r = r.replace(/\{\{PAGE_NUM\}\}/g, pageField);
-            r = r.replace(/\{\{TOTAL_PAGES\}\}/g, npagesField);
+            // Strip page number variables — page numbers are not included in Word export
+            r = r.replace(/\{\{PAGE\}\}/g, '');
+            r = r.replace(/\{\{PAGE_NUM\}\}/g, '');
+            r = r.replace(/\{\{TOTAL_PAGES\}\}/g, '');
             return r;
           }
           var cellStyle = 'border:none;font-size:9pt;font-family:\'Times New Roman\',serif;padding:0';
