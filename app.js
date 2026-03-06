@@ -10,6 +10,7 @@ var CONFIG = {
   ORG_ROOM_ALIAS: '#org:aminoimmigration.com',
   TEMPLATES_ROOM_ALIAS: '#templates:aminoimmigration.com',
   ALLOWED_REGISTRATION_DOMAINS: ['aminoimmigration.com', 'rklacylaw.com', 'aminointegration.com'],
+  SUBMISSIONS_ROOM_ALIAS: '#submissions:aminoimmigration.com',
 };
 
 // ── Utilities ────────────────────────────────────────────────────
@@ -742,6 +743,7 @@ var EVT_PETITION = 'com.amino.petition';
 var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
 var EVT_OP       = 'com.amino.op';
 var EVT_GITHUB   = 'com.amino.config.github';
+var EVT_SUBMISSION = 'com.amino.submission';
 var EVT_TEAM     = 'com.amino.team';
 var EVT_CLIENT_FORMS = 'com.amino.client.forms';
 
@@ -839,6 +841,7 @@ var matrix = {
   rooms: {},       // roomId -> { stateEvents: { eventType: { stateKey: {content,sender,origin_server_ts} } } }
   orgRoomId: null,
   templatesRoomId: null,
+  submissionsRoomId: null,
   _txnId: 0,
   _syncToken: null,
   _polling: false,
@@ -1088,6 +1091,19 @@ var matrix = {
           }
         });
         return roomId;
+      });
+  },
+
+  fetchMessages: function(roomId, limit, filterType) {
+    var params = 'limit=' + (limit || 100) + '&dir=b';
+    if (filterType) {
+      params += '&filter=' + encodeURIComponent(JSON.stringify({ types: [filterType] }));
+    }
+    return this._api('GET', '/rooms/' + encodeURIComponent(roomId) + '/messages?' + params)
+      .then(function(data) {
+        return (data.chunk || []).filter(function(evt) {
+          return evt.type === filterType && evt.content && !evt.content.reviewed;
+        });
       });
   },
 
@@ -1515,6 +1531,9 @@ var S = {
   _forgotPasswordSid: '',
   // Deployment management (admin only)
   adminTab: 'synapse',
+  // Public directory submissions
+  submissions: [],
+  submissionsLoaded: false,
   deployInfo: typeof DEPLOY_INFO !== 'undefined' ? DEPLOY_INFO : null,
   deployHistory: [],
   deployHistoryLoaded: false,
@@ -1784,6 +1803,7 @@ function hydrateFromMatrix() {
   // Discover or auto-create org and templates rooms
   var orgPromise = ensureRoom(CONFIG.ORG_ROOM_ALIAS, 'Amino Org');
   var tmplPromise = ensureRoom(CONFIG.TEMPLATES_ROOM_ALIAS, 'Templates');
+  var submPromise = ensureRoom(CONFIG.SUBMISSIONS_ROOM_ALIAS, 'Public Submissions');
 
   return orgPromise
     .then(function(resolvedOrgId) {
@@ -1792,6 +1812,10 @@ function hydrateFromMatrix() {
     })
     .then(function(resolvedTmplId) {
       matrix.templatesRoomId = resolvedTmplId;
+      return submPromise;
+    })
+    .then(function(resolvedSubmId) {
+      matrix.submissionsRoomId = resolvedSubmId;
 
       // Facilities
       var facEvents = matrix.getStateEvents(matrix.orgRoomId, EVT_FACILITY);
@@ -2971,6 +2995,82 @@ function createClientRoom(clientId) {
   return _pendingRoomCreations[clientId];
 }
 
+function applySubmission(sub, idx) {
+  var entity = sub.entity;
+  var isNew = sub.submissionType === 'new';
+  var fields = sub.fields || {};
+
+  if (entity === 'facility') {
+    var facId = isNew ? uid() : (sub.targetId || uid());
+    var existing = S.facilities[facId] || {};
+    var merged = Object.assign({}, existing, fields, {
+      id: facId,
+      updatedBy: S.currentUser,
+      updatedAt: now(),
+    });
+    if (!merged.createdBy) merged.createdBy = S.currentUser;
+    if (!merged.createdAt) merged.createdAt = now();
+    S.facilities[facId] = merged;
+    S.log.push({ op: isNew ? 'CREATE' : 'UPDATE', target: facId, payload: merged.name, frame: { t: now(), entity: 'facility', source: 'public-submission' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_FACILITY, {
+        name: merged.name || '', city: merged.city || '', state: merged.state || '',
+        warden: merged.warden || '', fieldOfficeName: merged.fieldOfficeName || '',
+        fieldOfficeDirector: merged.fieldOfficeDirector || '',
+      }, facId)
+        .then(function() { toast('Facility ' + (isNew ? 'added' : 'updated'), 'success'); })
+        .catch(function(e) { console.error(e); toast('Sync failed', 'error'); });
+    }
+  } else if (entity === 'court') {
+    var crtId = isNew ? uid() : (sub.targetId || uid());
+    var existing = S.courts[crtId] || {};
+    var merged = Object.assign({}, existing, fields, {
+      id: crtId,
+      updatedBy: S.currentUser,
+      updatedAt: now(),
+    });
+    if (!merged.createdBy) merged.createdBy = S.currentUser;
+    if (!merged.createdAt) merged.createdAt = now();
+    S.courts[crtId] = merged;
+    S.log.push({ op: isNew ? 'CREATE' : 'UPDATE', target: crtId, payload: merged.district, frame: { t: now(), entity: 'court', source: 'public-submission' } });
+    if (matrix.isReady() && matrix.orgRoomId) {
+      matrix.sendStateEvent(matrix.orgRoomId, EVT_COURT, {
+        district: merged.district || '', division: merged.division || '',
+        circuit: merged.circuit || '', ecfUrl: merged.ecfUrl || '', pacerUrl: merged.pacerUrl || '',
+      }, crtId)
+        .then(function() { toast('Court ' + (isNew ? 'added' : 'updated'), 'success'); })
+        .catch(function(e) { console.error(e); toast('Sync failed', 'error'); });
+    }
+  }
+
+  // Remove from submissions list and redact the event
+  if (sub.eventId && matrix.isReady() && matrix.submissionsRoomId) {
+    matrix._api('PUT', '/rooms/' + encodeURIComponent(matrix.submissionsRoomId) + '/redact/' + encodeURIComponent(sub.eventId) + '/m' + Date.now(), { reason: 'Approved and applied by admin' })
+      .catch(function(e) { console.warn('Redaction failed:', e); });
+  }
+  S.submissions.splice(idx, 1);
+  setState({});
+}
+
+function loadSubmissions() {
+  if (!matrix.submissionsRoomId || !matrix.isReady()) return;
+  matrix.fetchMessages(matrix.submissionsRoomId, 200, EVT_SUBMISSION)
+    .then(function(events) {
+      var subs = events.map(function(evt) {
+        return Object.assign({
+          eventId: evt.event_id,
+          sender: evt.sender,
+          ts: evt.origin_server_ts,
+        }, evt.content);
+      });
+      setState({ submissions: subs, submissionsLoaded: true });
+    })
+    .catch(function(err) {
+      console.warn('Could not load submissions:', err);
+      setState({ submissionsLoaded: true });
+    });
+}
+
 function syncPetitionToMatrix(pet, label) {
   if (!matrix.isReady() || !pet.roomId) return Promise.resolve();
   var content = {
@@ -3332,6 +3432,7 @@ function renderLogin() {
     '<div class="login-toggle">Need an account? <a href="#" data-action="show-register">Register</a>' +
     ' | <a href="#" data-action="show-forgot-password">Forgot password?</a></div>' +
     '<div class="login-server">Server: ' + CONFIG.MATRIX_SERVER_URL.replace('https://', '') + '</div>' +
+    '<a href="directory.html" class="login-public-link">View Public Detention Directory</a>' +
     '</form></div>';
 }
 
@@ -4477,6 +4578,72 @@ function renderSynapseAdmin() {
   return h;
 }
 
+
+function renderSubmissionsReview() {
+  var h = '<div class="dir-section"><div class="dir-head"><h3>Public Directory Submissions</h3>';
+  h += '<button class="hbtn sm" data-action="load-submissions">Refresh</button></div>';
+  h += '<p class="dir-desc">Review edit suggestions and new entries submitted by the public via the <a href="directory.html" target="_blank">Public Directory</a>.</p>';
+
+  if (!S.submissionsLoaded) {
+    h += '<div class="dir-empty">Loading submissions...</div>';
+    return h + '</div>';
+  }
+
+  if (S.submissions.length === 0) {
+    h += '<div class="dir-empty">No pending submissions.</div>';
+    return h + '</div>';
+  }
+
+  h += '<div class="dir-list">';
+  S.submissions.forEach(function(sub, idx) {
+    var isNew = sub.submissionType === 'new';
+    var entity = sub.entity === 'facility' ? 'Facility' : 'Court';
+    var badge = isNew ? '<span class="sub-badge sub-new">New ' + entity + '</span>' : '<span class="sub-badge sub-edit">Edit ' + entity + '</span>';
+    h += '<div class="dir-card">';
+    h += '<div class="dir-card-head" style="cursor:default">' + badge;
+    if (sub.targetName) h += '<strong style="margin-left:8px">' + esc(sub.targetName) + '</strong>';
+    else if (sub.fields && sub.fields.name) h += '<strong style="margin-left:8px">' + esc(sub.fields.name) + '</strong>';
+    else if (sub.fields && sub.fields.district) h += '<strong style="margin-left:8px">' + esc(sub.fields.district) + '</strong>';
+    h += '</div>';
+
+    // Submitter info
+    if (sub.submitter) {
+      h += '<div class="sub-submitter">From: <strong>' + esc(sub.submitter.name || 'Anonymous') + '</strong>';
+      if (sub.submitter.email) h += ' &lt;' + esc(sub.submitter.email) + '&gt;';
+      h += '</div>';
+    }
+    if (sub.submittedAt) {
+      h += '<div class="sub-date">' + ts(sub.submittedAt) + '</div>';
+    }
+
+    // Field values
+    if (sub.fields) {
+      h += '<div class="sub-fields">';
+      Object.keys(sub.fields).forEach(function(k) {
+        if (sub.fields[k]) {
+          h += '<div class="sub-field"><span class="sub-field-label">' + esc(k) + ':</span> ' + esc(sub.fields[k]) + '</div>';
+        }
+      });
+      h += '</div>';
+    }
+
+    // Notes
+    if (sub.notes) {
+      h += '<div class="sub-notes"><strong>Notes:</strong> ' + esc(sub.notes) + '</div>';
+    }
+
+    // Actions
+    h += '<div class="dir-card-actions">';
+    h += '<button class="hbtn accent sm" data-action="approve-submission" data-idx="' + idx + '">Approve &amp; Apply</button>';
+    h += '<button class="hbtn danger sm" data-action="dismiss-submission" data-idx="' + idx + '">Dismiss</button>';
+    h += '</div>';
+
+    h += '</div>';
+  });
+  h += '</div></div>';
+  return h;
+}
+
 // ── Teams View ───────────────────────────────────────────────────
 function renderTeams() {
   var h = '<div class="dir-view"><div class="dir-body">';
@@ -4487,7 +4654,6 @@ function renderTeams() {
   h += '<p class="dir-desc">Teams let members share clients, petitions, and attorney profiles with each other. Create a team and add members to start collaborating.</p>';
 
   var teamList = Object.values(S.teams);
-  // Get teams the current user is a member of or created
   var myTeams = teamList.filter(function(t) {
     return t.members.indexOf(S.currentUser) !== -1 || t.createdBy === S.currentUser || S.role === 'admin';
   });
@@ -4496,7 +4662,6 @@ function renderTeams() {
     h += '<div class="dir-empty">No teams yet. Create one to start sharing data with other users.</div>';
   }
 
-  // Team create/edit form
   if (S.teamEditId) {
     var isNew = S.teamEditId === 'new';
     var d = S.teamDraft;
@@ -4505,12 +4670,10 @@ function renderTeams() {
     h += '<label class="flbl">Team Name</label>';
     h += '<input class="finp" data-change="team-field" data-field-key="name" value="' + esc(d.name || '') + '" placeholder="e.g. Texas Office">';
 
-    // Member list
     h += '<label class="flbl" style="margin-top:12px">Members</label>';
     var allUsers = Object.values(S.users).filter(function(u) { return u.active !== false; });
     var members = d.members || [];
 
-    // Current members
     if (members.length > 0) {
       h += '<div class="team-member-list">';
       members.forEach(function(mxid) {
@@ -4524,7 +4687,6 @@ function renderTeams() {
       h += '</div>';
     }
 
-    // Add member dropdown
     var available = allUsers.filter(function(u) { return members.indexOf(u.mxid) === -1; });
     if (available.length > 0) {
       h += '<select class="finp" data-change="team-add-member">';
@@ -4545,9 +4707,8 @@ function renderTeams() {
     h += '</div>';
   }
 
-  // List of teams
   myTeams.forEach(function(team) {
-    if (S.teamEditId === team.id) return; // skip if currently editing this team
+    if (S.teamEditId === team.id) return;
     var isMember = team.members.indexOf(S.currentUser) !== -1;
     var isCreator = team.createdBy === S.currentUser;
     var canEdit = isCreator || S.role === 'admin';
@@ -4567,7 +4728,6 @@ function renderTeams() {
     h += '</div>';
     h += '</div>';
 
-    // Member avatars
     h += '<div class="team-members">';
     h += '<span class="team-members-label">' + team.members.length + ' member' + (team.members.length !== 1 ? 's' : '') + ':</span> ';
     team.members.forEach(function(mxid) {
@@ -4590,6 +4750,7 @@ function renderTeams() {
   return h;
 }
 
+
 function renderAdmin() {
   if (S.role !== 'admin') {
     return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
@@ -4597,9 +4758,14 @@ function renderAdmin() {
 
   var h = '<div class="dir-view"><div class="dir-tabs">';
   h += '<button class="dir-tab' + (S.adminTab === 'synapse' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="synapse">Server Admin</button>';
+  h += '<button class="dir-tab' + (S.adminTab === 'submissions' ? ' on' : '') + '" data-action="admin-switch-tab" data-tab="submissions">Submissions' + (S.submissions.length > 0 ? ' (' + S.submissions.length + ')' : '') + '</button>';
   h += '</div><div class="dir-body">';
 
-  h += renderSynapseAdmin();
+  if (S.adminTab === 'submissions') {
+    h += renderSubmissionsReview();
+  } else {
+    h += renderSynapseAdmin();
+  }
   h += '</div></div>';
   return h;
 }
@@ -6495,6 +6661,36 @@ document.addEventListener('click', function(e) {
   if (action === 'admin-switch-tab') {
     var tab = btn.dataset.tab;
     setState({ adminTab: tab });
+    if (tab === 'submissions' && !S.submissionsLoaded) loadSubmissions();
+    return;
+  }
+
+  if (action === 'load-submissions') {
+    setState({ submissionsLoaded: false, submissions: [] });
+    loadSubmissions();
+    return;
+  }
+
+  if (action === 'approve-submission') {
+    var idx = parseInt(btn.dataset.idx, 10);
+    var sub = S.submissions[idx];
+    if (!sub || S.role !== 'admin') return;
+    applySubmission(sub, idx);
+    return;
+  }
+
+  if (action === 'dismiss-submission') {
+    var idx = parseInt(btn.dataset.idx, 10);
+    var sub = S.submissions[idx];
+    if (!sub || S.role !== 'admin') return;
+    // Mark as reviewed by sending a redaction or state event
+    if (sub.eventId && matrix.isReady() && matrix.submissionsRoomId) {
+      matrix._api('PUT', '/rooms/' + encodeURIComponent(matrix.submissionsRoomId) + '/redact/' + encodeURIComponent(sub.eventId) + '/m' + Date.now(), { reason: 'Dismissed by admin' })
+        .catch(function(e) { console.warn('Redaction failed:', e); });
+    }
+    S.submissions.splice(idx, 1);
+    setState({});
+    toast('Submission dismissed', 'info');
     return;
   }
 
