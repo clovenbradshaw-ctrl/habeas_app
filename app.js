@@ -2825,7 +2825,7 @@ function updateFieldLocally(action, key, val) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
-    var hasOwnership = Object.values(S.petitions).some(function(p) {
+    var hasOwnership = canSeeUserData(client.createdBy) || Object.values(S.petitions).some(function(p) {
       return p.clientId === client.id && canSeeUserData(p.createdBy);
     });
     if (!hasOwnership) return;
@@ -5045,7 +5045,6 @@ function renderEditor() {
       h += htmlInlineAddForm('facility');
     }
     h += htmlFieldGroup('Facility (manual override)', FACILITY_FIELDS, pet, 'editor-pet-field');
-    h += htmlFieldGroup('Respondents (manual override)', RESPONDENT_FIELDS, pet, 'editor-pet-field');
     h += htmlFieldGroup('National Officials (override)', NATIONAL_OVERRIDE_FIELDS, pet, 'editor-pet-field');
   }
 
@@ -5484,7 +5483,7 @@ function renderPrintModal() {
   var typeLabel = exportType === 'export-word' ? 'DOCX' : 'PDF';
 
   var h = '<div class="print-modal-overlay" data-action="print-modal-close">';
-  h += '<div class="print-modal" onclick="event.stopPropagation()">';
+  h += '<div class="print-modal" data-action="print-modal-noop">';
   h += '<div class="print-modal-title">Print Settings</div>';
   h += '<div class="print-modal-subtitle">Customize layout before exporting as ' + typeLabel + '</div>';
 
@@ -7114,7 +7113,7 @@ function dispatchFieldChange(action, key, val, formId) {
   if (action === 'client-field') {
     var client = S.selectedClientId ? S.clients[S.selectedClientId] : null;
     if (!client) return;
-    var hasOwnership = Object.values(S.petitions).some(function(p) {
+    var hasOwnership = canSeeUserData(client.createdBy) || Object.values(S.petitions).some(function(p) {
       return p.clientId === client.id && canSeeUserData(p.createdBy);
     });
     if (!hasOwnership) return;
