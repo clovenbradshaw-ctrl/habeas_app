@@ -1587,6 +1587,7 @@ function discoverRoomByAlias(alias) {
       var rname = nameEvt[''].content.name.toLowerCase();
       if (localPart === 'org' && (rname === 'amino org' || rname === 'org')) return roomId;
       if (localPart === 'templates' && (rname === 'templates' || rname === 'amino templates')) return roomId;
+      if (localPart === 'submissions' && (rname === 'submissions' || rname === 'public submissions')) return roomId;
     }
   }
   return null;
@@ -1617,7 +1618,15 @@ function ensureRoom(alias, name) {
           return matrix.fetchRoomState(roomId).catch(function() { return roomId; });
         });
     })
-    .catch(function() {
+    .catch(function(resolveErr) {
+      // If the server returned a 5xx error, don't try to create the room —
+      // the alias may exist but the server is temporarily unavailable.
+      var status = resolveErr && resolveErr.status;
+      if (status >= 500) {
+        console.warn('Server error resolving alias ' + alias + ' (HTTP ' + status + '), skipping room creation');
+        return null;
+      }
+
       // 3. Alias not found — try to create the room
       var localAlias = alias.replace(/^#/, '').split(':')[0];
       return matrix.createRoom({
