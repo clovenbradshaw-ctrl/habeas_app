@@ -3154,6 +3154,221 @@ function refreshVariableSpans() {
   }
 }
 
+// ── Variable Fill Modal ──────────────────────────────────────────
+// Maps each template variable name to its source (which tab/field/action to edit)
+function getVarFieldInfo(varName) {
+  // Client fields
+  var clientMap = {
+    PETITIONER_FULL_NAME: { key: 'name', label: 'Full Name', tab: 'client', action: 'editor-client-field', source: 'client' },
+    PETITIONER_COUNTRY: { key: 'country', label: 'Country', tab: 'client', action: 'editor-client-field', source: 'client', field: CLIENT_FIELDS[1] },
+    PETITIONER_YEARS_IN_US: { key: 'yearsInUS', label: 'Years in U.S.', tab: 'client', action: 'editor-client-field', source: 'client' },
+    PETITIONER_ENTRY_DATE: { key: 'entryDate', label: 'Entry Date', tab: 'client', action: 'editor-client-field', source: 'client', field: CLIENT_FIELDS[3] },
+    PETITIONER_ENTRY_METHOD: { key: 'entryMethod', label: 'Entry Method', tab: 'client', action: 'editor-client-field', source: 'client', field: CLIENT_FIELDS[4] },
+    PETITIONER_APPREHENSION_LOCATION: { key: 'apprehensionLocation', label: 'Arrest Location', tab: 'client', action: 'editor-client-field', source: 'client' },
+    PETITIONER_APPREHENSION_DATE: { key: 'apprehensionDate', label: 'Arrest Date', tab: 'client', action: 'editor-client-field', source: 'client', field: CLIENT_FIELDS[6] },
+    PETITIONER_CRIMINAL_HISTORY: { key: 'criminalHistory', label: 'Criminal History', tab: 'client', action: 'editor-client-field', source: 'client', field: CLIENT_FIELDS[7] },
+    PETITIONER_COMMUNITY_TIES: { key: 'communityTies', label: 'Community Ties', tab: 'client', action: 'editor-client-field', source: 'client', field: CLIENT_FIELDS[8] },
+  };
+  if (clientMap[varName]) return clientMap[varName];
+
+  // Petition fields (court, facility, filing)
+  var petMap = {
+    COURT_DISTRICT: { key: 'district', label: 'District', tab: 'court', action: 'editor-pet-field', source: 'petition', hint: 'Select a court or enter manually' },
+    COURT_DIVISION: { key: 'division', label: 'Division', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    CASE_NUMBER: { key: 'caseNumber', label: 'Case Number', tab: 'filing', action: 'filing-case-number', source: 'petition' },
+    DETENTION_FACILITY_NAME: { key: 'facilityName', label: 'Facility Name', tab: 'court', action: 'editor-pet-field', source: 'petition', hint: 'Select a facility or enter manually' },
+    DETENTION_FACILITY_CITY: { key: 'facilityCity', label: 'Facility City', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    DETENTION_FACILITY_STATE: { key: 'facilityState', label: 'Facility State', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    WARDEN_NAME: { key: 'warden', label: 'Warden', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    FIELD_OFFICE_DIRECTOR: { key: 'fieldOfficeDirector', label: 'Field Office Director', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    FIELD_OFFICE_NAME: { key: 'fieldOfficeName', label: 'Field Office', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    FILING_DATE: { key: 'filingDate', label: 'Filing Date', tab: 'filing', action: 'editor-pet-field', source: 'petition', field: FILING_FIELDS[0] },
+    FILING_DAY: { key: 'filingDay', label: 'Filing Day', tab: 'filing', action: 'editor-pet-field', source: 'petition', hint: 'Set via Filing Date picker' },
+    FILING_MONTH_YEAR: { key: 'filingMonthYear', label: 'Filing Month & Year', tab: 'filing', action: 'editor-pet-field', source: 'petition', hint: 'Set via Filing Date picker' },
+  };
+  if (petMap[varName]) return petMap[varName];
+
+  // National officials
+  var natMap = {
+    ICE_DIRECTOR: { key: 'natIceDirector', label: 'ICE Director', tab: 'court', action: 'editor-pet-field', source: 'petition', hint: 'Override in Court + Facility tab, or set default in Directory' },
+    ICE_DIRECTOR_TITLE: { key: 'natIceDirectorTitle', label: 'ICE Title', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    DHS_SECRETARY: { key: 'natDhsSecretary', label: 'DHS Secretary', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+    ATTORNEY_GENERAL: { key: 'natAttorneyGeneral', label: 'Attorney General', tab: 'court', action: 'editor-pet-field', source: 'petition' },
+  };
+  if (natMap[varName]) return natMap[varName];
+
+  // Attorney fields (read-only in modal, direct to tab)
+  var attMap = {
+    ATTORNEY1_NAME: { key: 'name', label: 'Attorney 1 Name', tab: 'atty', source: 'attorney1', readOnly: true, hint: 'Select an attorney profile in the Attorneys tab' },
+    ATTORNEY1_BAR_NO: { key: 'barNo', label: 'Attorney 1 Bar No.', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY1_FIRM: { key: 'firm', label: 'Attorney 1 Firm', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY1_ADDRESS: { key: 'address', label: 'Attorney 1 Address', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY1_CITY_STATE_ZIP: { key: 'cityStateZip', label: 'Attorney 1 City/State/Zip', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY1_PHONE: { key: 'phone', label: 'Attorney 1 Phone', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY1_FAX: { key: 'fax', label: 'Attorney 1 Fax', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY1_EMAIL: { key: 'email', label: 'Attorney 1 Email', tab: 'atty', source: 'attorney1', readOnly: true },
+    ATTORNEY2_NAME: { key: 'name', label: 'Attorney 2 Name', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_BAR_NO: { key: 'barNo', label: 'Attorney 2 Bar No.', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_FIRM: { key: 'firm', label: 'Attorney 2 Firm', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_ADDRESS: { key: 'address', label: 'Attorney 2 Address', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_CITY_STATE_ZIP: { key: 'cityStateZip', label: 'Attorney 2 City/State/Zip', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_PHONE: { key: 'phone', label: 'Attorney 2 Phone', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_EMAIL: { key: 'email', label: 'Attorney 2 Email', tab: 'atty', source: 'attorney2', readOnly: true },
+    ATTORNEY2_PRO_HAC: { key: 'proHacVice', label: 'Attorney 2 Pro Hac Vice', tab: 'atty', source: 'attorney2', readOnly: true },
+  };
+  if (attMap[varName]) return attMap[varName];
+
+  // Client form-derived variables
+  for (var fi = 0; fi < CLIENT_FORMS.length; fi++) {
+    var form = CLIENT_FORMS[fi];
+    for (var fj = 0; fj < form.fields.length; fj++) {
+      var f = form.fields[fj];
+      var computedVarName = form.varPrefix + f.key.replace(/([A-Z])/g, '_$1').toUpperCase();
+      if (computedVarName === varName) {
+        return { key: f.key, label: f.label, tab: 'forms', action: 'editor-form-field', source: 'form', formId: form.id, formTitle: form.title, field: f };
+      }
+    }
+  }
+
+  return null; // unknown variable
+}
+
+function getVarCurrentValue(info) {
+  var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+  if (!pet) return '';
+  var client = S.clients[pet.clientId] || {};
+
+  if (info.source === 'client') return client[info.key] || '';
+  if (info.source === 'petition') return pet[info.key] || '';
+  if (info.source === 'attorney1') {
+    var a1 = pet._att1Id ? S.attProfiles[pet._att1Id] : null;
+    return a1 ? (a1[info.key] || '') : '';
+  }
+  if (info.source === 'attorney2') {
+    var a2 = pet._att2Id ? S.attProfiles[pet._att2Id] : null;
+    return a2 ? (a2[info.key] || '') : '';
+  }
+  if (info.source === 'form') {
+    var forms = client._forms || {};
+    var formData = forms[info.formId] || {};
+    return formData[info.key] || '';
+  }
+  return '';
+}
+
+function renderVarFillModal() {
+  var varName = S._varFillVar;
+  var info = getVarFieldInfo(varName);
+  var currentVal = info ? getVarCurrentValue(info) : '';
+
+  var h = '<div class="varfill-modal-overlay" data-action="varfill-close">';
+  h += '<div class="varfill-modal" onclick="event.stopPropagation()">';
+  h += '<div class="varfill-header">';
+  h += '<div class="varfill-title">Fill Variable</div>';
+  h += '<button class="varfill-close-btn" data-action="varfill-close">&times;</button>';
+  h += '</div>';
+  h += '<div class="varfill-varname"><code>{{' + esc(varName) + '}}</code></div>';
+
+  if (!info) {
+    h += '<p class="varfill-unknown">This variable is not mapped to a known field. You can edit it directly in the document text.</p>';
+    h += '<div class="varfill-actions">';
+    h += '<button class="hbtn" data-action="varfill-close">Close</button>';
+    h += '</div>';
+  } else if (info.readOnly) {
+    h += '<div class="varfill-field-label">' + esc(info.label) + '</div>';
+    if (currentVal) {
+      h += '<div class="varfill-current">Current value: <strong>' + esc(currentVal) + '</strong></div>';
+    } else {
+      h += '<p class="varfill-hint">This field is set by selecting an attorney profile.</p>';
+    }
+    h += '<div class="varfill-actions">';
+    h += '<button class="hbtn accent" data-action="varfill-goto-tab" data-tab="' + info.tab + '">Go to ' + esc(TAB_LABELS[info.tab] || info.tab) + ' tab</button>';
+    h += '<button class="hbtn" data-action="varfill-close">Close</button>';
+    h += '</div>';
+  } else if (info.hint && (varName === 'FILING_DAY' || varName === 'FILING_MONTH_YEAR')) {
+    // Derived fields - can't edit directly
+    h += '<div class="varfill-field-label">' + esc(info.label) + '</div>';
+    if (currentVal) {
+      h += '<div class="varfill-current">Current value: <strong>' + esc(currentVal) + '</strong></div>';
+    }
+    h += '<p class="varfill-hint">' + esc(info.hint) + '</p>';
+    h += '<div class="varfill-actions">';
+    h += '<button class="hbtn accent" data-action="varfill-goto-tab" data-tab="' + info.tab + '">Go to ' + esc(TAB_LABELS[info.tab] || info.tab) + ' tab</button>';
+    h += '<button class="hbtn" data-action="varfill-close">Close</button>';
+    h += '</div>';
+  } else {
+    // Editable field
+    h += '<div class="varfill-field-label">' + esc(info.label);
+    if (info.formTitle) h += ' <span class="varfill-form-badge">' + esc(info.formTitle) + '</span>';
+    h += '</div>';
+    if (info.hint) h += '<p class="varfill-hint">' + esc(info.hint) + '</p>';
+
+    // Render the appropriate input
+    var f = info.field || null;
+    if (f && f.type === 'enum') {
+      h += '<select class="finp varfill-input" id="varfill-input" data-field-key="' + info.key + '">';
+      h += '<option value="">\u2014 Select \u2014</option>';
+      for (var i = 0; i < f.options.length; i++) {
+        if (f.options[i] === '---') { h += '<option disabled>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</option>'; continue; }
+        h += '<option value="' + esc(f.options[i]) + '"' + (f.options[i] === currentVal ? ' selected' : '') + '>' + esc(f.options[i]) + '</option>';
+      }
+      h += '</select>';
+    } else if (f && f.type === 'enum-or-custom') {
+      var isPreset = false;
+      for (var i = 0; i < f.options.length; i++) { if (f.options[i] === currentVal) { isPreset = true; break; } }
+      var isCustom = currentVal && currentVal.trim() && !isPreset;
+      h += '<select class="finp varfill-input varfill-enum-sel" id="varfill-enum-sel">';
+      for (var i = 0; i < f.options.length; i++) {
+        h += '<option value="' + esc(f.options[i]) + '"' + (f.options[i] === currentVal ? ' selected' : '') + '>' + esc(f.options[i]) + '</option>';
+      }
+      h += '<option value="__custom__"' + (isCustom ? ' selected' : '') + '>Other (custom)</option>';
+      h += '</select>';
+      h += '<input type="text" class="finp varfill-input varfill-custom-inp" id="varfill-custom-inp" value="' + (isCustom ? esc(currentVal) : '') + '" placeholder="Enter custom value..."' + (isCustom ? '' : ' style="display:none"') + '>';
+    } else if (f && f.type === 'date') {
+      h += '<input type="text" class="finp varfill-input date-pick" id="varfill-input" value="' + esc(currentVal) + '" placeholder="' + esc(f.ph || '') + '" data-flatpickr="1">';
+    } else {
+      var ph = f ? (f.ph || '') : '';
+      h += '<input type="text" class="finp varfill-input" id="varfill-input" value="' + esc(currentVal) + '" placeholder="' + esc(ph) + '">';
+    }
+
+    h += '<div class="varfill-actions">';
+    h += '<button class="hbtn accent" data-action="varfill-save">Save</button>';
+    h += '<button class="hbtn" data-action="varfill-goto-tab" data-tab="' + info.tab + '">Go to ' + esc(TAB_LABELS[info.tab] || info.tab) + '</button>';
+    h += '<button class="hbtn" data-action="varfill-close">Cancel</button>';
+    h += '</div>';
+  }
+
+  h += '</div></div>';
+  return h;
+}
+
+var TAB_LABELS = { client: 'Client', forms: 'Forms', court: 'Court + Facility', atty: 'Attorneys', page: 'Page', filing: 'Filing', log: 'Log' };
+
+function handleVarFillSave() {
+  var varName = S._varFillVar;
+  var info = getVarFieldInfo(varName);
+  if (!info || info.readOnly) return;
+
+  var val = '';
+  var enumSel = document.getElementById('varfill-enum-sel');
+  if (enumSel) {
+    if (enumSel.value === '__custom__') {
+      var customInp = document.getElementById('varfill-custom-inp');
+      val = customInp ? customInp.value : '';
+    } else {
+      val = enumSel.value;
+    }
+  } else {
+    var inp = document.getElementById('varfill-input');
+    val = inp ? inp.value : '';
+  }
+
+  // Dispatch through the same field change system
+  dispatchFieldChange(info.action, info.key, val, info.formId || null);
+
+  setState({ _varFillVar: null });
+}
+
 // ── Component Renderers ──────────────────────────────────────────
 function htmlFieldGroup(title, fields, data, onChangePrefix) {
   var h = '<div class="fg">';
@@ -4838,8 +5053,6 @@ function renderFilingPanel(pet, client) {
 
     // Confirm filing section
     h += '<div class="filing-section filing-confirm"><div class="fg-title">Confirm Filing</div>';
-    h += '<div class="frow"><label class="flbl">Case Number</label>';
-    h += '<input type="text" class="finp" value="' + esc(pet.caseNumber || '') + '" data-field-key="caseNumber" data-change="filing-case-number" placeholder="Enter case number after filing"></div>';
     var canMarkFiled = !!(pet.caseNumber && pet.caseNumber.trim() && pet._exported);
     h += '<button class="hbtn accent filing-mark-btn" data-action="mark-as-filed" data-id="' + pet.id + '"' + (canMarkFiled ? '' : ' disabled') + '>Mark as Filed \u2713</button>';
     if (!canMarkFiled) {
@@ -5009,7 +5222,7 @@ function renderEditor() {
   var caseNo = (pet.caseNumber && pet.caseNumber.trim()) ? 'C/A No. ' + pet.caseNumber : '';
 
   var h = '<div class="editor-view"><div class="ed-sidebar"><div class="ed-tabs">';
-  [['client','Client'],['forms','Forms'],['court','Court + Facility'],['atty','Attorneys'],['details','Details'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
+  [['client','Client'],['forms','Forms'],['court','Court + Facility'],['atty','Attorneys'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div><div class="ed-fields">';
@@ -5064,10 +5277,6 @@ function renderEditor() {
     if (!pet._att1Id && !pet._att2Id && !S.inlineAdd) {
       h += '<p style="font-size:11px;color:#aaa;margin-top:8px">Select attorney profiles from the Directory, or add new ones with +</p>';
     }
-  }
-
-  if (S.editorTab === 'details') {
-    h += htmlFieldGroup('Filing Details', FILING_FIELDS, pet, 'editor-pet-field');
   }
 
   if (S.editorTab === 'page') {
@@ -5132,6 +5341,12 @@ function renderEditor() {
   }
 
   if (S.editorTab === 'filing') {
+    // Case number + filing details at the top, then the filing panel
+    h += '<div class="fg"><div class="fg-title">Case Number</div>';
+    h += '<div class="frow"><label class="flbl">C/A No.' + ((pet.caseNumber && pet.caseNumber.trim()) ? '<span class="fchk">&#10003;</span>' : '') + '</label>';
+    h += '<input type="text" class="finp" value="' + esc(pet.caseNumber || '') + '" data-field-key="caseNumber" data-change="filing-case-number" placeholder="Enter case number (e.g. 3:26-cv-00123)"></div>';
+    h += '</div>';
+    h += htmlFieldGroup('Filing Date', FILING_FIELDS, pet, 'editor-pet-field');
     h += renderFilingPanel(pet, client);
   }
 
@@ -5606,6 +5821,8 @@ function render() {
   if (S.showPasswordChange) h += renderPasswordChangeModal();
   // Print customization modal overlay
   if (S.showPrintModal) h += renderPrintModal();
+  // Variable fill modal overlay
+  if (S._varFillVar) h += renderVarFillModal();
   h += '</div>';
   root.innerHTML = h;
   // Post-render: wire up password change form submit
@@ -5653,6 +5870,22 @@ function render() {
   }
   // Post-render: initialize flatpickr date pickers and facility autocomplete
   requestAnimationFrame(function() { initDatePickers(); initFacilityAC(); });
+
+  // Post-render: variable fill modal
+  if (S._varFillVar) {
+    var varfillInput = document.getElementById('varfill-input');
+    if (varfillInput) varfillInput.focus();
+    // Wire up enum-or-custom toggle inside modal
+    var enumSel = document.getElementById('varfill-enum-sel');
+    if (enumSel) {
+      enumSel.addEventListener('change', function() {
+        var ci = document.getElementById('varfill-custom-inp');
+        if (!ci) return;
+        ci.style.display = enumSel.value === '__custom__' ? '' : 'none';
+        if (enumSel.value === '__custom__') ci.focus();
+      });
+    }
+  }
 }
 
 // ── Kanban Drag-and-Drop ────────────────────────────────────────
@@ -5995,6 +6228,15 @@ function handleRegister() {
 }
 
 document.addEventListener('click', function(e) {
+  // Click on any variable span in the document to open fill modal
+  var varSpan = e.target.closest('[data-var]');
+  if (varSpan && S.currentView === 'editor' && varSpan.closest('.doc-scroll')) {
+    e.preventDefault();
+    e.stopPropagation();
+    setState({ _varFillVar: varSpan.dataset.var });
+    return;
+  }
+
   var btn = e.target.closest('[data-action]');
   if (!btn) return;
   var action = btn.dataset.action;
@@ -6004,6 +6246,9 @@ document.addEventListener('click', function(e) {
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
   if (action === 'show-password-change') { setState({ showPasswordChange: true, passwordChangeError: '', passwordChangeDraft: { currentPassword: '', newPassword: '', confirmPassword: '' } }); return; }
   if (action === 'pw-modal-close') { setState({ showPasswordChange: false, passwordChangeError: '', passwordChangeBusy: false }); return; }
+  if (action === 'varfill-close') { setState({ _varFillVar: null }); return; }
+  if (action === 'varfill-save') { handleVarFillSave(); return; }
+  if (action === 'varfill-goto-tab') { var tab = btn.dataset.tab; setState({ _varFillVar: null, editorTab: tab }); return; }
   if (action === 'show-register') { e.preventDefault(); S._showRegister = true; S._showForgotPassword = false; render(); return; }
   if (action === 'show-login') { e.preventDefault(); S._showRegister = false; S._showForgotPassword = false; render(); return; }
   if (action === 'show-forgot-password') { e.preventDefault(); setState({ _showForgotPassword: true, _showRegister: false, _forgotPasswordStep: 'email', _forgotPasswordError: '', _forgotPasswordBusy: false, _forgotPasswordClientSecret: '', _forgotPasswordSid: '' }); return; }
@@ -7286,6 +7531,15 @@ document.addEventListener('keydown', function(e) {
     e.preventDefault();
     var createBtn = document.querySelector('[data-action="board-create-new-client"]');
     if (createBtn) createBtn.click();
+  }
+  // Enter key in variable fill modal saves
+  if (e.key === 'Enter' && S._varFillVar && e.target.closest('.varfill-modal')) {
+    e.preventDefault();
+    handleVarFillSave();
+  }
+  // Escape key closes variable fill modal
+  if (e.key === 'Escape' && S._varFillVar) {
+    setState({ _varFillVar: null });
   }
 });
 

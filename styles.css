@@ -1259,6 +1259,14 @@ body,
 .vf {
   color: inherit;
 }
+.doc-scroll .vf {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.doc-scroll .vf:hover {
+  background: rgba(160, 133, 64, 0.08);
+  border-radius: 2px;
+}
 .ve {
   color: var(--accent);
   font-weight: 700;
@@ -1267,6 +1275,113 @@ body,
   border-radius: 2px;
   border-bottom: 1.5px dashed var(--accent);
   font-size: 0.85em;
+}
+.doc-scroll .ve {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.doc-scroll .ve:hover {
+  background: rgba(160, 133, 64, 0.15);
+}
+
+/* ── Variable Fill Modal ─────────────────────────────── */
+.varfill-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.varfill-modal {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+}
+.varfill-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.varfill-title {
+  font-family: 'Source Serif 4', serif;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--fg);
+}
+.varfill-close-btn {
+  background: none;
+  border: none;
+  font-size: 20px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 0 4px;
+  line-height: 1;
+}
+.varfill-close-btn:hover {
+  color: var(--fg);
+}
+.varfill-varname {
+  margin-bottom: 16px;
+}
+.varfill-varname code {
+  font-size: 12px;
+  color: var(--accent);
+  background: rgba(160, 133, 64, 0.08);
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.varfill-field-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 8px;
+}
+.varfill-form-badge {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--muted);
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  margin-left: 6px;
+}
+.varfill-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.varfill-current {
+  font-size: 12px;
+  color: var(--fg2);
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+.varfill-unknown {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+.varfill-input {
+  width: 100%;
+  margin-bottom: 4px;
+}
+.varfill-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
 }
 
 /* ── Operation Log ────────────────────────────────── */
