@@ -2380,11 +2380,13 @@ function doExportDoc(blocks, vars, name, pageSettings) {
   setTimeout(function() { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
 }
 
-function doExportPDF(blocks, vars, pageSettings) {
+function doExportPDF(blocks, vars, pageSettings, clientName) {
   var w = window.open('', '_blank', 'width=850,height=1100');
   if (!w) { alert('Allow popups for PDF export'); return; }
   w.document.write(buildDocHTML(blocks, vars, pageSettings));
   w.document.close();
+  var pdfName = 'habeas-' + (clientName || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.pdf';
+  w.document.title = pdfName;
   setTimeout(function() { w.focus(); w.print(); }, 500);
 }
 
@@ -6337,20 +6339,23 @@ document.addEventListener('click', function(e) {
       }
     } else {
       // PDF: template-based print flow with DOM-based pagination
+      var pdfName = 'habeas-' + (cl.name || 'matter').replace(/\s+/g, '-').toLowerCase() + '-' + new Date().toISOString().slice(0, 10) + '.pdf';
       buildExportFromTemplate(vars, false, pet.pageSettings)
         .then(function(html) {
           var w = window.open('', '_blank', 'width=850,height=1100');
           if (!w) { alert('Allow popups for PDF export'); return; }
           w.document.write(html);
           w.document.close();
+          w.document.title = pdfName;
           setTimeout(function() {
             paginatePrintWindow(w);
+            w.document.title = pdfName;
             setTimeout(function() { w.focus(); w.print(); }, 300);
           }, 500);
         })
         .catch(function(err) {
           console.error('Template export failed, falling back to block export:', err);
-          doExportPDF(pet.blocks, vars, pet.pageSettings);
+          doExportPDF(pet.blocks, vars, pet.pageSettings, cl.name);
         });
     }
     render();
