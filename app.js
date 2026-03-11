@@ -738,6 +738,7 @@ var EVT_COURT    = 'com.amino.court';
 var EVT_ATTORNEY = 'com.amino.attorney';
 var EVT_USER     = 'com.amino.user';
 var EVT_TEMPLATE = 'com.amino.template';
+var EVT_TEMPLATE_BLOCKS = 'com.amino.template.blocks';
 var EVT_CLIENT   = 'com.amino.client';
 var EVT_PETITION = 'com.amino.petition';
 var EVT_PETITION_BLOCKS = 'com.amino.petition.blocks';
@@ -746,6 +747,29 @@ var EVT_GITHUB   = 'com.amino.config.github';
 var EVT_SUBMISSION = 'com.amino.submission';
 var EVT_TEAM     = 'com.amino.team';
 var EVT_CLIENT_FORMS = 'com.amino.client.forms';
+
+// ── EO Operator Notation ─────────────────────────────────────────
+// Proper EO three-letter codes used for new template operations.
+// Legacy English names (CREATE, UPDATE, etc.) are deprecated but preserved
+// for backward compatibility. This map documents what they always meant.
+var EO_OPS = {
+  // EO code → { glyph, name, legacy }
+  INS: { glyph: '\u25B3', name: 'INS', legacy: 'CREATE' },   // α — Instantiate
+  ALT: { glyph: '\u223F', name: 'ALT', legacy: 'UPDATE' },    // δ — Shift state
+  NUL: { glyph: '\u2205', name: 'NUL', legacy: 'DELETE' },    // ν — Withdraw
+  CON: { glyph: '\u22C8', name: 'CON', legacy: 'APPLY' },     // ε — Connect
+  SIG: { glyph: '\u22A1', name: 'SIG', legacy: null },        // σ — Designate
+  SEG: { glyph: '|',      name: 'SEG', legacy: null },        // κ — Segment
+  SYN: { glyph: '\u2228', name: 'SYN', legacy: null },        // η — Synthesize
+  SUP: { glyph: '\u2225', name: 'SUP', legacy: null },        // ψ — Hold multiplicity
+  REC: { glyph: '\u21AC', name: 'REC', legacy: null },        // Ω — Recursive revision
+};
+// Legacy → EO mapping for log display
+var EO_LEGACY_MAP = {
+  CREATE: 'INS', UPDATE: 'ALT', REVISE: 'ALT', FILL: 'ALT',
+  STAGE: 'ALT', ARCHIVE: 'ALT', RECOVER: 'ALT', APPLY: 'CON',
+  DELETE: 'NUL', ADOPT: 'CON',
+};
 
 // ── Client Form Definitions ──────────────────────────────────────
 // Each form has an id, title, and fields. Each field has a key that becomes
@@ -1103,6 +1127,25 @@ var matrix = {
       .then(function(data) {
         return (data.chunk || []).filter(function(evt) {
           return evt.type === filterType && evt.content && !evt.content.reviewed;
+        });
+      });
+  },
+
+  // Fetch version history for a specific state event type + state_key.
+  // Returns chronological array of { content, sender, origin_server_ts }.
+  // Each entry is one EO op (one mutation of this state event).
+  fetchStateHistory: function(roomId, eventType, stateKey, limit) {
+    var params = 'limit=' + (limit || 200) + '&dir=b';
+    params += '&filter=' + encodeURIComponent(JSON.stringify({ types: [eventType] }));
+    return this._api('GET', '/rooms/' + encodeURIComponent(roomId) + '/messages?' + params)
+      .then(function(data) {
+        var events = (data.chunk || []).filter(function(evt) {
+          return evt.type === eventType && evt.state_key === stateKey && evt.content;
+        });
+        // Reverse to chronological order (API returns newest first)
+        events.reverse();
+        return events.map(function(evt) {
+          return { content: evt.content, sender: evt.sender, origin_server_ts: evt.origin_server_ts };
         });
       });
   },
@@ -1486,6 +1529,16 @@ var S = {
   petitions: {},
   users: {},
   teams: {},
+  templates: {},
+  templateView: 'list',
+  selectedTemplateId: null,
+  templateEditorTab: 'meta',
+  templateHistory: [],
+  templateDiffA: null,
+  templateDiffB: null,
+  templateSearch: '',
+  templateShowArchived: false,
+  _pendingTemplateId: null,
   teamEditId: null,
   teamDraft: {},
   serverUsersLoaded: false,
@@ -2031,6 +2084,54 @@ function hydrateFromMatrix() {
         }
       }
 
+      // Templates (from !templates room)
+      var templates = {};
+      if (matrix.templatesRoomId) {
+        var tmplEvents = matrix.getStateEvents(matrix.templatesRoomId, EVT_TEMPLATE);
+        var tmplBlockEvents = matrix.getStateEvents(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS);
+        Object.keys(tmplEvents).forEach(function(k) {
+          var e = tmplEvents[k];
+          if (k && e.content && e.content.name && !e.content.deleted) {
+            var blockEvt = tmplBlockEvents[k];
+            templates[k] = {
+              id: k,
+              name: e.content.name,
+              description: e.content.description || '',
+              legalBasis: e.content.legalBasis || '',
+              archived: !!e.content.archived,
+              blocks: (blockEvt && blockEvt.content && blockEvt.content.blocks) || [],
+              createdBy: e.content.createdBy || e.sender,
+              createdAt: e.content.createdAt || new Date(e.origin_server_ts).toISOString(),
+              updatedBy: e.sender,
+              updatedAt: new Date(e.origin_server_ts).toISOString(),
+            };
+          }
+        });
+      }
+      // Seed DEFAULT_BLOCKS as the first template if none exist in the !templates room
+      if (Object.keys(templates).length === 0 && matrix.templatesRoomId) {
+        var seedId = 'tmpl-default-1225b2';
+        var seedBlocks = DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; });
+        templates[seedId] = {
+          id: seedId, name: 'Habeas \u00A71225(b)(2)',
+          description: 'Default habeas corpus petition template for \u00A71225(b)(2) mandatory detention challenges.',
+          legalBasis: '\u00A71225(b)(2)', archived: false,
+          blocks: seedBlocks,
+          createdBy: 'system', createdAt: new Date().toISOString(),
+          updatedBy: 'system', updatedAt: new Date().toISOString(),
+          _seeded: true,
+        };
+        // Persist the seed to Matrix so it shows up for all users
+        matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, {
+          name: templates[seedId].name, description: templates[seedId].description,
+          legalBasis: templates[seedId].legalBasis, archived: false,
+          createdBy: matrix.userId, createdAt: templates[seedId].createdAt,
+        }, seedId).catch(function(e) { console.warn('[amino] Failed to seed default template:', e); });
+        matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, {
+          blocks: seedBlocks,
+        }, seedId).catch(function(e) { console.warn('[amino] Failed to seed default template blocks:', e); });
+      }
+
       var syncError = '';
       if (!matrix.orgRoomId) {
         syncError = 'Could not connect to the organization room. Directory data may be unavailable. Check that the Matrix server is running.';
@@ -2039,7 +2140,8 @@ function hydrateFromMatrix() {
       setState({
         facilities: facilities, courts: courts, attProfiles: attProfiles,
         national: national, clients: clients, petitions: petitions,
-        users: users, teams: teams, role: role, currentUser: matrix.userId, syncError: syncError,
+        users: users, teams: teams, templates: templates,
+        role: role, currentUser: matrix.userId, syncError: syncError,
         mustChangePassword: mustChangePassword,
       });
 
@@ -2819,12 +2921,17 @@ function debouncedSync(key, fn) {
 }
 
 // Actions that should only save on blur (field exit), not every keystroke
-var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1, 'editor-form-field': 1, 'client-form-field': 1 };
+var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1, 'editor-form-field': 1, 'client-form-field': 1, 'template-meta-field': 1 };
 
 // Update only the in-memory state for a field (no log entry, no Matrix sync).
 // Called on every keystroke to keep the UI responsive; the actual save
 // (log + sync) happens via dispatchFieldChange on the 'change' event (blur).
 function updateFieldLocally(action, key, val) {
+  if (action === 'template-meta-field') {
+    var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+    if (tmpl) tmpl[key] = val;
+    return;
+  }
   if (action === 'national-field') {
     if (S.role !== 'admin') return;
     S.national[key] = val;
@@ -3667,7 +3774,7 @@ function renderHeader() {
   var petClient = pet ? S.clients[pet.clientId] : null;
   var h = '<header class="hdr"><div class="hdr-left">';
   h += '<span class="hdr-brand">Habeas</span><nav class="hdr-nav">';
-  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory'],['teams','Teams']];
+  var tabs = [['board','Board'],['clients','Clients'],['directory','Directory'],['templates','Templates'],['teams','Teams']];
   if (S.role === 'admin') tabs.push(['admin','Admin']);
   if (pet) tabs.push(['editor','Editor']);
   tabs.forEach(function(t) {
@@ -3740,6 +3847,7 @@ function renderBoard() {
   if (S.boardAddingMatter === 'new') {
     h += '<div class="board-add-matter">';
     h += '<input class="finp board-new-client-name" type="text" placeholder="Client name\u2026" data-action="board-new-client-input" autofocus />';
+    h += htmlTemplatePicker();
     h += '<button class="hbtn accent" data-action="board-create-new-client">Create &amp; Open</button>';
     if (clientList.length > 0) {
       h += '<button class="hbtn" data-action="board-show-existing">Existing Client</button>';
@@ -3754,6 +3862,7 @@ function renderBoard() {
       h += '<option value="' + c.id + '">' + esc(c.name || 'Unnamed') + '</option>';
     });
     h += '</select>';
+    h += htmlTemplatePicker();
     h += '<button class="hbtn" data-action="board-show-new">New Client</button>';
     h += '<button class="hbtn" data-action="board-cancel-add-matter">Cancel</button>';
     h += '</div>';
@@ -4977,6 +5086,364 @@ function renderTeams() {
 }
 
 
+// ── Templates View ──────────────────────────────────────────────
+
+function getNewPetitionBlocks(templateId) {
+  if (templateId && S.templates[templateId] && S.templates[templateId].blocks) {
+    return S.templates[templateId].blocks.map(function(b) {
+      return { id: b.id, type: b.type, content: b.content };
+    });
+  }
+  return DEFAULT_BLOCKS.map(function(b) {
+    return { id: b.id, type: b.type, content: b.content };
+  });
+}
+
+function htmlTemplatePicker() {
+  var tmpls = Object.values(S.templates).filter(function(t) { return !t.archived; });
+  if (tmpls.length <= 1) return '';
+  var h = '<select class="finp tmpl-picker-select" data-change="board-select-template">';
+  h += '<option value="">' + (tmpls.length ? 'Default template' : 'Default') + '</option>';
+  tmpls.forEach(function(t) {
+    var sel = S._pendingTemplateId === t.id ? ' selected' : '';
+    h += '<option value="' + t.id + '"' + sel + '>' + esc(t.name) + ' (' + (t.blocks ? t.blocks.length : 0) + ' blocks)</option>';
+  });
+  h += '</select>';
+  return h;
+}
+
+function countTemplateVars(blocks) {
+  var vars = {};
+  (blocks || []).forEach(function(b) {
+    var m;
+    var re = /\{\{(\w+)\}\}/g;
+    while ((m = re.exec(b.content)) !== null) {
+      vars[m[1]] = (vars[m[1]] || 0) + 1;
+    }
+  });
+  return vars;
+}
+
+function renderTemplates() {
+  if (S.templateView === 'editor') return renderTemplateEditor();
+  if (S.templateView === 'history') return renderTemplateHistory();
+  return renderTemplateList();
+}
+
+function renderTemplateList() {
+  var h = '<div class="dir-view"><div class="dir-header">';
+  h += '<h2>Templates</h2>';
+  h += '<div class="dir-actions">';
+  h += '<input type="text" class="dir-search" placeholder="Search templates\u2026" value="' + esc(S.templateSearch) + '" data-change="template-search" />';
+  h += '<label class="dir-archived-toggle"><input type="checkbox"' + (S.templateShowArchived ? ' checked' : '') + ' data-action="template-toggle-archived" /> Show archived</label>';
+  h += '<button class="hbtn accent" data-action="template-new">\u25B3 New Template</button>';
+  h += '</div></div>';
+  h += '<div class="dir-body"><div class="dir-cards">';
+
+  var search = (S.templateSearch || '').toLowerCase();
+  var templateKeys = Object.keys(S.templates).filter(function(k) {
+    var t = S.templates[k];
+    if (!S.templateShowArchived && t.archived) return false;
+    if (search) {
+      return (t.name || '').toLowerCase().indexOf(search) >= 0 ||
+             (t.description || '').toLowerCase().indexOf(search) >= 0 ||
+             (t.legalBasis || '').toLowerCase().indexOf(search) >= 0;
+    }
+    return true;
+  });
+  // Sort: non-archived first, then by name
+  templateKeys.sort(function(a, b) {
+    var ta = S.templates[a], tb = S.templates[b];
+    if (ta.archived !== tb.archived) return ta.archived ? 1 : -1;
+    return (ta.name || '').localeCompare(tb.name || '');
+  });
+
+  if (templateKeys.length === 0) {
+    h += '<div class="lempty">No templates found.</div>';
+  }
+
+  templateKeys.forEach(function(k) {
+    var t = S.templates[k];
+    var vars = countTemplateVars(t.blocks);
+    var varCount = Object.keys(vars).length;
+    var blockCount = (t.blocks || []).length;
+
+    h += '<div class="tmpl-card' + (t.archived ? ' archived' : '') + '" data-id="' + esc(k) + '">';
+    h += '<div class="tmpl-card-header">';
+    h += '<h3 class="tmpl-card-name">' + esc(t.name) + '</h3>';
+    if (t.legalBasis) h += '<span class="tmpl-card-basis">' + esc(t.legalBasis) + '</span>';
+    if (t.archived) h += '<span class="tmpl-card-badge archived-badge">Archived</span>';
+    h += '</div>';
+    if (t.description) h += '<p class="tmpl-card-desc">' + esc(t.description) + '</p>';
+    h += '<div class="tmpl-card-stats">';
+    h += '<span>' + blockCount + ' blocks</span>';
+    h += '<span>' + varCount + ' variables</span>';
+    h += '</div>';
+    h += htmlProvenanceBadge(t);
+    h += '<div class="tmpl-card-actions">';
+    h += '<button class="hbtn sm" data-action="template-edit" data-id="' + esc(k) + '">Edit</button>';
+    h += '<button class="hbtn sm" data-action="template-duplicate" data-id="' + esc(k) + '">Duplicate</button>';
+    h += '<button class="hbtn sm" data-action="template-history" data-id="' + esc(k) + '">History</button>';
+    h += '<button class="hbtn sm" data-action="template-use" data-id="' + esc(k) + '">Use</button>';
+    if (t.archived) {
+      h += '<button class="hbtn sm" data-action="template-recover" data-id="' + esc(k) + '">Recover</button>';
+    } else {
+      h += '<button class="hbtn sm danger" data-action="template-archive" data-id="' + esc(k) + '">Archive</button>';
+    }
+    h += '</div></div>';
+  });
+
+  h += '</div></div></div>';
+  return h;
+}
+
+function renderTemplateEditor() {
+  var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+  if (!tmpl) return '<div class="dir-view"><div class="dir-body"><p class="lempty">No template selected.</p></div></div>';
+
+  var h = '<div class="editor-view">';
+
+  // Left sidebar
+  h += '<div class="editor-sidebar"><div class="editor-sidebar-inner">';
+  h += '<div class="editor-sidebar-header">';
+  h += '<button class="hbtn sm" data-action="template-back">\u2190 Back to list</button>';
+  h += '</div>';
+
+  // Tabs
+  var tabs = [['meta','Meta'],['blocks','Blocks'],['variables','Variables']];
+  h += '<div class="editor-tabs">';
+  tabs.forEach(function(t) {
+    h += '<button class="etab' + (S.templateEditorTab === t[0] ? ' on' : '') + '" data-action="template-editor-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
+  });
+  h += '</div>';
+
+  if (S.templateEditorTab === 'meta') {
+    h += '<div class="editor-fields">';
+    h += '<div class="field-group"><label>Template Name</label>';
+    h += '<input type="text" value="' + esc(tmpl.name) + '" data-action="template-meta-field" data-key="name" /></div>';
+    h += '<div class="field-group"><label>Description</label>';
+    h += '<textarea rows="3" data-action="template-meta-field" data-key="description">' + esc(tmpl.description) + '</textarea></div>';
+    h += '<div class="field-group"><label>Legal Basis</label>';
+    h += '<input type="text" value="' + esc(tmpl.legalBasis) + '" data-action="template-meta-field" data-key="legalBasis" /></div>';
+    h += htmlProvenanceBadge(tmpl);
+    h += '</div>';
+  } else if (S.templateEditorTab === 'blocks') {
+    h += '<div class="tmpl-block-list">';
+    h += '<div class="tmpl-block-toolbar">';
+    h += '<button class="hbtn sm accent" data-action="template-add-block">\u25B3 Add Block</button>';
+    h += '</div>';
+    (tmpl.blocks || []).forEach(function(b, i) {
+      h += '<div class="tmpl-block-item" data-idx="' + i + '" data-block-id="' + esc(b.id) + '">';
+      h += '<span class="tmpl-block-type">' + esc(b.type) + '</span>';
+      h += '<span class="tmpl-block-id">' + esc(b.id) + '</span>';
+      h += '<select class="tmpl-block-type-select" data-action="template-change-block-type" data-idx="' + i + '">';
+      Object.keys(CLS_MAP).forEach(function(type) {
+        h += '<option value="' + type + '"' + (b.type === type ? ' selected' : '') + '>' + type + '</option>';
+      });
+      h += '</select>';
+      h += '<button class="tmpl-block-btn" data-action="template-move-block-up" data-idx="' + i + '" title="Move up">\u2191</button>';
+      h += '<button class="tmpl-block-btn" data-action="template-move-block-down" data-idx="' + i + '" title="Move down">\u2193</button>';
+      h += '<button class="tmpl-block-btn danger" data-action="template-delete-block" data-idx="' + i + '" title="Delete">\u00D7</button>';
+      h += '</div>';
+    });
+    h += '</div>';
+  } else if (S.templateEditorTab === 'variables') {
+    var vars = countTemplateVars(tmpl.blocks);
+    var varKeys = Object.keys(vars).sort();
+    h += '<div class="tmpl-var-list">';
+    if (varKeys.length === 0) {
+      h += '<div class="lempty">No variables found. Use {{VARIABLE_NAME}} in block content.</div>';
+    }
+    varKeys.forEach(function(k) {
+      h += '<div class="tmpl-var-item"><span class="tmpl-var-name">{{' + esc(k) + '}}</span><span class="tmpl-var-count">' + vars[k] + '\u00D7</span></div>';
+    });
+    h += '</div>';
+  }
+
+  h += '</div></div>';
+
+  // Right panel — WYSIWYG paginated document
+  h += '<div class="doc-scroll">';
+  var emptyVars = {};  // All variables render as unfilled placeholders
+  h += renderPaginatedDoc(tmpl.blocks || [], emptyVars, '', null);
+  h += '</div>';
+
+  h += '</div>';
+  return h;
+}
+
+// ── Word-level diff (LCS-based) ────────────────────────────────
+
+function wordDiff(oldText, newText) {
+  var oldWords = (oldText || '').split(/(\s+)/);
+  var newWords = (newText || '').split(/(\s+)/);
+  var m = oldWords.length, n = newWords.length;
+
+  // Build LCS table
+  var dp = [];
+  for (var i = 0; i <= m; i++) {
+    dp[i] = [];
+    for (var j = 0; j <= n; j++) {
+      if (i === 0 || j === 0) dp[i][j] = 0;
+      else if (oldWords[i - 1] === newWords[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
+      else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+
+  // Backtrack to produce diff
+  var result = [];
+  var ii = m, jj = n;
+  while (ii > 0 || jj > 0) {
+    if (ii > 0 && jj > 0 && oldWords[ii - 1] === newWords[jj - 1]) {
+      result.unshift({ type: 'same', text: oldWords[ii - 1] });
+      ii--; jj--;
+    } else if (jj > 0 && (ii === 0 || dp[ii][jj - 1] >= dp[ii - 1][jj])) {
+      result.unshift({ type: 'ins', text: newWords[jj - 1] });
+      jj--;
+    } else {
+      result.unshift({ type: 'del', text: oldWords[ii - 1] });
+      ii--;
+    }
+  }
+
+  var html = '';
+  result.forEach(function(r) {
+    if (r.type === 'del') html += '<del class="diff-del">' + esc(r.text) + '</del>';
+    else if (r.type === 'ins') html += '<ins class="diff-ins">' + esc(r.text) + '</ins>';
+    else html += esc(r.text);
+  });
+  return html;
+}
+
+function renderTemplateHistory() {
+  var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+  if (!tmpl) return '<div class="dir-view"><div class="dir-body"><p class="lempty">No template selected.</p></div></div>';
+
+  var h = '<div class="tmpl-history-view">';
+  h += '<div class="tmpl-history-header">';
+  h += '<button class="hbtn sm" data-action="template-back">\u2190 Back to list</button>';
+  h += '<h2>\u2225 Version History: ' + esc(tmpl.name) + '</h2>';
+  if (!S.templateHistory.length && !S._templateHistoryLoading) {
+    h += '<button class="hbtn sm accent" data-action="template-load-history" data-id="' + esc(tmpl.id) + '">Load History</button>';
+  }
+  h += '</div>';
+
+  if (S._templateHistoryLoading) {
+    h += '<div class="lempty">Loading version history\u2026</div>';
+  } else if (S.templateHistory.length === 0) {
+    h += '<div class="lempty">Click "Load History" to fetch version history from the server.</div>';
+  } else {
+    h += '<div class="tmpl-history-content">';
+
+    // Left: version timeline
+    h += '<div class="tmpl-history-timeline">';
+    h += '<h3>Versions (' + S.templateHistory.length + ')</h3>';
+    S.templateHistory.forEach(function(v, i) {
+      var isA = S.templateDiffA === i;
+      var isB = S.templateDiffB === i;
+      var cls = 'tmpl-version-item';
+      if (isA) cls += ' diff-a';
+      if (isB) cls += ' diff-b';
+      if (i === S.templateHistory.length - 1) cls += ' current';
+      var senderName = v.sender;
+      if (S.users[v.sender]) senderName = S.users[v.sender].displayName;
+      var blockCount = (v.content && v.content.blocks) ? v.content.blocks.length : 0;
+      h += '<div class="' + cls + '" data-action="template-select-version" data-idx="' + i + '">';
+      h += '<span class="tmpl-version-num">v' + (i + 1) + '</span>';
+      h += '<span class="tmpl-version-who">' + esc(senderName) + '</span>';
+      h += '<span class="tmpl-version-when">' + ts(new Date(v.origin_server_ts).toISOString()) + '</span>';
+      h += '<span class="tmpl-version-blocks">' + blockCount + ' blocks</span>';
+      if (i === S.templateHistory.length - 1) h += '<span class="tmpl-version-current">current</span>';
+      h += '</div>';
+    });
+    h += '<div class="tmpl-history-hint">Click two versions to compare.</div>';
+    h += '</div>';
+
+    // Right: side-by-side diff (if two versions selected)
+    h += '<div class="tmpl-history-diff">';
+    if (S.templateDiffA !== null && S.templateDiffB !== null && S.templateDiffA !== S.templateDiffB) {
+      var vA = S.templateHistory[S.templateDiffA];
+      var vB = S.templateHistory[S.templateDiffB];
+      var blocksA = (vA && vA.content && vA.content.blocks) || [];
+      var blocksB = (vB && vB.content && vB.content.blocks) || [];
+
+      // Build maps
+      var mapA = {}, mapB = {};
+      blocksA.forEach(function(b) { mapA[b.id] = b; });
+      blocksB.forEach(function(b) { mapB[b.id] = b; });
+
+      // Collect all block IDs in order (B first, then any A-only)
+      var allIds = [];
+      var seen = {};
+      blocksB.forEach(function(b) { allIds.push(b.id); seen[b.id] = true; });
+      blocksA.forEach(function(b) { if (!seen[b.id]) allIds.push(b.id); });
+
+      h += '<div class="tmpl-diff-header">';
+      h += '<span class="diff-label diff-a-label">v' + (S.templateDiffA + 1) + '</span>';
+      h += '<span class="diff-label diff-b-label">v' + (S.templateDiffB + 1) + '</span>';
+      h += '</div>';
+
+      h += '<div class="tmpl-diff-blocks">';
+      allIds.forEach(function(id) {
+        var inA = !!mapA[id], inB = !!mapB[id];
+        if (inA && inB) {
+          var contentA = mapA[id].content || '';
+          var contentB = mapB[id].content || '';
+          if (contentA === contentB) {
+            // Unchanged — collapsed
+            h += '<div class="tmpl-diff-row unchanged" data-action="template-diff-expand">';
+            h += '<span class="diff-status">=</span>';
+            h += '<span class="diff-id">' + esc(id) + '</span>';
+            h += '<span class="diff-hint">(unchanged, click to expand)</span>';
+            h += '</div>';
+          } else {
+            // Changed — show word-level diff
+            h += '<div class="tmpl-diff-row changed">';
+            h += '<span class="diff-status">\u223F</span>';
+            h += '<span class="diff-id">' + esc(id) + ' (' + esc(mapA[id].type) + ')</span>';
+            h += '<div class="tmpl-diff-side left">' + wordDiff(contentA, contentB) + '</div>';
+            h += '</div>';
+          }
+        } else if (inB && !inA) {
+          // Added
+          h += '<div class="tmpl-diff-row added">';
+          h += '<span class="diff-status">\u25B3</span>';
+          h += '<span class="diff-id">' + esc(id) + ' (' + esc(mapB[id].type) + ')</span>';
+          h += '<div class="tmpl-diff-content">' + esc(mapB[id].content || '') + '</div>';
+          h += '</div>';
+        } else if (inA && !inB) {
+          // Removed
+          h += '<div class="tmpl-diff-row removed">';
+          h += '<span class="diff-status">\u2205</span>';
+          h += '<span class="diff-id">' + esc(id) + ' (' + esc(mapA[id].type) + ')</span>';
+          h += '<div class="tmpl-diff-content">' + esc(mapA[id].content || '') + '</div>';
+          h += '</div>';
+        }
+      });
+      h += '</div>';
+
+      // Restore button
+      if (S.templateDiffA < S.templateDiffB) {
+        h += '<div class="tmpl-diff-actions">';
+        h += '<button class="hbtn sm" data-action="template-restore-version" data-idx="' + S.templateDiffA + '">Restore v' + (S.templateDiffA + 1) + '</button>';
+        h += '</div>';
+      } else {
+        h += '<div class="tmpl-diff-actions">';
+        h += '<button class="hbtn sm" data-action="template-restore-version" data-idx="' + S.templateDiffB + '">Restore v' + (S.templateDiffB + 1) + '</button>';
+        h += '</div>';
+      }
+    } else {
+      h += '<div class="lempty">Select two versions from the timeline to compare.</div>';
+    }
+    h += '</div>';
+
+    h += '</div>';
+  }
+
+  h += '</div>';
+  return h;
+}
+
 function renderAdmin() {
   if (S.role !== 'admin') {
     return '<div class="dir-view"><div class="dir-body" style="text-align:center;padding:60px"><p style="color:var(--muted)">Admin access required.</p></div></div>';
@@ -5236,6 +5703,7 @@ function renderEditor() {
   [['client','Client'],['forms','Forms'],['court','Court + Facility'],['atty','Attorneys'],['page','Page'],['filing','Filing'],['log','Log (' + S.log.length + ')']].forEach(function(t) {
     h += '<button class="ed-tab' + (S.editorTab === t[0] ? ' on' : '') + '" data-action="ed-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
+  h += '<button class="hbtn" data-action="save-as-template" style="margin-left:auto;font-size:10px;padding:6px 10px">Save as Template</button>';
   h += '</div><div class="ed-fields">';
 
   if (S.editorTab === 'client' && client) {
@@ -5652,6 +6120,157 @@ function attachBlockListeners() {
   });
 }
 
+// ── Template Editor: Pagination + Block Handlers ────────────────
+
+function initTemplatePagination() {
+  var mb = document.getElementById('measure-box');
+  var pc = document.getElementById('pages-container');
+  if (!mb || !pc) return;
+
+  var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+  if (!tmpl) return;
+  var vars = {};  // Empty vars — all placeholders show as unfilled
+  var blocks = tmpl.blocks || [];
+  var body = blocks.filter(function(b) { return !CAP_ALL[b.id]; });
+
+  var _ips = DEFAULT_PAGE_SETTINGS;
+  var PAGE_W = 816, PAGE_H = 1056;
+  var MG_T = Math.round((_ips.marginTop != null ? _ips.marginTop : 1) * 96);
+  var MG_B = Math.round((_ips.marginBottom != null ? _ips.marginBottom : 1) * 96);
+  var MG_L = Math.round((_ips.marginLeft != null ? _ips.marginLeft : 1) * 96);
+  var MG_R = Math.round((_ips.marginRight != null ? _ips.marginRight : 1) * 96);
+  var USABLE_H = PAGE_H - MG_T - MG_B - 28;
+
+  var capEl = mb.querySelector('[data-mr="cap"]');
+  var capH = capEl ? capEl.offsetHeight : 0;
+  var blockEls = Array.from(mb.querySelectorAll('[data-mr="body"]>[data-block-id]'));
+  var hs = blockEls.map(function(e) {
+    var cs = window.getComputedStyle(e);
+    var mt = parseFloat(cs.marginTop) || 0;
+    var mbot = parseFloat(cs.marginBottom) || 0;
+    return { id: e.dataset.blockId, h: e.offsetHeight + mt + mbot, isHeading: e.className.indexOf('blk-heading') >= 0 };
+  });
+
+  var pages = [];
+  var cur = [];
+  var rem = USABLE_H - capH;
+  var pi = 0;
+  for (var i = 0; i < hs.length; i++) {
+    var item = hs[i];
+    if (item.h > rem && cur.length > 0) {
+      pages.push({ ids: cur, first: pi === 0 });
+      cur = []; rem = USABLE_H; pi++;
+    }
+    if (item.isHeading && cur.length > 0 && i + 1 < hs.length) {
+      var nextH = hs[i + 1].h;
+      if (item.h <= rem && item.h + nextH > rem) {
+        pages.push({ ids: cur, first: pi === 0 });
+        cur = []; rem = USABLE_H; pi++;
+      }
+    }
+    cur.push(item.id);
+    rem -= item.h;
+  }
+  if (cur.length > 0 || pages.length === 0) {
+    pages.push({ ids: cur, first: pi === 0 });
+  }
+
+  var bm = {};
+  blocks.forEach(function(b) { bm[b.id] = b; });
+  var total = pages.length || 1;
+
+  function renderBlock(b, editable) {
+    var cls = CLS_MAP[b.type] || 'blk-para';
+    var ce = editable ? ' contenteditable="true"' : '';
+    return '<div class="blk ' + cls + '" data-block-id="' + b.id + '"' + ce + '>' + blockToHtml(b.content, vars) + '</div>';
+  }
+
+  function renderCaption(editable) {
+    var capBlocks = blocks.filter(function(b) { return TITLE_IDS[b.id]; });
+    var capLBlocks = blocks.filter(function(b) { return CAP_L.indexOf(b.id) >= 0; });
+    var capRBlocks = blocks.filter(function(b) { return CAP_R.indexOf(b.id) >= 0; });
+    var c = '';
+    capBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+    if (capLBlocks.length || capRBlocks.length) {
+      c += '<div class="caption-grid"><div class="cap-left-col">';
+      capLBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+      c += '</div><div class="cap-mid-col">';
+      for (var i = 0; i < 24; i++) c += '<div>)</div>';
+      c += '</div><div class="cap-right-col">';
+      capRBlocks.forEach(function(b) { c += renderBlock(b, editable); });
+      c += '</div></div>';
+    }
+    return c;
+  }
+
+  var html = '';
+  pages.forEach(function(p, idx) {
+    html += '<div class="page-shell"><div class="page-paper" style="width:' + PAGE_W + 'px;height:' + PAGE_H + 'px">';
+    html += '<div class="page-margin" style="padding:' + MG_T + 'px ' + MG_R + 'px 0 ' + MG_L + 'px">';
+    if (idx === 0) html += renderCaption(true);
+    p.ids.forEach(function(bid) {
+      var b = bm[bid];
+      if (b && !CAP_ALL[b.id]) html += renderBlock(b, true);
+    });
+    html += '</div>';
+    html += '<div class="page-foot" style="height:' + MG_B + 'px;padding:12px ' + MG_L + 'px 0"><span></span><span></span><span>Page ' + (idx + 1) + ' of ' + total + '</span></div>';
+    html += '</div></div>';
+  });
+
+  pc.innerHTML = html;
+}
+
+function initTemplateBlockHandlers() {
+  var pc = document.getElementById('pages-container');
+  if (!pc) return;
+
+  pc.querySelectorAll('.blk[contenteditable="true"]').forEach(function(el) {
+    el.addEventListener('blur', function() {
+      var bid = el.dataset.blockId;
+      var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+      if (!tmpl) return;
+      var block = (tmpl.blocks || []).find(function(b) { return b.id === bid; });
+      if (!block) return;
+      var nc = extractBlockContent(el);
+      var norm = function(s) { return s.replace(/\s+/g, ' ').trim(); };
+      if (norm(nc) !== norm(block.content)) {
+        var oldContent = block.content;
+        block.content = nc;
+        tmpl.updatedBy = S.currentUser;
+        tmpl.updatedAt = now();
+        S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.blocks.' + bid + '.content', payload: nc, frame: { t: now(), prior: oldContent } });
+        if (matrix.templatesRoomId) {
+          matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id)
+            .catch(function(e) { console.error('Template block sync failed:', e); toast('ALT \u21CC template block sync failed', 'error'); });
+        }
+      }
+      // Re-render block with empty vars
+      el.innerHTML = blockToHtml(block.content, {});
+    });
+  });
+}
+
+// ── Template Metadata Blur Handler ──────────────────────────────
+
+function handleTemplateMetaBlur(el) {
+  var key = el.dataset.key;
+  var val = el.value || el.textContent || '';
+  var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+  if (!tmpl || !key) return;
+  if (tmpl[key] === val) return;
+  var oldVal = tmpl[key];
+  tmpl[key] = val;
+  tmpl.updatedBy = S.currentUser;
+  tmpl.updatedAt = now();
+  S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.' + key, payload: val, frame: { t: now(), prior: oldVal } });
+  if (matrix.templatesRoomId) {
+    matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, {
+      name: tmpl.name, description: tmpl.description, legalBasis: tmpl.legalBasis,
+      archived: tmpl.archived, createdBy: tmpl.createdBy, createdAt: tmpl.createdAt,
+    }, tmpl.id).catch(function(e) { console.error('Template meta sync failed:', e); });
+  }
+}
+
 // ── Password Change Modal ────────────────────────────────────────
 function renderPasswordChangeModal() {
   var h = '<div class="pw-modal-overlay" data-action="pw-modal-close">';
@@ -5826,6 +6445,7 @@ function render() {
   else if (S.currentView === 'clients') h += renderClients();
   else if (S.currentView === 'directory') h += renderDirectory();
   else if (S.currentView === 'teams') h += renderTeams();
+  else if (S.currentView === 'templates') h += renderTemplates();
   else if (S.currentView === 'admin') h += renderAdmin();
   else if (S.currentView === 'editor') h += renderEditor();
   // Password change modal overlay
@@ -5869,6 +6489,10 @@ function render() {
   // Post-render: pagination for editor
   if (S.currentView === 'editor') {
     requestAnimationFrame(function() { initPagination(); });
+  }
+  // Post-render: pagination + blur handlers for template editor
+  if (S.currentView === 'templates' && S.templateView === 'editor') {
+    requestAnimationFrame(function() { initTemplatePagination(); initTemplateBlockHandlers(); });
   }
   // Post-render: focus new-client name input on board
   if (S.currentView === 'board' && S.boardAddingMatter === 'new') {
@@ -6293,16 +6917,21 @@ document.addEventListener('click', function(e) {
     S.petitions[pid] = {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
       stageHistory: [{ stage: 'intake', at: now() }],
-      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      blocks: getNewPetitionBlocks(S._pendingTemplateId),
       district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
       _bodyEdited: false, _exported: false,
+      templateId: S._pendingTemplateId || null,
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    if (S._pendingTemplateId) {
+      S.log.push({ op: 'CON', target: 'petition.' + pid + '.templateId', operand: 'template.' + S._pendingTemplateId, frame: { t: now() } });
+    }
+    S._pendingTemplateId = null;
     setState({ selectedClientId: cid, selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
     // Sync petition once room is ready
     if (_pendingRoomCreations[cid]) {
@@ -6615,6 +7244,279 @@ document.addEventListener('click', function(e) {
   if (action === 'export-attorneys-csv') { if (S.role === 'admin') exportAttorneyProfilesCSV(); return; }
 
   // Directory
+  // ── Save as Template (from petition editor) ─────────────────
+  if (action === 'save-as-template') {
+    var pet = S.selectedPetitionId ? S.petitions[S.selectedPetitionId] : null;
+    if (!pet || !pet.blocks || !pet.blocks.length) { toast('No petition blocks to save', 'error'); return; }
+    var tmplName = prompt('Template name:');
+    if (!tmplName || !tmplName.trim()) return;
+    tmplName = tmplName.trim();
+    var templateId = 'tmpl-' + Date.now();
+    var blocks = pet.blocks.map(function(b) { return { id: b.id, type: b.type, content: b.content }; });
+    var meta = { name: tmplName, description: '', legalBasis: '', archived: false, createdBy: S.currentUser, createdAt: now() };
+    S.templates[templateId] = Object.assign({}, meta, { id: templateId, blocks: blocks });
+    S.log.push({ op: 'INS', target: 'template.' + templateId, operand: 'petition.' + pet.id + '.blocks', frame: { t: now() } });
+    if (matrix.isReady() && matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, meta, templateId)
+        .catch(function(e) { console.error('Template meta save failed:', e); });
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: blocks }, templateId)
+        .catch(function(e) { console.error('Template blocks save failed:', e); });
+    }
+    toast('INS \u25B3 template \u201C' + tmplName + '\u201D', 'success');
+    setState({});
+    return;
+  }
+
+  // ── Template actions ──────────────────────────────────────────
+  if (action === 'template-search') { setState({ templateSearch: btn.value || '' }); return; }
+  if (action === 'template-toggle-archived') { setState({ templateShowArchived: !S.templateShowArchived }); return; }
+  if (action === 'template-new') {
+    var tid = 'tmpl-' + Date.now();
+    var newTmpl = {
+      id: tid, name: 'New Template', description: '', legalBasis: '', archived: false,
+      blocks: [
+        { id: 'ct-1', type: 'title', content: 'UNITED STATES DISTRICT COURT' },
+        { id: 'h-intro', type: 'heading', content: 'INTRODUCTION' },
+        { id: 'p-1', type: 'para', content: '1. ' },
+      ],
+      createdBy: S.currentUser, createdAt: now(),
+      updatedBy: S.currentUser, updatedAt: now(),
+    };
+    S.templates[tid] = newTmpl;
+    S.log.push({ op: 'INS', target: 'template.' + tid, payload: null, frame: { t: now() } });
+    // Persist to Matrix
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, {
+        name: newTmpl.name, description: newTmpl.description, legalBasis: newTmpl.legalBasis,
+        archived: false, createdBy: S.currentUser, createdAt: newTmpl.createdAt,
+      }, tid).catch(function(e) { console.error('Template create failed:', e); toast('Failed to create template', 'error'); });
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, {
+        blocks: newTmpl.blocks,
+      }, tid).catch(function(e) { console.error('Template blocks create failed:', e); });
+    }
+    setState({ selectedTemplateId: tid, templateView: 'editor', templateEditorTab: 'meta' });
+    toast('\u25B3 INS template', 'success');
+    return;
+  }
+  if (action === 'template-edit') {
+    setState({ selectedTemplateId: btn.dataset.id, templateView: 'editor', templateEditorTab: 'meta' });
+    return;
+  }
+  if (action === 'template-duplicate') {
+    var srcId = btn.dataset.id;
+    var src = S.templates[srcId];
+    if (!src) return;
+    var dupId = 'tmpl-' + Date.now();
+    var dupBlocks = JSON.parse(JSON.stringify(src.blocks || []));
+    var dup = {
+      id: dupId, name: src.name + ' (copy)', description: src.description, legalBasis: src.legalBasis,
+      archived: false, blocks: dupBlocks,
+      createdBy: S.currentUser, createdAt: now(), updatedBy: S.currentUser, updatedAt: now(),
+    };
+    S.templates[dupId] = dup;
+    S.log.push({ op: 'INS', target: 'template.' + dupId, operand: 'template.' + srcId, payload: null, frame: { t: now() } });
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, {
+        name: dup.name, description: dup.description, legalBasis: dup.legalBasis,
+        archived: false, createdBy: S.currentUser, createdAt: dup.createdAt,
+      }, dupId);
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: dupBlocks }, dupId);
+    }
+    setState({});
+    toast('\u25B3 INS template (duplicate)', 'success');
+    return;
+  }
+  if (action === 'template-archive') {
+    var archId = btn.dataset.id;
+    var archTmpl = S.templates[archId];
+    if (!archTmpl) return;
+    archTmpl.archived = true;
+    archTmpl.updatedBy = S.currentUser;
+    archTmpl.updatedAt = now();
+    S.log.push({ op: 'ALT', target: 'template.' + archId + '.archived', payload: true, frame: { t: now() } });
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, {
+        name: archTmpl.name, description: archTmpl.description, legalBasis: archTmpl.legalBasis,
+        archived: true, createdBy: archTmpl.createdBy, createdAt: archTmpl.createdAt,
+      }, archId);
+    }
+    setState({});
+    toast('\u223F ALT template.archived', 'info');
+    return;
+  }
+  if (action === 'template-recover') {
+    var recId = btn.dataset.id;
+    var recTmpl = S.templates[recId];
+    if (!recTmpl) return;
+    recTmpl.archived = false;
+    recTmpl.updatedBy = S.currentUser;
+    recTmpl.updatedAt = now();
+    S.log.push({ op: 'ALT', target: 'template.' + recId + '.archived', payload: false, frame: { t: now() } });
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE, {
+        name: recTmpl.name, description: recTmpl.description, legalBasis: recTmpl.legalBasis,
+        archived: false, createdBy: recTmpl.createdBy, createdAt: recTmpl.createdAt,
+      }, recId);
+    }
+    setState({});
+    toast('\u223F ALT template.archived', 'info');
+    return;
+  }
+  if (action === 'template-back') {
+    setState({ templateView: 'list', selectedTemplateId: null, templateHistory: [], templateDiffA: null, templateDiffB: null, _templateHistoryLoading: false });
+    return;
+  }
+  if (action === 'template-editor-tab') {
+    setState({ templateEditorTab: btn.dataset.tab });
+    return;
+  }
+  if (action === 'template-meta-field') {
+    // Handled by blur/input handler below
+    return;
+  }
+  if (action === 'template-add-block') {
+    var tmpl = S.templates[S.selectedTemplateId];
+    if (!tmpl) return;
+    var newBlockId = 'p-' + Date.now();
+    tmpl.blocks.push({ id: newBlockId, type: 'para', content: '' });
+    tmpl.updatedBy = S.currentUser;
+    tmpl.updatedAt = now();
+    S.log.push({ op: 'INS', target: 'template.' + tmpl.id + '.blocks.' + newBlockId, payload: null, frame: { t: now() } });
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id);
+    }
+    setState({});
+    return;
+  }
+  if (action === 'template-delete-block') {
+    var tmpl = S.templates[S.selectedTemplateId];
+    if (!tmpl) return;
+    var idx = parseInt(btn.dataset.idx, 10);
+    if (idx >= 0 && idx < tmpl.blocks.length) {
+      var removed = tmpl.blocks.splice(idx, 1)[0];
+      S.log.push({ op: 'NUL', target: 'template.' + tmpl.id + '.blocks.' + removed.id, payload: null, frame: { t: now() } });
+      tmpl.updatedBy = S.currentUser;
+      tmpl.updatedAt = now();
+      if (matrix.templatesRoomId) {
+        matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id);
+      }
+      setState({});
+    }
+    return;
+  }
+  if (action === 'template-move-block-up') {
+    var tmpl = S.templates[S.selectedTemplateId];
+    if (!tmpl) return;
+    var idx = parseInt(btn.dataset.idx, 10);
+    if (idx > 0) {
+      var tmp = tmpl.blocks[idx];
+      tmpl.blocks[idx] = tmpl.blocks[idx - 1];
+      tmpl.blocks[idx - 1] = tmp;
+      S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.blocks', payload: 'reorder', frame: { t: now() } });
+      tmpl.updatedBy = S.currentUser;
+      tmpl.updatedAt = now();
+      if (matrix.templatesRoomId) {
+        matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id);
+      }
+      setState({});
+    }
+    return;
+  }
+  if (action === 'template-move-block-down') {
+    var tmpl = S.templates[S.selectedTemplateId];
+    if (!tmpl) return;
+    var idx = parseInt(btn.dataset.idx, 10);
+    if (idx < tmpl.blocks.length - 1) {
+      var tmp = tmpl.blocks[idx];
+      tmpl.blocks[idx] = tmpl.blocks[idx + 1];
+      tmpl.blocks[idx + 1] = tmp;
+      S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.blocks', payload: 'reorder', frame: { t: now() } });
+      tmpl.updatedBy = S.currentUser;
+      tmpl.updatedAt = now();
+      if (matrix.templatesRoomId) {
+        matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id);
+      }
+      setState({});
+    }
+    return;
+  }
+  if (action === 'template-change-block-type') {
+    var tmpl = S.templates[S.selectedTemplateId];
+    if (!tmpl) return;
+    var idx = parseInt(btn.dataset.idx, 10);
+    var newType = btn.value;
+    if (idx >= 0 && idx < tmpl.blocks.length && newType) {
+      tmpl.blocks[idx].type = newType;
+      S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.blocks.' + tmpl.blocks[idx].id + '.type', payload: newType, frame: { t: now() } });
+      tmpl.updatedBy = S.currentUser;
+      tmpl.updatedAt = now();
+      if (matrix.templatesRoomId) {
+        matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id);
+      }
+      setState({});
+    }
+    return;
+  }
+  if (action === 'template-history') {
+    setState({ selectedTemplateId: btn.dataset.id, templateView: 'history', templateHistory: [], templateDiffA: null, templateDiffB: null, _templateHistoryLoading: false });
+    return;
+  }
+  if (action === 'template-load-history') {
+    var hId = btn.dataset.id || S.selectedTemplateId;
+    if (!hId || !matrix.templatesRoomId) return;
+    setState({ _templateHistoryLoading: true });
+    matrix.fetchStateHistory(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, hId, 200)
+      .then(function(versions) {
+        setState({ templateHistory: versions, _templateHistoryLoading: false });
+      })
+      .catch(function(e) {
+        console.error('Failed to load template history:', e);
+        setState({ _templateHistoryLoading: false });
+        toast('Failed to load version history', 'error');
+      });
+    return;
+  }
+  if (action === 'template-select-version') {
+    var vIdx = parseInt(btn.dataset.idx, 10);
+    if (S.templateDiffA === null || (S.templateDiffA !== null && S.templateDiffB !== null)) {
+      // First selection or reset
+      setState({ templateDiffA: vIdx, templateDiffB: null });
+    } else {
+      // Second selection
+      setState({ templateDiffB: vIdx });
+    }
+    return;
+  }
+  if (action === 'template-restore-version') {
+    var rIdx = parseInt(btn.dataset.idx, 10);
+    var version = S.templateHistory[rIdx];
+    var tmpl = S.templates[S.selectedTemplateId];
+    if (!version || !tmpl || !version.content || !version.content.blocks) return;
+    var restoredBlocks = JSON.parse(JSON.stringify(version.content.blocks));
+    tmpl.blocks = restoredBlocks;
+    tmpl.updatedBy = S.currentUser;
+    tmpl.updatedAt = now();
+    S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.blocks', operand: 'version.' + (rIdx + 1), payload: 'restore', frame: { t: now() } });
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: restoredBlocks }, tmpl.id)
+        .then(function() { toast('\u223F ALT restored to v' + (rIdx + 1), 'success'); })
+        .catch(function(e) { toast('Restore failed', 'error'); });
+    }
+    setState({ templateHistory: [], templateDiffA: null, templateDiffB: null });
+    return;
+  }
+  if (action === 'template-use') {
+    // Navigate to board and trigger new petition from this template
+    var useId = btn.dataset.id;
+    setState({ _pendingTemplateId: useId, currentView: 'board', boardAddingMatter: 'new' });
+    return;
+  }
+  if (action === 'template-diff-expand') {
+    // Toggle expansion of unchanged blocks in diff view
+    btn.classList.toggle('expanded');
+    return;
+  }
+
   if (action === 'dir-tab') { setState({ dirTab: btn.dataset.tab, editId: null, draft: {} }); return; }
   if (action === 'toggle-dir-archived') { setState({ dirShowArchived: !S.dirShowArchived }); return; }
   if (action === 'cancel-edit') { setState({ editId: null, draft: {} }); return; }
@@ -7354,6 +8256,13 @@ function dispatchFieldChange(action, key, val, formId) {
     return;
   }
 
+  if (action === 'template-meta-field') {
+    var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+    if (!tmpl) return;
+    handleTemplateMetaBlur({ dataset: { key: key }, value: val });
+    return;
+  }
+
   if (action === 'national-field') {
     if (S.role !== 'admin') return;
     S.national[key] = val;
@@ -7524,6 +8433,11 @@ document.addEventListener('input', function(e) {
   var el = e.target;
   if (!el.dataset || !el.dataset.change) return;
   var action = el.dataset.change;
+  // Template search: instant filtering, no blur-save needed
+  if (action === 'template-search') {
+    setState({ templateSearch: el.value || '' });
+    return;
+  }
   var key = el.dataset.fieldKey;
   var val = el.value;
   var formId = el.dataset.formId || null;
@@ -7624,6 +8538,11 @@ document.addEventListener('change', function(e) {
     return;
   }
 
+  if (action === 'board-select-template') {
+    S._pendingTemplateId = val || null;
+    return;
+  }
+
   if (action === 'board-create-matter') {
     var cid = val;
     if (!cid) return;
@@ -7632,16 +8551,21 @@ document.addEventListener('change', function(e) {
     S.petitions[pid] = {
       id: pid, clientId: cid, createdBy: S.currentUser, stage: 'intake',
       stageHistory: [{ stage: 'intake', at: now() }],
-      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
+      blocks: getNewPetitionBlocks(S._pendingTemplateId),
       district: '', division: '', courtWebsite: '', caseNumber: '', facilityName: '', facilityCity: '',
       facilityState: '', warden: '', fieldOfficeDirector: '', fieldOfficeName: '',
       natIceDirector: '', natIceDirectorTitle: '', natDhsSecretary: '', natAttorneyGeneral: '',
       filingDate: '', filingDay: '', filingMonthYear: '',
       _bodyEdited: false, _exported: false,
+      templateId: S._pendingTemplateId || null,
       pageSettings: Object.assign({}, DEFAULT_PAGE_SETTINGS),
       createdAt: now(), roomId: clientRoomId,
     };
     S.log.push({ op: 'CREATE', target: pid, payload: null, frame: { t: now(), entity: 'petition', clientId: cid } });
+    if (S._pendingTemplateId) {
+      S.log.push({ op: 'CON', target: 'petition.' + pid + '.templateId', operand: 'template.' + S._pendingTemplateId, frame: { t: now() } });
+    }
+    S._pendingTemplateId = null;
     setState({ selectedPetitionId: pid, editorTab: 'court', currentView: 'editor', boardAddingMatter: false });
     var newPet = S.petitions[pid];
     if (newPet.roomId && matrix.isReady()) {
