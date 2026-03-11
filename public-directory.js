@@ -646,7 +646,7 @@ function renderSubmissionModal() {
   var title = (isNew ? 'Submit New ' : 'Suggest Edit for ') + (entity === 'facility' ? 'Facility' : 'Court');
 
   var h = '<div class="pub-modal-overlay" data-action="pub-close-modal">';
-  h += '<div class="pub-modal" onclick="event.stopPropagation()">';
+  h += '<div class="pub-modal">';
   h += '<div class="pub-modal-head"><h3>' + esc(title) + '</h3>';
   h += '<button class="pub-modal-close" data-action="pub-close-modal">&times;</button></div>';
 
@@ -884,6 +884,7 @@ document.addEventListener('click', function(e) {
   }
 
   if (action === 'pub-close-modal') {
+    if (btn.classList.contains('pub-modal-overlay') && e.target.closest('.pub-modal')) return;
     PS.modal = null;
     PS.modalDraft = {};
     PS.modalSubmitting = false;
