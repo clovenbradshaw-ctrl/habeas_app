@@ -3273,7 +3273,7 @@ function renderVarFillModal() {
   var currentVal = info ? getVarCurrentValue(info) : '';
 
   var h = '<div class="varfill-modal-overlay" data-action="varfill-close">';
-  h += '<div class="varfill-modal" onclick="event.stopPropagation()">';
+  h += '<div class="varfill-modal">';
   h += '<div class="varfill-header">';
   h += '<div class="varfill-title">Fill Variable</div>';
   h += '<button class="varfill-close-btn" data-action="varfill-close">&times;</button>';
@@ -5655,7 +5655,7 @@ function attachBlockListeners() {
 // ── Password Change Modal ────────────────────────────────────────
 function renderPasswordChangeModal() {
   var h = '<div class="pw-modal-overlay" data-action="pw-modal-close">';
-  h += '<div class="pw-modal" onclick="event.stopPropagation()">';
+  h += '<div class="pw-modal">';
   h += '<div class="pw-modal-title">Change Password</div>';
   h += '<form id="pw-change-form">';
   h += '<div class="frow"><label class="flbl">Current Password</label>';
@@ -6256,8 +6256,8 @@ document.addEventListener('click', function(e) {
   if (action === 'logout') { matrix.stopLongPoll(); matrix.clearSession(); setState({ authenticated: false, syncError: '' }); return; }
   if (action === 'dismiss-error') { setState({ syncError: '' }); return; }
   if (action === 'show-password-change') { setState({ showPasswordChange: true, passwordChangeError: '', passwordChangeDraft: { currentPassword: '', newPassword: '', confirmPassword: '' } }); return; }
-  if (action === 'pw-modal-close') { setState({ showPasswordChange: false, passwordChangeError: '', passwordChangeBusy: false }); return; }
-  if (action === 'varfill-close') { setState({ _varFillVar: null }); return; }
+  if (action === 'pw-modal-close') { if (btn.classList.contains('pw-modal-overlay') && e.target.closest('.pw-modal')) return; setState({ showPasswordChange: false, passwordChangeError: '', passwordChangeBusy: false }); return; }
+  if (action === 'varfill-close') { if (btn.classList.contains('varfill-modal-overlay') && e.target.closest('.varfill-modal')) return; setState({ _varFillVar: null }); return; }
   if (action === 'varfill-save') { handleVarFillSave(); return; }
   if (action === 'varfill-goto-tab') { var tab = btn.dataset.tab; setState({ _varFillVar: null, editorTab: tab }); return; }
   if (action === 'show-register') { e.preventDefault(); S._showRegister = true; S._showForgotPassword = false; render(); return; }
