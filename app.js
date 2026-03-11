@@ -5268,24 +5268,24 @@ function renderTemplateEditor() {
   var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
   if (!tmpl) return '<div class="dir-view"><div class="dir-body"><p class="lempty">No template selected.</p></div></div>';
 
-  var h = '<div class="editor-view">';
+  var h = '<div class="tmpl-editor">';
 
   // Left sidebar
-  h += '<div class="editor-sidebar"><div class="editor-sidebar-inner">';
-  h += '<div class="editor-sidebar-header">';
+  h += '<div class="tmpl-sidebar">';
+  h += '<div class="tmpl-editor-header">';
   h += '<button class="hbtn sm" data-action="template-back">\u2190 Back to list</button>';
   h += '</div>';
 
   // Tabs
   var tabs = [['meta','Meta'],['blocks','Blocks'],['variables','Variables']];
-  h += '<div class="editor-tabs">';
+  h += '<div class="tmpl-sidebar-tabs">';
   tabs.forEach(function(t) {
-    h += '<button class="etab' + (S.templateEditorTab === t[0] ? ' on' : '') + '" data-action="template-editor-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
+    h += '<button class="tmpl-sidebar-tab' + (S.templateEditorTab === t[0] ? ' on' : '') + '" data-action="template-editor-tab" data-tab="' + t[0] + '">' + t[1] + '</button>';
   });
   h += '</div>';
 
   if (S.templateEditorTab === 'meta') {
-    h += '<div class="editor-fields">';
+    h += '<div class="tmpl-sidebar-content">';
     h += '<div class="field-group"><label>Template Name</label>';
     h += '<input type="text" value="' + esc(tmpl.name) + '" data-action="template-meta-field" data-key="name" /></div>';
     h += '<div class="field-group"><label>Description</label>';
@@ -5327,10 +5327,10 @@ function renderTemplateEditor() {
     h += '</div>';
   }
 
-  h += '</div></div>';
+  h += '</div>';
 
   // Right panel — WYSIWYG paginated document
-  h += '<div class="doc-scroll">';
+  h += '<div class="tmpl-doc-panel">';
   var emptyVars = {};  // All variables render as unfilled placeholders
   h += renderPaginatedDoc(tmpl.blocks || [], emptyVars, '', null);
   h += '</div>';
