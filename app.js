@@ -2530,6 +2530,72 @@ function exportAttorneyProfilesCSV() {
   downloadCSV(buildCSV(headers, rows), 'attorney-profiles-' + new Date().toISOString().slice(0, 10) + '.csv');
 }
 
+function exportAllClientDataCSV() {
+  var allClients = Object.values(S.clients).filter(function(c) { return !c.archived; });
+  var clientList;
+  if (S.role === 'admin') {
+    clientList = allClients;
+  } else {
+    var myClientIds = {};
+    Object.values(S.petitions).forEach(function(p) {
+      if (canSeeUserData(p.createdBy)) myClientIds[p.clientId] = true;
+    });
+    clientList = allClients.filter(function(c) { return myClientIds[c.id]; });
+  }
+  clientList.sort(function(a, b) { return (a.name || '').localeCompare(b.name || ''); });
+
+  var headers = [
+    'Client Name', 'Country', 'Years in US', 'Entry Date', 'Entry Method',
+    'Arrest Location', 'Arrest Date', 'Criminal History', 'Community Ties',
+    'Client Created At',
+    'Case Number', 'Stage', 'Readiness %', 'District', 'Division',
+    'Facility', 'Facility City', 'Facility State', 'Warden',
+    'Field Office', 'Field Office Director',
+    'Attorney 1', 'Attorney 2',
+    'Filing Date', 'Petition Created By', 'Petition Created At', 'Time in Stage'
+  ];
+
+  var rows = [];
+  clientList.forEach(function(c) {
+    var clientPetitions = Object.values(S.petitions).filter(function(p) {
+      return p.clientId === c.id && !p.archived && canSeeUserData(p.createdBy);
+    });
+    clientPetitions.sort(function(a, b) { return new Date(b.createdAt) - new Date(a.createdAt); });
+
+    if (clientPetitions.length === 0) {
+      rows.push([
+        c.name || '', c.country || '', c.yearsInUS || '', c.entryDate || '', c.entryMethod || '',
+        c.apprehensionLocation || '', c.apprehensionDate || '', c.criminalHistory || '', c.communityTies || '',
+        c.createdAt || '',
+        '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', ''
+      ]);
+    } else {
+      clientPetitions.forEach(function(p) {
+        var a1 = p._att1Id ? S.attProfiles[p._att1Id] : null;
+        var a2 = p._att2Id ? S.attProfiles[p._att2Id] : null;
+        var creator = S.users[p.createdBy] ? S.users[p.createdBy].displayName : p.createdBy;
+        var rdns = computeReadiness(p, c);
+        rows.push([
+          c.name || '', c.country || '', c.yearsInUS || '', c.entryDate || '', c.entryMethod || '',
+          c.apprehensionLocation || '', c.apprehensionDate || '', c.criminalHistory || '', c.communityTies || '',
+          c.createdAt || '',
+          p.caseNumber || '',
+          (SM[p.stage] ? SM[p.stage].label : p.stage) || '',
+          Math.round(rdns.score * 100) + '%',
+          p.district || '', p.division || '',
+          p.facilityName || '', p.facilityCity || '', p.facilityState || '', p.warden || '',
+          p.fieldOfficeName || '', p.fieldOfficeDirector || '',
+          a1 ? a1.name || '' : '', a2 ? a2.name || '' : '',
+          p.filingDate || '', creator || '', p.createdAt || '', timeInStage(p)
+        ]);
+      });
+    }
+  });
+
+  var dateSlice = new Date().toISOString().slice(0, 10);
+  downloadCSV(buildCSV(headers, rows), 'all-client-data-' + dateSlice + '.csv');
+}
+
 // ── Template-based export (uses template.html) ─────────────────
 function buildExportFromTemplate(vars, forWord, pageSettings) {
   var ps = pageSettings || DEFAULT_PAGE_SETTINGS;
@@ -3725,6 +3791,7 @@ function renderBoard() {
   h += '<div class="board-export-btns">';
   h += '<button class="hbtn sm" data-action="export-petitions-csv">&#8681; Petitions CSV</button>';
   h += '<button class="hbtn sm" data-action="export-clients-csv">&#8681; Clients CSV</button>';
+  h += '<button class="hbtn sm" data-action="export-all-client-data-csv">&#8681; All Client Data CSV</button>';
   h += '<label class="archive-toggle"><input type="checkbox" data-action="toggle-board-archived"' + (S.boardShowArchived ? ' checked' : '') + '> Archived</label>';
   h += '</div>';
 
@@ -6610,6 +6677,7 @@ document.addEventListener('click', function(e) {
   // CSV exports
   if (action === 'export-petitions-csv') { exportPetitionsCSV(); return; }
   if (action === 'export-clients-csv') { exportClientsCSV(); return; }
+  if (action === 'export-all-client-data-csv') { exportAllClientDataCSV(); return; }
   if (action === 'export-facilities-csv') { if (S.role === 'admin') exportFacilitiesCSV(); return; }
   if (action === 'export-courts-csv') { if (S.role === 'admin') exportCourtsCSV(); return; }
   if (action === 'export-attorneys-csv') { if (S.role === 'admin') exportAttorneyProfilesCSV(); return; }
