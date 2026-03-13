@@ -2819,6 +2819,29 @@ body,
   gap: 24px;
   background: #e8e4dc;
 }
+.tmpl-doc-hint {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: rgba(160, 133, 64, 0.05);
+  border: 1px solid rgba(160, 133, 64, 0.2);
+  border-radius: var(--radius);
+  padding: 7px 12px;
+  align-self: stretch;
+}
+.tmpl-doc-panel .blk[contenteditable="true"] {
+  cursor: text;
+  border-radius: 2px;
+  transition: background 0.1s, outline 0.1s;
+}
+.tmpl-doc-panel .blk[contenteditable="true"]:hover {
+  outline: 1px dashed rgba(160, 133, 64, 0.4);
+}
+.tmpl-doc-panel .blk[contenteditable="true"]:focus {
+  outline: none;
+  background: rgba(160, 133, 64, 0.04);
+  box-shadow: 0 0 0 2px rgba(160, 133, 64, 0.25);
+}
 
 /* ── Template Meta Fields ───────────────────────────── */
 .tmpl-meta-field {
@@ -2872,36 +2895,72 @@ body,
   background: #fef2f2;
 }
 .tmpl-block-type-select {
+  flex: 1;
   font-family: inherit;
-  font-size: 10px;
-  padding: 4px 8px;
+  font-size: 11px;
+  padding: 5px 8px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
   background: var(--field-bg);
   color: var(--ink);
   cursor: pointer;
 }
+.tmpl-block-type-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(160, 133, 64, 0.12);
+}
 .tmpl-block-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 6px;
+  padding: 12px;
+  overflow-y: auto;
+  flex: 1;
 }
 .tmpl-block-item {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
-  padding: 5px 8px;
-  border-radius: var(--radius);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
   font-size: 11px;
-  cursor: pointer;
-  transition: background 0.1s;
+  transition: border-color 0.12s;
+  cursor: default;
 }
 .tmpl-block-item:hover {
-  background: rgba(160, 133, 64, 0.06);
+  border-color: rgba(160, 133, 64, 0.4);
+  background: rgba(160, 133, 64, 0.02);
 }
 .tmpl-block-item.selected {
-  background: rgba(160, 133, 64, 0.1);
-  border: 1px solid rgba(160, 133, 64, 0.25);
+  border-color: rgba(160, 133, 64, 0.5);
+  background: rgba(160, 133, 64, 0.04);
+}
+.tmpl-block-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tmpl-block-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--field-bg);
+  color: var(--ink);
+  resize: vertical;
+  min-height: 52px;
+}
+.tmpl-block-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(160, 133, 64, 0.12);
 }
 .tmpl-block-type {
   font-size: 9px;

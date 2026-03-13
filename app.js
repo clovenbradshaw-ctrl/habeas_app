@@ -2987,7 +2987,7 @@ function debouncedSync(key, fn) {
 }
 
 // Actions that should only save on blur (field exit), not every keystroke
-var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1, 'editor-form-field': 1, 'client-form-field': 1, 'template-meta-field': 1 };
+var BLUR_SAVE_ACTIONS = { 'national-field': 1, 'client-field': 1, 'editor-client-field': 1, 'editor-pet-field': 1, 'filing-case-number': 1, 'editor-form-field': 1, 'client-form-field': 1, 'template-meta-field': 1, 'template-block-content': 1 };
 
 // Update only the in-memory state for a field (no log entry, no Matrix sync).
 // Called on every keystroke to keep the UI responsive; the actual save
@@ -2996,6 +2996,13 @@ function updateFieldLocally(action, key, val) {
   if (action === 'template-meta-field') {
     var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
     if (tmpl) tmpl[key] = val;
+    return;
+  }
+  if (action === 'template-block-content') {
+    var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+    if (!tmpl) return;
+    var idx = parseInt(key, 10);
+    if (!isNaN(idx) && tmpl.blocks[idx]) tmpl.blocks[idx].content = val;
     return;
   }
   if (action === 'national-field') {
@@ -5273,7 +5280,8 @@ function renderTemplateEditor() {
   // Left sidebar
   h += '<div class="tmpl-sidebar">';
   h += '<div class="tmpl-editor-header">';
-  h += '<button class="hbtn sm" data-action="template-back">\u2190 Back to list</button>';
+  h += '<button class="hbtn sm" data-action="template-back">\u2190 Templates</button>';
+  h += '<h3>' + esc(tmpl.name) + '</h3>';
   h += '</div>';
 
   // Tabs
@@ -5301,8 +5309,7 @@ function renderTemplateEditor() {
     h += '</div>';
     (tmpl.blocks || []).forEach(function(b, i) {
       h += '<div class="tmpl-block-item" data-idx="' + i + '" data-block-id="' + esc(b.id) + '">';
-      h += '<span class="tmpl-block-type">' + esc(b.type) + '</span>';
-      h += '<span class="tmpl-block-id">' + esc(b.id) + '</span>';
+      h += '<div class="tmpl-block-row">';
       h += '<select class="tmpl-block-type-select" data-action="template-change-block-type" data-idx="' + i + '">';
       Object.keys(CLS_MAP).forEach(function(type) {
         h += '<option value="' + type + '"' + (b.type === type ? ' selected' : '') + '>' + type + '</option>';
@@ -5311,6 +5318,8 @@ function renderTemplateEditor() {
       h += '<button class="tmpl-block-btn" data-action="template-move-block-up" data-idx="' + i + '" title="Move up">\u2191</button>';
       h += '<button class="tmpl-block-btn" data-action="template-move-block-down" data-idx="' + i + '" title="Move down">\u2193</button>';
       h += '<button class="tmpl-block-btn danger" data-action="template-delete-block" data-idx="' + i + '" title="Delete">\u00D7</button>';
+      h += '</div>';
+      h += '<textarea class="tmpl-block-textarea" data-change="template-block-content" data-field-key="' + i + '" rows="3">' + esc(b.content) + '</textarea>';
       h += '</div>';
     });
     h += '</div>';
@@ -5331,6 +5340,7 @@ function renderTemplateEditor() {
 
   // Right panel — WYSIWYG paginated document
   h += '<div class="tmpl-doc-panel">';
+  h += '<div class="tmpl-doc-hint">\u270E Click any block in the document to edit its text directly</div>';
   var emptyVars = {};  // All variables render as unfilled placeholders
   h += renderPaginatedDoc(tmpl.blocks || [], emptyVars, '', null);
   h += '</div>';
@@ -7342,11 +7352,7 @@ document.addEventListener('click', function(e) {
     var tid = 'tmpl-' + Date.now();
     var newTmpl = {
       id: tid, name: 'New Template', description: '', legalBasis: '', archived: false,
-      blocks: [
-        { id: 'ct-1', type: 'title', content: 'UNITED STATES DISTRICT COURT' },
-        { id: 'h-intro', type: 'heading', content: 'INTRODUCTION' },
-        { id: 'p-1', type: 'para', content: '1. ' },
-      ],
+      blocks: DEFAULT_BLOCKS.map(function(b) { return { id: b.id, type: b.type, content: b.content }; }),
       createdBy: S.currentUser, createdAt: now(),
       updatedBy: S.currentUser, updatedAt: now(),
     };
@@ -8328,6 +8334,24 @@ function dispatchFieldChange(action, key, val, formId) {
     var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
     if (!tmpl) return;
     handleTemplateMetaBlur({ dataset: { key: key }, value: val });
+    return;
+  }
+
+  if (action === 'template-block-content') {
+    var tmpl = S.selectedTemplateId ? S.templates[S.selectedTemplateId] : null;
+    if (!tmpl) return;
+    var idx = parseInt(key, 10);
+    if (isNaN(idx) || !tmpl.blocks[idx]) return;
+    var oldContent = tmpl.blocks[idx].content;
+    if (oldContent === val) return;
+    tmpl.blocks[idx].content = val;
+    tmpl.updatedBy = S.currentUser;
+    tmpl.updatedAt = now();
+    S.log.push({ op: 'ALT', target: 'template.' + tmpl.id + '.blocks.' + tmpl.blocks[idx].id + '.content', payload: val, frame: { t: now(), prior: oldContent } });
+    if (matrix.templatesRoomId) {
+      matrix.sendStateEvent(matrix.templatesRoomId, EVT_TEMPLATE_BLOCKS, { blocks: tmpl.blocks }, tmpl.id)
+        .catch(function(e) { console.error('Template block content sync failed:', e); });
+    }
     return;
   }
 
